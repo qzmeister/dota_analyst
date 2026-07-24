@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dota Analyst — Draft Board</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">▲</span>
+      <div>
+        <h1>Dota Analyst</h1>
+        <span class="subtitle">Профессиональный анализ драфтов · patch 7.41d</span>
+      </div>
+    </div>
+    <div class="controls">
+      <div class="league-picker">
+        <button id="leagueBtn" class="btn">Лиги <span id="leagueCount" class="badge">0</span> ▾</button>
+        <div id="leaguePanel" class="league-panel hidden">
+          <div class="panel-head">
+            <input id="leagueSearch" type="text" placeholder="Поиск лиги…" />
+          </div>
+          <div id="leagueList" class="league-list"></div>
+        </div>
+      </div>
+      <div class="league-picker watch-picker">
+        <button id="watchBtn" class="btn">+ Матч <span id="watchCount" class="badge">0</span> ▾</button>
+        <div id="watchPanel" class="league-panel hidden">
+          <div class="panel-head">
+            <input id="watchInput" type="text" placeholder="dltv.org/live/8910670427.json или steam id" />
+            <button id="watchAddBtn" class="btn primary" style="margin-top:6px;width:100%">Добавить</button>
+          </div>
+          <div id="watchList" class="league-list"></div>
+          <div class="watch-hint">Вставьте URL или steam_id матча, которого нет в выбранной лиге (обход DLTV v1 API).</div>
+        </div>
+      </div>
+      <label class="auto"><input type="checkbox" id="autoRefresh" checked /> Авто</label>
+      <button id="refreshBtn" class="btn primary">Обновить</button>
+    </div>
+  </header>
+
+  <div id="status" class="status"></div>
+
+  <main class="board">
+    <section class="column" data-col="prematch">
+      <div class="col-head prematch"><h2>Прематч</h2><span class="count" id="cnt-prematch">0</span></div>
+      <div class="col-body" id="col-prematch"></div>
+    </section>
+    <section class="column" data-col="live">
+      <div class="col-head live"><h2>Лайв</h2><span class="count" id="cnt-live">0</span></div>
+      <div class="col-body" id="col-live"></div>
+    </section>
+    <section class="column" data-col="postmatch">
+      <div class="col-head postmatch"><h2>Пост-матч</h2><span class="count" id="cnt-postmatch">0</span></div>
+      <div class="col-body" id="col-postmatch"></div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

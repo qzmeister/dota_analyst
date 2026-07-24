@@ -1,0 +1,24 @@
+.steam_key
+.env
+__pycache__/
+*.pyc
+*.log
+*.err
+server.log
+server.err
+_matches.html
+_m2.html
+
+# ML data files (too large for GitHub)
+ml_data/*.json
+ml_data/*.pkl
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

@@ -16,16 +16,16 @@
 │                   BACKEND (FastAPI)                          │
 │  app.py → board.py → analysis.py                            │
 │       ↓          ↓           ↓                              │
-│  dltv_client  discovery  datdota_client  stratz_api         │
+│  dltv_client  discovery  datdota_client                     │
 └────────────────┬────────────────────────────────────────────┘
                  │
     ┌────────────┼────────────┬──────────────┐
     │            │            │              │
-┌───▼───┐  ┌────▼────┐  ┌───▼────┐  ┌──────▼──────┐
-│ DLTV  │  │  Steam  │  │DatDota │  │   Stratz    │
-│  v1   │  │   API   │  │  API   │  │     API     │
-│  API  │  │         │  │        │  │             │
-└───────┘  └─────────┘  └────────┘  └─────────────┘
+┌───▼───┐  ┌────▼────┐  ┌───▼────┐         │
+│ DLTV  │  │  Steam  │  │DatDota │         │
+│  v1   │  │   API   │  │  API   │         │
+│  API  │  │         │  │        │         │
+└───────┘  └─────────┘  └────────┘         │
 ```
 
 ### Слои архитектуры
@@ -64,7 +64,7 @@
 - Документировать алгоритмы
 
 #### 4. **Data Access Layer** (backend/*_client.py)
-- API clients (DLTV, Steam, DatDota, Stratz)
+- API clients (DLTV, Steam, DatDota)
 - HTTP requests
 - Rate limiting
 - Error handling
@@ -230,7 +230,7 @@
 ### 1. API Clients
 
 **ОБЯЗАТЕЛЬНО:**
-- ✅ Rate limiting (3s для DatDota, 2s для Stratz)
+- ✅ Rate limiting (3s для DatDota)
 - ✅ Retry logic (3 attempts, exponential backoff)
 - ✅ Error handling (не падать на network errors)
 - ✅ Timeout (10 сек default)
@@ -403,7 +403,6 @@ def hero_by_dltv_id(hero_id):
 
 ```
 feat: добавить DatDota API client
-fix: исправить rate limiting в Stratz client
 docs: обновить README с инструкциями
 refactor: упростить analysis.analyze()
 test: добавить tests для board.py
@@ -448,7 +447,6 @@ pip install -r requirements.txt
 
 # 2. Set environment variables
 export STEAM_API_KEY=...
-export STRAZT_API_KEY=...
 
 # 3. Run with gunicorn
 gunicorn backend.app:app -w 4 -k uvicorn.workers.UvicornWorker
@@ -470,7 +468,6 @@ server {
 - [FastAPI Documentation](https://fastapi.tiangolo.com/)
 - [DatDota API Docs](https://api.datdota.com/swagger-ui/index.html)
 - [Steam Web API](https://steamcommunity.com/dev/apidocs)
-- [Stratz API](https://stratz.com/api)
 
 ---
 

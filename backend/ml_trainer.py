@@ -4,8 +4,7 @@ ML Training Module for Dota Analyst.
 Collects historical match data, trains models, and provides predictions.
 
 Data sources:
-- Stratz API: /api/team/{id}/matches (historical data)
-- Stratz API: /api/match/{match_id} (detailed stats)
+- DatDota API: Full match data (players, items, timeline)
 - DLTV /live/{id}.json: postmatch verification
 
 Training schedule:
@@ -38,7 +37,6 @@ except ImportError:
 
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from stratz_api import _http_json, BASE_URL
 
 
 class MLTrainer:
@@ -68,95 +66,53 @@ class MLTrainer:
     # ========================================================================= #
     
     def fetch_team_history(self, team_id: int, limit: int = 100) -> List[Dict]:
-        """Fetch recent matches for a team from Stratz API."""
-        url = f"{BASE_URL}/api/team/{team_id}/matches"
-        params = {
-            "limit": min(limit, 200),  # Stratz max
-            "order": "desc",
-            "type": "all",
-        }
+        """Fetch recent matches for a team.
         
-        headers = {}
-        api_key = os.environ.get("STRAZT_API_KEY")
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        
-        try:
-            req = urllib.request.Request(url)
-            req.add_header("User-Agent", "DotaAnalyst/1.0")
-            if api_key:
-                req.add_header("Authorization", f"Bearer {api_key}")
-            
-            with urllib.request.urlopen(req, timeout=10.0) as resp:
-                if resp.status != 200:
-                    return []
-                data = json.loads(resp.read().decode("utf-8"))
-                
-            matches = data.get("matches", [])[:limit]
-            
-            # Enrich each match with details
-            enriched = []
-            for m in matches:
-                mid = m.get("id") or m.get("match_id")
-                if mid:
-                    details = self.fetch_match_details(mid)
-                    if details:
-                        m["_details"] = details
-                        enriched.append(m)
-                    else:
-                        enriched.append(m)
-                else:
-                    enriched.append(m)
-            
-            return enriched
-            
-        except Exception as e:
-            print(f"[ml] Failed to fetch team {team_id}: {e}")
-            return []
+        TODO: Implement using DatDota API data from ml_data/full_matches/
+        """
+        print(f"[ml] fetch_team_history not implemented yet - use DatDota data")
+        return []
     
     def fetch_match_details(self, match_id: int) -> Optional[Dict]:
-        """Fetch full match details from Stratz."""
-        url = f"{BASE_URL}/api/match/{match_id}"
+        """Fetch full match details.
         
-        api_key = os.environ.get("STRAZT_API_KEY")
-        headers = {"Accept": "application/json"}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        
-        try:
-            req = urllib.request.Request(url)
-            req.add_header("User-Agent", "DotaAnalyst/1.0")
-            for k, v in headers.items():
-                req.add_header(k, v)
-            
-            with urllib.request.urlopen(req, timeout=8.0) as resp:
-                if resp.status != 200:
-                    return None
-                return json.loads(resp.read().decode("utf-8"))
-                
-        except Exception as e:
-            print(f"[ml] Match details fetch failed for {match_id}: {e}")
-            return None
+        TODO: Load from ml_data/full_matches/{match_id}.json (DatDota data)
+        """
+        print(f"[ml] fetch_match_details not implemented yet - use DatDota data")
+        return None
     
     def parse_match_to_features(self, match: Dict) -> Optional[Dict]:
-        """Convert a Stratz match dict to ML feature vector."""
+        """Convert a DatDota match dict to ML feature vector.
+        
+        Args:
+            match: DatDota match data from ml_data/full_matches/
+        """
         if not match:
             return None
         
-        details = match.get("_details", {}) or {}
-        
-        # Basic stats
-        radiant_win = match.get("radiant_win") or details.get("radiant_win")
+        # Basic stats from DatDota format
+        radiant_win = match.get("radiant_victory")
         if radiant_win is None:
             return None
         
-        duration_sec = match.get("duration") or details.get("duration") or 0
-        kills_radiant = match.get("radiant_score") or details.get("radiant_score") or 0
-        kills_dire = match.get("dire_score") or details.get("dire_score") or 0
+        duration_sec = match.get("duration", 0)
         
-        # Parse players
-        radiant_players = details.get("players", [])[:5] if details.get("players") else []
-        dire_players = [p for p in details.get("players", []) if p.get("player_slot", 255) >= 128][:5]
+        # Extract player stats from DatDota format
+        radiant = match.get("radiant", {})
+        dire = match.get("dire", {})
+        
+        radiant_players = radiant.get("player_performances", [])
+        dire_players = dire.get("player_performances", [])
+        
+        # Calculate kills from player stats
+        kills_radiant = sum(p.get("performance", {}).get("kills", 0) for p in radiant_players)
+        kills_dire = sum(p.get("performance", {}).get("kills", 0) for p in dire_players)
+        
+        # Extract hero IDs
+        radiant_hero_ids = [
+            p.get("performance", {}).get("hero", {}).get("valve_id", 0)
+            for p in radiant_players[:5]
+        ]
         
         # Feature extraction
         features = {
@@ -171,11 +127,8 @@ class MLTrainer:
             # Win label (0: Dire win, 1: Radiant win)
             "winner_radiant": 1 if radiant_win else 0,
             
-            # Draft features (if available)
-            "radiant_hero_ids": [
-                details["heroes"][i]["hero_id"] 
-                for i in range(5)
-            ] if details.get("heroes") else [0]*5,
+            # Draft features
+            "radiant_hero_ids": radiant_hero_ids if len(radiant_hero_ids) == 5 else [0]*5,
             
             # Time features
             "duration_bucket": self._duration_bucket(duration_sec),
@@ -212,9 +165,9 @@ class MLTrainer:
             except Exception as e:
                 print(f"[ml] Cache load failed: {e}")
         
-        # Fetch more from Stratz if needed
+        # Fetch more from DatDota if needed
         if len(samples) < min_matches:
-            # TODO: This needs team IDs - we'll fetch from discovery or user input
+            # TODO: Load from ml_data/full_matches/ (DatDota data)
             print(f"[ml] Need {min_matches - len(samples)} more samples")
         
         return samples

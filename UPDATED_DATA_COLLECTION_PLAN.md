@@ -112,7 +112,6 @@ if __name__ == "__main__":
 |--------|---------------|------------|------|
 | **DLTV Discovery** | Match metadata | None | Free |
 | **Steam API** | Full details | 3 req/min ⭐ | Free |
-| **Stratz** | Lane analysis | 30 req/min | $0 or $50/mo |
 
 ### Итоговая архитектура:
 

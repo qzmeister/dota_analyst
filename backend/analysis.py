@@ -6,7 +6,7 @@ have: team aggregates (win_rate, first-blood rate, first-10 rate, rank),
 the drafted heroes and their meta (win_rate, avg_duration, kda, roles).
 
 These are transparent heuristics tuned to pro-scene (patch 7.41d) baselines.
-They are structured so a trained model / STRATZ lane pairs can later replace
+They are structured so a trained model / DatDota lane pairs can later replace
 individual terms without changing the public shape of `analyze()`.
 """
 

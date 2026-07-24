@@ -1,0 +1,6770 @@
+{
+  "match_id": 8813657190,
+  "duration": 2509,
+  "radiant_victory": true,
+  "has_error": false,
+  "patch": "7.41",
+  "start_date": 1778955481000,
+  "state": {
+    "web": true,
+    "parser": true,
+    "audio": false
+  },
+  "league": {
+    "league_id": 19696,
+    "name": "DreamLeague Season 29"
+  },
+  "radiant": {
+    "team": {
+      "name": "Nigma Galaxy ",
+      "valve_id": 10136357,
+      "tag": "NGX",
+      "logo": "-1486744854983827252",
+      "display": true
+    },
+    "player_performances": [
+      {
+        "player": {
+          "nickname": "rincyq",
+          "steam32": 418942836
+        },
+        "laneInfo": {
+          "lane": "BOTTOM",
+          "switchTo": null,
+          "metaLane": "SAFE"
+        },
+        "performance": {
+          "hero": {
+            "valve_id": 138,
+            "short_name": "muerta"
+          },
+          "level": 27,
+          "kills": 16,
+          "deaths": 1,
+          "assists": 10,
+          "gpm": 865,
+          "xpm": 1103,
+          "building_damage": 20507,
+          "hero_damage": 36726,
+          "hero_healing": 0,
+          "end_game_gold": 3337,
+          "gold_spent": 36440,
+          "hero_variant": 0,
+          "items": [
+            {
+              "item_id": 36,
+              "time": -89,
+              "name": "item_magic_wand"
+            },
+            {
+              "item_id": 237,
+              "time": -89,
+              "name": "item_faerie_fire"
+            },
+            {
+              "item_id": 46,
+              "time": -89,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 237,
+              "time": -89,
+              "name": "item_faerie_fire"
+            },
+            {
+              "item_id": 44,
+              "time": 5,
+              "name": "item_tango"
+            },
+            {
+              "item_id": 29,
+              "time": 147,
+              "name": "item_boots"
+            },
+            {
+              "item_id": 28,
+              "time": 148,
+              "name": "item_sobi_mask"
+            },
+            {
+              "item_id": 25,
+              "time": 217,
+              "name": "item_gloves"
+            },
+            {
+              "item_id": 19,
+              "time": 235,
+              "name": "item_robe"
+            },
+            {
+              "item_id": 39,
+              "time": 260,
+              "name": "item_flask"
+            },
+            {
+              "item_id": 63,
+              "time": 290,
+              "name": "item_power_treads"
+            },
+            {
+              "item_id": 2,
+              "time": 362,
+              "name": "item_blades_of_attack"
+            },
+            {
+              "item_id": 593,
+              "time": 362,
+              "name": "item_fluffy_hat"
+            },
+            {
+              "item_id": 599,
+              "time": 362,
+              "name": "item_recipe_falcon_blade"
+            },
+            {
+              "item_id": 244,
+              "time": 396,
+              "name": "item_wind_lace"
+            },
+            {
+              "item_id": 596,
+              "time": 429,
+              "name": "item_falcon_blade"
+            },
+            {
+              "item_id": 25,
+              "time": 443,
+              "name": "item_gloves"
+            },
+            {
+              "item_id": 39,
+              "time": 444,
+              "name": "item_flask"
+            },
+            {
+              "item_id": 38,
+              "time": 444,
+              "name": "item_clarity"
+            },
+            {
+              "item_id": 7,
+              "time": 555,
+              "name": "item_javelin"
+            },
+            {
+              "item_id": 46,
+              "time": 556,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 43,
+              "time": 557,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 8,
+              "time": 708,
+              "name": "item_mithril_hammer"
+            },
+            {
+              "item_id": 166,
+              "time": 731,
+              "name": "item_maelstrom"
+            },
+            {
+              "item_id": 485,
+              "time": 810,
+              "name": "item_blitz_knuckles"
+            },
+            {
+              "item_id": 5,
+              "time": 941,
+              "name": "item_claymore"
+            },
+            {
+              "item_id": 46,
+              "time": 971,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 215,
+              "time": 985,
+              "name": "item_shadow_amulet"
+            },
+            {
+              "item_id": 152,
+              "time": 998,
+              "name": "item_invis_sword"
+            },
+            {
+              "item_id": 248,
+              "time": 1042,
+              "name": "item_recipe_silver_edge"
+            },
+            {
+              "item_id": 51,
+              "time": 1158,
+              "name": "item_demon_edge"
+            },
+            {
+              "item_id": 249,
+              "time": 1164,
+              "name": "item_silver_edge"
+            },
+            {
+              "item_id": 46,
+              "time": 1166,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 22,
+              "time": 1283,
+              "name": "item_blade_of_alacrity"
+            },
+            {
+              "item_id": 17,
+              "time": 1283,
+              "name": "item_belt_of_strength"
+            },
+            {
+              "item_id": 236,
+              "time": 1283,
+              "name": "item_dragon_lance"
+            },
+            {
+              "item_id": 234,
+              "time": 1283,
+              "name": "item_recipe_dragon_lance"
+            },
+            {
+              "item_id": 46,
+              "time": 1327,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 5,
+              "time": 1394,
+              "name": "item_claymore"
+            },
+            {
+              "item_id": 2,
+              "time": 1407,
+              "name": "item_blades_of_attack"
+            },
+            {
+              "item_id": 149,
+              "time": 1421,
+              "name": "item_lesser_crit"
+            },
+            {
+              "item_id": 148,
+              "time": 1421,
+              "name": "item_recipe_lesser_crit"
+            },
+            {
+              "item_id": 46,
+              "time": 1424,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 46,
+              "time": 1511,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 140,
+              "time": 1511,
+              "name": "item_recipe_greater_crit"
+            },
+            {
+              "item_id": 51,
+              "time": 1548,
+              "name": "item_demon_edge"
+            },
+            {
+              "item_id": 141,
+              "time": 1561,
+              "name": "item_greater_crit"
+            },
+            {
+              "item_id": 46,
+              "time": 1608,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 46,
+              "time": 1608,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 1802,
+              "time": 1735,
+              "name": "item_tiara_of_selemene"
+            },
+            {
+              "item_id": 95,
+              "time": 1736,
+              "name": "item_recipe_sheepstick"
+            },
+            {
+              "item_id": 58,
+              "time": 1802,
+              "name": "item_mystic_staff"
+            },
+            {
+              "item_id": 96,
+              "time": 1817,
+              "name": "item_sheepstick"
+            },
+            {
+              "item_id": 52,
+              "time": 2050,
+              "name": "item_eagle"
+            },
+            {
+              "item_id": 607,
+              "time": 2050,
+              "name": "item_recipe_swift_blink"
+            },
+            {
+              "item_id": 1,
+              "time": 2174,
+              "name": "item_blink"
+            },
+            {
+              "item_id": 603,
+              "time": 2181,
+              "name": "item_swift_blink"
+            },
+            {
+              "item_id": 46,
+              "time": 2239,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 46,
+              "time": 2239,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 8,
+              "time": 2349,
+              "name": "item_mithril_hammer"
+            },
+            {
+              "item_id": 21,
+              "time": 2368,
+              "name": "item_ogre_axe"
+            },
+            {
+              "item_id": 116,
+              "time": 2392,
+              "name": "item_black_king_bar"
+            },
+            {
+              "item_id": 115,
+              "time": 2392,
+              "name": "item_recipe_black_king_bar"
+            },
+            {
+              "item_id": 22,
+              "time": 2515,
+              "name": "item_blade_of_alacrity"
+            },
+            {
+              "item_id": 3,
+              "time": 2515,
+              "name": "item_broadsword"
+            },
+            {
+              "item_id": 1076,
+              "time": 2515,
+              "name": "item_specialists_array"
+            },
+            {
+              "item_id": 1715,
+              "time": 2515,
+              "name": "item_recipe_specialists_array"
+            },
+            {
+              "item_id": 181,
+              "time": 2515,
+              "name": "item_orb_of_venom"
+            }
+          ],
+          "abilities": [
+            {
+              "ability_id": 5751,
+              "time": 0,
+              "name": "muerta_dead_shot"
+            },
+            {
+              "ability_id": 5753,
+              "time": 0,
+              "name": "muerta_gunslinger"
+            },
+            {
+              "ability_id": 5751,
+              "time": 0,
+              "name": "muerta_dead_shot"
+            },
+            {
+              "ability_id": 5751,
+              "time": 0,
+              "name": "muerta_dead_shot"
+            },
+            {
+              "ability_id": 5752,
+              "time": 0,
+              "name": "muerta_the_calling"
+            },
+            {
+              "ability_id": 5754,
+              "time": 0,
+              "name": "muerta_pierce_the_veil"
+            },
+            {
+              "ability_id": 5751,
+              "time": 0,
+              "name": "muerta_dead_shot"
+            },
+            {
+              "ability_id": 5753,
+              "time": 0,
+              "name": "muerta_gunslinger"
+            },
+            {
+              "ability_id": 5753,
+              "time": 0,
+              "name": "muerta_gunslinger"
+            },
+            {
+              "ability_id": 5753,
+              "time": 0,
+              "name": "muerta_gunslinger"
+            },
+            {
+              "ability_id": 5757,
+              "time": 0,
+              "name": "special_bonus_unique_muerta_dead_shot_range"
+            },
+            {
+              "ability_id": 730,
+              "time": 0,
+              "name": "special_bonus_attributes"
+            },
+            {
+              "ability_id": 5754,
+              "time": 0,
+              "name": "muerta_pierce_the_veil"
+            },
+            {
+              "ability_id": 5752,
+              "time": 0,
+              "name": "muerta_the_calling"
+            },
+            {
+              "ability_id": 5752,
+              "time": 0,
+              "name": "muerta_the_calling"
+            },
+            {
+              "ability_id": 5991,
+              "time": 0,
+              "name": "special_bonus_intelligence_15"
+            },
+            {
+              "ability_id": 5752,
+              "time": 0,
+              "name": "muerta_the_calling"
+            },
+            {
+              "ability_id": 5754,
+              "time": 0,
+              "name": "muerta_pierce_the_veil"
+            },
+            {
+              "ability_id": 1629,
+              "time": 0,
+              "name": "special_bonus_unique_muerta_pierce_the_veil_duration"
+            },
+            {
+              "ability_id": 5755,
+              "time": 0,
+              "name": "special_bonus_unique_muerta_dead_shot_charges"
+            },
+            {
+              "ability_id": 5906,
+              "time": 0,
+              "name": "special_bonus_attack_speed_20"
+            }
+          ],
+          "laneInfo": null
+        }
+      },
+      {
+        "player": {
+          "nickname": "OmaR",
+          "steam32": 152168157
+        },
+        "laneInfo": {
+          "lane": "TOP",
+          "switchTo": "MIDDLE",
+          "metaLane": "OFFLANE"
+        },
+        "performance": {
+          "hero": {
+            "valve_id": 123,
+            "short_name": "hoodwink"
+          },
+          "level": 19,
+          "kills": 6,
+          "deaths": 8,
+          "assists": 10,
+          "gpm": 406,
+          "xpm": 488,
+          "building_damage": 115,
+          "hero_damage": 14337,
+          "hero_healing": 0,
+          "end_game_gold": 4244,
+          "gold_spent": 11950,
+          "hero_variant": 0,
+          "items": [
+            {
+              "item_id": 20,
+              "time": -89,
+              "name": "item_circlet"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 44,
+              "time": -89,
+              "name": "item_tango"
+            },
+            {
+              "item_id": 1123,
+              "time": -89,
+              "name": "item_blood_grenade"
+            },
+            {
+              "item_id": 237,
+              "time": -89,
+              "name": "item_faerie_fire"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 46,
+              "time": -89,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 43,
+              "time": -89,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 39,
+              "time": 14,
+              "name": "item_flask"
+            },
+            {
+              "item_id": 44,
+              "time": 68,
+              "name": "item_tango"
+            },
+            {
+              "item_id": 1123,
+              "time": 96,
+              "name": "item_blood_grenade"
+            },
+            {
+              "item_id": 237,
+              "time": 97,
+              "name": "item_faerie_fire"
+            },
+            {
+              "item_id": 42,
+              "time": 98,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 216,
+              "time": 138,
+              "name": "item_enchanted_mango"
+            },
+            {
+              "item_id": 216,
+              "time": 138,
+              "name": "item_enchanted_mango"
+            },
+            {
+              "item_id": 218,
+              "time": 165,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 29,
+              "time": 284,
+              "name": "item_boots"
+            },
+            {
+              "item_id": 265,
+              "time": 391,
+              "name": "item_infused_raindrop"
+            },
+            {
+              "item_id": 46,
+              "time": 391,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 38,
+              "time": 392,
+              "name": "item_clarity"
+            },
+            {
+              "item_id": 1123,
+              "time": 393,
+              "name": "item_blood_grenade"
+            },
+            {
+              "item_id": 34,
+              "time": 525,
+              "name": "item_magic_stick"
+            },
+            {
+              "item_id": 35,
+              "time": 525,
+              "name": "item_recipe_magic_wand"
+            },
+            {
+              "item_id": 43,
+              "time": 525,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 218,
+              "time": 526,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 42,
+              "time": 526,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 188,
+              "time": 528,
+              "name": "item_smoke_of_deceit"
+            },
+            {
+              "item_id": 36,
+              "time": 554,
+              "name": "item_magic_wand"
+            },
+            {
+              "item_id": 42,
+              "time": 629,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 629,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 629,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 218,
+              "time": 656,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 42,
+              "time": 656,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 656,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 656,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 40,
+              "time": 691,
+              "name": "item_dust"
+            },
+            {
+              "item_id": 61,
+              "time": 740,
+              "name": "item_vitality_booster"
+            },
+            {
+              "item_id": 43,
+              "time": 771,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 188,
+              "time": 772,
+              "name": "item_smoke_of_deceit"
+            },
+            {
+              "item_id": 40,
+              "time": 772,
+              "name": "item_dust"
+            },
+            {
+              "item_id": 205,
+              "time": 945,
+              "name": "item_recipe_rod_of_atos"
+            },
+            {
+              "item_id": 23,
+              "time": 987,
+              "name": "item_staff_of_wizardry"
+            },
+            {
+              "item_id": 42,
+              "time": 990,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 206,
+              "time": 1018,
+              "name": "item_rod_of_atos"
+            },
+            {
+              "item_id": 43,
+              "time": 1022,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 218,
+              "time": 1067,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 1088,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 218,
+              "time": 1115,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 1136,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 38,
+              "time": 1137,
+              "name": "item_clarity"
+            },
+            {
+              "item_id": 218,
+              "time": 1167,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 28,
+              "time": 1233,
+              "name": "item_sobi_mask"
+            },
+            {
+              "item_id": 1849,
+              "time": 1233,
+              "name": "item_wizard_hat"
+            },
+            {
+              "item_id": 88,
+              "time": 1233,
+              "name": "item_ring_of_basilius"
+            },
+            {
+              "item_id": 87,
+              "time": 1233,
+              "name": "item_recipe_ring_of_basilius"
+            },
+            {
+              "item_id": 179,
+              "time": 1238,
+              "name": "item_recipe_arcane_boots"
+            },
+            {
+              "item_id": 42,
+              "time": 1268,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 180,
+              "time": 1293,
+              "name": "item_arcane_boots"
+            },
+            {
+              "item_id": 46,
+              "time": 1295,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 188,
+              "time": 1310,
+              "name": "item_smoke_of_deceit"
+            },
+            {
+              "item_id": 43,
+              "time": 1331,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 43,
+              "time": 1331,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 38,
+              "time": 1334,
+              "name": "item_clarity"
+            },
+            {
+              "item_id": 42,
+              "time": 1410,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 1420,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 1872,
+              "time": 1525,
+              "name": "item_chasm_stone"
+            },
+            {
+              "item_id": 218,
+              "time": 1552,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 42,
+              "time": 1552,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 43,
+              "time": 1600,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 188,
+              "time": 1600,
+              "name": "item_smoke_of_deceit"
+            },
+            {
+              "item_id": 218,
+              "time": 1622,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 42,
+              "time": 1673,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 43,
+              "time": 1722,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 1565,
+              "time": 1723,
+              "name": "item_recipe_gungir"
+            },
+            {
+              "item_id": 40,
+              "time": 1724,
+              "name": "item_dust"
+            },
+            {
+              "item_id": 60,
+              "time": 1757,
+              "name": "item_point_booster"
+            },
+            {
+              "item_id": 1466,
+              "time": 1797,
+              "name": "item_gungir"
+            },
+            {
+              "item_id": 218,
+              "time": 1813,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 42,
+              "time": 1813,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 1973,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 42,
+              "time": 1973,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 43,
+              "time": 2087,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 43,
+              "time": 2087,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 218,
+              "time": 2087,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 42,
+              "time": 2087,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 46,
+              "time": 2088,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 1,
+              "time": 2090,
+              "name": "item_blink"
+            },
+            {
+              "item_id": 218,
+              "time": 2117,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 4206,
+              "time": 2125,
+              "name": "item_greater_famango"
+            },
+            {
+              "item_id": 4206,
+              "time": 2164,
+              "name": "item_greater_famango"
+            },
+            {
+              "item_id": 46,
+              "time": 2200,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 43,
+              "time": 2225,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 43,
+              "time": 2225,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 218,
+              "time": 2225,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 42,
+              "time": 2225,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 46,
+              "time": 2364,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 42,
+              "time": 2364,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 2382,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 42,
+              "time": 2478,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 2479,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 2479,
+              "name": "item_ward_sentry"
+            }
+          ],
+          "abilities": [
+            {
+              "ability_id": 8158,
+              "time": 0,
+              "name": "hoodwink_bushwhack"
+            },
+            {
+              "ability_id": 8429,
+              "time": 0,
+              "name": "hoodwink_acorn_shot"
+            },
+            {
+              "ability_id": 8429,
+              "time": 0,
+              "name": "hoodwink_acorn_shot"
+            },
+            {
+              "ability_id": 8158,
+              "time": 0,
+              "name": "hoodwink_bushwhack"
+            },
+            {
+              "ability_id": 8158,
+              "time": 0,
+              "name": "hoodwink_bushwhack"
+            },
+            {
+              "ability_id": 8106,
+              "time": 0,
+              "name": "hoodwink_sharpshooter"
+            },
+            {
+              "ability_id": 8158,
+              "time": 0,
+              "name": "hoodwink_bushwhack"
+            },
+            {
+              "ability_id": 8429,
+              "time": 0,
+              "name": "hoodwink_acorn_shot"
+            },
+            {
+              "ability_id": 9501,
+              "time": 0,
+              "name": "hoodwink_scurry"
+            },
+            {
+              "ability_id": 8429,
+              "time": 0,
+              "name": "hoodwink_acorn_shot"
+            },
+            {
+              "ability_id": 6034,
+              "time": 0,
+              "name": "special_bonus_hp_175"
+            },
+            {
+              "ability_id": 9501,
+              "time": 0,
+              "name": "hoodwink_scurry"
+            },
+            {
+              "ability_id": 8106,
+              "time": 0,
+              "name": "hoodwink_sharpshooter"
+            },
+            {
+              "ability_id": 9501,
+              "time": 0,
+              "name": "hoodwink_scurry"
+            },
+            {
+              "ability_id": 9501,
+              "time": 0,
+              "name": "hoodwink_scurry"
+            },
+            {
+              "ability_id": 1568,
+              "time": 0,
+              "name": "special_bonus_unique_hoodwink_scurry_charges"
+            },
+            {
+              "ability_id": 8106,
+              "time": 0,
+              "name": "hoodwink_sharpshooter"
+            }
+          ],
+          "laneInfo": null
+        }
+      },
+      {
+        "player": {
+          "nickname": "No!ob",
+          "steam32": 140297552
+        },
+        "laneInfo": {
+          "lane": "MIDDLE",
+          "switchTo": null,
+          "metaLane": null
+        },
+        "performance": {
+          "hero": {
+            "valve_id": 155,
+            "short_name": "largo"
+          },
+          "level": 24,
+          "kills": 8,
+          "deaths": 2,
+          "assists": 18,
+          "gpm": 574,
+          "xpm": 805,
+          "building_damage": 2702,
+          "hero_damage": 18650,
+          "hero_healing": 10264,
+          "end_game_gold": 3815,
+          "gold_spent": 21670,
+          "hero_variant": 0,
+          "items": [
+            {
+              "item_id": 44,
+              "time": -89,
+              "name": "item_tango"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 42,
+              "time": -89,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 13,
+              "time": -89,
+              "name": "item_gauntlets"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 13,
+              "time": -89,
+              "name": "item_gauntlets"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 46,
+              "time": -89,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 41,
+              "time": 117,
+              "name": "item_bottle"
+            },
+            {
+              "item_id": 20,
+              "time": 192,
+              "name": "item_circlet"
+            },
+            {
+              "item_id": 72,
+              "time": 192,
+              "name": "item_recipe_bracer"
+            },
+            {
+              "item_id": 34,
+              "time": 211,
+              "name": "item_magic_stick"
+            },
+            {
+              "item_id": 73,
+              "time": 216,
+              "name": "item_bracer"
+            },
+            {
+              "item_id": 38,
+              "time": 240,
+              "name": "item_clarity"
+            },
+            {
+              "item_id": 12,
+              "time": 345,
+              "name": "item_ring_of_protection"
+            },
+            {
+              "item_id": 13,
+              "time": 345,
+              "name": "item_gauntlets"
+            },
+            {
+              "item_id": 177,
+              "time": 346,
+              "name": "item_recipe_soul_ring"
+            },
+            {
+              "item_id": 38,
+              "time": 348,
+              "name": "item_clarity"
+            },
+            {
+              "item_id": 178,
+              "time": 374,
+              "name": "item_soul_ring"
+            },
+            {
+              "item_id": 35,
+              "time": 405,
+              "name": "item_recipe_magic_wand"
+            },
+            {
+              "item_id": 38,
+              "time": 406,
+              "name": "item_clarity"
+            },
+            {
+              "item_id": 29,
+              "time": 437,
+              "name": "item_boots"
+            },
+            {
+              "item_id": 36,
+              "time": 489,
+              "name": "item_magic_wand"
+            },
+            {
+              "item_id": 4,
+              "time": 556,
+              "name": "item_chainmail"
+            },
+            {
+              "item_id": 2,
+              "time": 588,
+              "name": "item_blades_of_attack"
+            },
+            {
+              "item_id": 50,
+              "time": 627,
+              "name": "item_phase_boots"
+            },
+            {
+              "item_id": 23,
+              "time": 725,
+              "name": "item_staff_of_wizardry"
+            },
+            {
+              "item_id": 19,
+              "time": 790,
+              "name": "item_robe"
+            },
+            {
+              "item_id": 258,
+              "time": 814,
+              "name": "item_recipe_kaya"
+            },
+            {
+              "item_id": 259,
+              "time": 846,
+              "name": "item_kaya"
+            },
+            {
+              "item_id": 46,
+              "time": 901,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 21,
+              "time": 1066,
+              "name": "item_ogre_axe"
+            },
+            {
+              "item_id": 23,
+              "time": 1141,
+              "name": "item_staff_of_wizardry"
+            },
+            {
+              "item_id": 22,
+              "time": 1194,
+              "name": "item_blade_of_alacrity"
+            },
+            {
+              "item_id": 46,
+              "time": 1266,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 60,
+              "time": 1343,
+              "name": "item_point_booster"
+            },
+            {
+              "item_id": 108,
+              "time": 1356,
+              "name": "item_ultimate_scepter"
+            },
+            {
+              "item_id": 46,
+              "time": 1415,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 46,
+              "time": 1415,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 21,
+              "time": 1492,
+              "name": "item_ogre_axe"
+            },
+            {
+              "item_id": 17,
+              "time": 1492,
+              "name": "item_belt_of_strength"
+            },
+            {
+              "item_id": 162,
+              "time": 1570,
+              "name": "item_sange"
+            },
+            {
+              "item_id": 161,
+              "time": 1570,
+              "name": "item_recipe_sange"
+            },
+            {
+              "item_id": 273,
+              "time": 1579,
+              "name": "item_kaya_and_sange"
+            },
+            {
+              "item_id": 46,
+              "time": 1742,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 37,
+              "time": 1757,
+              "name": "item_ghost"
+            },
+            {
+              "item_id": 609,
+              "time": 1875,
+              "name": "item_aghanims_shard"
+            },
+            {
+              "item_id": 9,
+              "time": 2088,
+              "name": "item_platemail"
+            },
+            {
+              "item_id": 46,
+              "time": 2137,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 46,
+              "time": 2137,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 8,
+              "time": 2236,
+              "name": "item_mithril_hammer"
+            },
+            {
+              "item_id": 21,
+              "time": 2236,
+              "name": "item_ogre_axe"
+            },
+            {
+              "item_id": 116,
+              "time": 2292,
+              "name": "item_black_king_bar"
+            },
+            {
+              "item_id": 115,
+              "time": 2292,
+              "name": "item_recipe_black_king_bar"
+            }
+          ],
+          "abilities": [
+            {
+              "ability_id": 1659,
+              "time": 0,
+              "name": "stats"
+            },
+            {
+              "ability_id": 1660,
+              "time": 0,
+              "name": "stats"
+            },
+            {
+              "ability_id": 1659,
+              "time": 0,
+              "name": "stats"
+            },
+            {
+              "ability_id": 1660,
+              "time": 0,
+              "name": "stats"
+            },
+            {
+              "ability_id": 1659,
+              "time": 0,
+              "name": "stats"
+            },
+            {
+              "ability_id": 1662,
+              "time": 0,
+              "name": "stats"
+            },
+            {
+              "ability_id": 1659,
+              "time": 0,
+              "name": "stats"
+            },
+            {
+              "ability_id": 1660,
+              "time": 0,
+              "name": "stats"
+            },
+            {
+              "ability_id": 1661,
+              "time": 0,
+              "name": "stats"
+            },
+            {
+              "ability_id": 1660,
+              "time": 0,
+              "name": "stats"
+            },
+            {
+              "ability_id": 1667,
+              "time": 0,
+              "name": "stats"
+            },
+            {
+              "ability_id": 1661,
+              "time": 0,
+              "name": "stats"
+            },
+            {
+              "ability_id": 1662,
+              "time": 0,
+              "name": "stats"
+            },
+            {
+              "ability_id": 1661,
+              "time": 0,
+              "name": "stats"
+            },
+            {
+              "ability_id": 1661,
+              "time": 0,
+              "name": "stats"
+            },
+            {
+              "ability_id": 1669,
+              "time": 0,
+              "name": "stats"
+            },
+            {
+              "ability_id": 1662,
+              "time": 0,
+              "name": "stats"
+            },
+            {
+              "ability_id": 1672,
+              "time": 0,
+              "name": "stats"
+            }
+          ],
+          "laneInfo": null
+        }
+      },
+      {
+        "player": {
+          "nickname": "Davai Lama",
+          "steam32": 138880576
+        },
+        "laneInfo": {
+          "lane": "TOP",
+          "switchTo": null,
+          "metaLane": "OFFLANE"
+        },
+        "performance": {
+          "hero": {
+            "valve_id": 29,
+            "short_name": "tidehunter"
+          },
+          "level": 25,
+          "kills": 6,
+          "deaths": 5,
+          "assists": 21,
+          "gpm": 609,
+          "xpm": 884,
+          "building_damage": 2168,
+          "hero_damage": 20360,
+          "hero_healing": 3324,
+          "end_game_gold": 3082,
+          "gold_spent": 23245,
+          "hero_variant": 0,
+          "items": [
+            {
+              "item_id": 44,
+              "time": -89,
+              "name": "item_tango"
+            },
+            {
+              "item_id": 46,
+              "time": -89,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 34,
+              "time": -89,
+              "name": "item_magic_stick"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 13,
+              "time": -89,
+              "name": "item_gauntlets"
+            },
+            {
+              "item_id": 20,
+              "time": 22,
+              "name": "item_circlet"
+            },
+            {
+              "item_id": 72,
+              "time": 86,
+              "name": "item_recipe_bracer"
+            },
+            {
+              "item_id": 73,
+              "time": 128,
+              "name": "item_bracer"
+            },
+            {
+              "item_id": 26,
+              "time": 178,
+              "name": "item_lifesteal"
+            },
+            {
+              "item_id": 28,
+              "time": 238,
+              "name": "item_sobi_mask"
+            },
+            {
+              "item_id": 29,
+              "time": 359,
+              "name": "item_boots"
+            },
+            {
+              "item_id": 2,
+              "time": 439,
+              "name": "item_blades_of_attack"
+            },
+            {
+              "item_id": 87,
+              "time": 476,
+              "name": "item_recipe_ring_of_basilius"
+            },
+            {
+              "item_id": 88,
+              "time": 486,
+              "name": "item_ring_of_basilius"
+            },
+            {
+              "item_id": 85,
+              "time": 566,
+              "name": "item_recipe_buckler"
+            },
+            {
+              "item_id": 12,
+              "time": 596,
+              "name": "item_ring_of_protection"
+            },
+            {
+              "item_id": 86,
+              "time": 623,
+              "name": "item_buckler"
+            },
+            {
+              "item_id": 81,
+              "time": 642,
+              "name": "item_vladmir"
+            },
+            {
+              "item_id": 12,
+              "time": 679,
+              "name": "item_ring_of_protection"
+            },
+            {
+              "item_id": 13,
+              "time": 679,
+              "name": "item_gauntlets"
+            },
+            {
+              "item_id": 13,
+              "time": 685,
+              "name": "item_gauntlets"
+            },
+            {
+              "item_id": 178,
+              "time": 688,
+              "name": "item_soul_ring"
+            },
+            {
+              "item_id": 177,
+              "time": 688,
+              "name": "item_recipe_soul_ring"
+            },
+            {
+              "item_id": 4,
+              "time": 728,
+              "name": "item_chainmail"
+            },
+            {
+              "item_id": 2,
+              "time": 767,
+              "name": "item_blades_of_attack"
+            },
+            {
+              "item_id": 46,
+              "time": 785,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 35,
+              "time": 804,
+              "name": "item_recipe_magic_wand"
+            },
+            {
+              "item_id": 50,
+              "time": 817,
+              "name": "item_phase_boots"
+            },
+            {
+              "item_id": 38,
+              "time": 845,
+              "name": "item_clarity"
+            },
+            {
+              "item_id": 36,
+              "time": 881,
+              "name": "item_magic_wand"
+            },
+            {
+              "item_id": 261,
+              "time": 942,
+              "name": "item_crown"
+            },
+            {
+              "item_id": 1848,
+              "time": 943,
+              "name": "item_shawl"
+            },
+            {
+              "item_id": 61,
+              "time": 990,
+              "name": "item_vitality_booster"
+            },
+            {
+              "item_id": 1853,
+              "time": 1041,
+              "name": "item_recipe_consecrated_wraps"
+            },
+            {
+              "item_id": 1854,
+              "time": 1069,
+              "name": "item_consecrated_wraps"
+            },
+            {
+              "item_id": 1,
+              "time": 1198,
+              "name": "item_blink"
+            },
+            {
+              "item_id": 46,
+              "time": 1205,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 38,
+              "time": 1207,
+              "name": "item_clarity"
+            },
+            {
+              "item_id": 609,
+              "time": 1374,
+              "name": "item_aghanims_shard"
+            },
+            {
+              "item_id": 46,
+              "time": 1415,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 60,
+              "time": 1471,
+              "name": "item_point_booster"
+            },
+            {
+              "item_id": 21,
+              "time": 1553,
+              "name": "item_ogre_axe"
+            },
+            {
+              "item_id": 46,
+              "time": 1590,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 23,
+              "time": 1654,
+              "name": "item_staff_of_wizardry"
+            },
+            {
+              "item_id": 22,
+              "time": 1753,
+              "name": "item_blade_of_alacrity"
+            },
+            {
+              "item_id": 108,
+              "time": 1785,
+              "name": "item_ultimate_scepter"
+            },
+            {
+              "item_id": 1802,
+              "time": 1880,
+              "name": "item_tiara_of_selemene"
+            },
+            {
+              "item_id": 109,
+              "time": 2064,
+              "name": "item_recipe_refresher"
+            },
+            {
+              "item_id": 279,
+              "time": 2139,
+              "name": "item_ring_of_tarrasque"
+            },
+            {
+              "item_id": 110,
+              "time": 2162,
+              "name": "item_refresher"
+            },
+            {
+              "item_id": 37,
+              "time": 2506,
+              "name": "item_ghost"
+            },
+            {
+              "item_id": 40,
+              "time": 2508,
+              "name": "item_dust"
+            },
+            {
+              "item_id": 216,
+              "time": 2508,
+              "name": "item_enchanted_mango"
+            },
+            {
+              "item_id": 216,
+              "time": 2508,
+              "name": "item_enchanted_mango"
+            },
+            {
+              "item_id": 216,
+              "time": 2509,
+              "name": "item_enchanted_mango"
+            }
+          ],
+          "abilities": [
+            {
+              "ability_id": 5118,
+              "time": 0,
+              "name": "tidehunter_gush"
+            },
+            {
+              "ability_id": 5120,
+              "time": 0,
+              "name": "tidehunter_anchor_smash"
+            },
+            {
+              "ability_id": 5119,
+              "time": 0,
+              "name": "tidehunter_kraken_shell"
+            },
+            {
+              "ability_id": 5119,
+              "time": 0,
+              "name": "tidehunter_kraken_shell"
+            },
+            {
+              "ability_id": 5119,
+              "time": 0,
+              "name": "tidehunter_kraken_shell"
+            },
+            {
+              "ability_id": 5121,
+              "time": 0,
+              "name": "tidehunter_ravage"
+            },
+            {
+              "ability_id": 5120,
+              "time": 0,
+              "name": "tidehunter_anchor_smash"
+            },
+            {
+              "ability_id": 5120,
+              "time": 0,
+              "name": "tidehunter_anchor_smash"
+            },
+            {
+              "ability_id": 5120,
+              "time": 0,
+              "name": "tidehunter_anchor_smash"
+            },
+            {
+              "ability_id": 754,
+              "time": 0,
+              "name": "special_bonus_unique_tidehunter_5"
+            },
+            {
+              "ability_id": 5119,
+              "time": 0,
+              "name": "tidehunter_kraken_shell"
+            },
+            {
+              "ability_id": 5118,
+              "time": 0,
+              "name": "tidehunter_gush"
+            },
+            {
+              "ability_id": 5121,
+              "time": 0,
+              "name": "tidehunter_ravage"
+            },
+            {
+              "ability_id": 5118,
+              "time": 0,
+              "name": "tidehunter_gush"
+            },
+            {
+              "ability_id": 5118,
+              "time": 0,
+              "name": "tidehunter_gush"
+            },
+            {
+              "ability_id": 6945,
+              "time": 0,
+              "name": "special_bonus_unique_tidehunter_2"
+            },
+            {
+              "ability_id": 5121,
+              "time": 0,
+              "name": "tidehunter_ravage"
+            },
+            {
+              "ability_id": 6151,
+              "time": 0,
+              "name": "special_bonus_unique_tidehunter"
+            },
+            {
+              "ability_id": 7978,
+              "time": 0,
+              "name": "special_bonus_unique_tidehunter_7"
+            }
+          ],
+          "laneInfo": null
+        }
+      },
+      {
+        "player": {
+          "nickname": "GH",
+          "steam32": 101356886
+        },
+        "laneInfo": {
+          "lane": "BOTTOM",
+          "switchTo": null,
+          "metaLane": "SAFE"
+        },
+        "performance": {
+          "hero": {
+            "valve_id": 110,
+            "short_name": "phoenix"
+          },
+          "level": 20,
+          "kills": 4,
+          "deaths": 6,
+          "assists": 20,
+          "gpm": 419,
+          "xpm": 518,
+          "building_damage": 42,
+          "hero_damage": 22815,
+          "hero_healing": 3654,
+          "end_game_gold": 2266,
+          "gold_spent": 15270,
+          "hero_variant": 0,
+          "items": [
+            {
+              "item_id": 46,
+              "time": -89,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 44,
+              "time": -89,
+              "name": "item_tango"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 43,
+              "time": -89,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 1123,
+              "time": -89,
+              "name": "item_blood_grenade"
+            },
+            {
+              "item_id": 34,
+              "time": -89,
+              "name": "item_magic_stick"
+            },
+            {
+              "item_id": 237,
+              "time": -89,
+              "name": "item_faerie_fire"
+            },
+            {
+              "item_id": 188,
+              "time": -89,
+              "name": "item_smoke_of_deceit"
+            },
+            {
+              "item_id": 42,
+              "time": -89,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": -89,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 29,
+              "time": -26,
+              "name": "item_boots"
+            },
+            {
+              "item_id": 44,
+              "time": 78,
+              "name": "item_tango"
+            },
+            {
+              "item_id": 43,
+              "time": 79,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 39,
+              "time": 169,
+              "name": "item_flask"
+            },
+            {
+              "item_id": 244,
+              "time": 244,
+              "name": "item_wind_lace"
+            },
+            {
+              "item_id": 27,
+              "time": 244,
+              "name": "item_ring_of_regen"
+            },
+            {
+              "item_id": 16,
+              "time": 244,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 43,
+              "time": 249,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 214,
+              "time": 292,
+              "name": "item_tranquil_boots"
+            },
+            {
+              "item_id": 16,
+              "time": 314,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 35,
+              "time": 314,
+              "name": "item_recipe_magic_wand"
+            },
+            {
+              "item_id": 42,
+              "time": 315,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 36,
+              "time": 362,
+              "name": "item_magic_wand"
+            },
+            {
+              "item_id": 218,
+              "time": 362,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 218,
+              "time": 398,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 398,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 38,
+              "time": 565,
+              "name": "item_clarity"
+            },
+            {
+              "item_id": 9,
+              "time": 699,
+              "name": "item_platemail"
+            },
+            {
+              "item_id": 43,
+              "time": 801,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 218,
+              "time": 801,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 42,
+              "time": 801,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 38,
+              "time": 802,
+              "name": "item_clarity"
+            },
+            {
+              "item_id": 40,
+              "time": 887,
+              "name": "item_dust"
+            },
+            {
+              "item_id": 43,
+              "time": 887,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 218,
+              "time": 887,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 42,
+              "time": 887,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 1847,
+              "time": 951,
+              "name": "item_splintmail"
+            },
+            {
+              "item_id": 43,
+              "time": 953,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 1872,
+              "time": 1091,
+              "name": "item_chasm_stone"
+            },
+            {
+              "item_id": 118,
+              "time": 1288,
+              "name": "item_recipe_shivas_guard"
+            },
+            {
+              "item_id": 119,
+              "time": 1307,
+              "name": "item_shivas_guard"
+            },
+            {
+              "item_id": 46,
+              "time": 1326,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 43,
+              "time": 1326,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 218,
+              "time": 1326,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 42,
+              "time": 1326,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 1328,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 1328,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 38,
+              "time": 1330,
+              "name": "item_clarity"
+            },
+            {
+              "item_id": 609,
+              "time": 1512,
+              "name": "item_aghanims_shard"
+            },
+            {
+              "item_id": 43,
+              "time": 1594,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 43,
+              "time": 1595,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 30,
+              "time": 1617,
+              "name": "item_gem"
+            },
+            {
+              "item_id": 43,
+              "time": 1660,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 43,
+              "time": 1732,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 188,
+              "time": 1732,
+              "name": "item_smoke_of_deceit"
+            },
+            {
+              "item_id": 43,
+              "time": 1838,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 43,
+              "time": 1838,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 43,
+              "time": 2027,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 43,
+              "time": 2027,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 1802,
+              "time": 2052,
+              "name": "item_tiara_of_selemene"
+            },
+            {
+              "item_id": 43,
+              "time": 2137,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 188,
+              "time": 2196,
+              "name": "item_smoke_of_deceit"
+            },
+            {
+              "item_id": 43,
+              "time": 2196,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 95,
+              "time": 2289,
+              "name": "item_recipe_sheepstick"
+            },
+            {
+              "item_id": 58,
+              "time": 2302,
+              "name": "item_mystic_staff"
+            },
+            {
+              "item_id": 96,
+              "time": 2311,
+              "name": "item_sheepstick"
+            }
+          ],
+          "abilities": [
+            {
+              "ability_id": 5625,
+              "time": 0,
+              "name": "phoenix_fire_spirits"
+            },
+            {
+              "ability_id": 5623,
+              "time": 0,
+              "name": "phoenix_icarus_dive"
+            },
+            {
+              "ability_id": 5625,
+              "time": 0,
+              "name": "phoenix_fire_spirits"
+            },
+            {
+              "ability_id": 5626,
+              "time": 0,
+              "name": "phoenix_sun_ray"
+            },
+            {
+              "ability_id": 5625,
+              "time": 0,
+              "name": "phoenix_fire_spirits"
+            },
+            {
+              "ability_id": 5630,
+              "time": 0,
+              "name": "phoenix_supernova"
+            },
+            {
+              "ability_id": 5625,
+              "time": 0,
+              "name": "phoenix_fire_spirits"
+            },
+            {
+              "ability_id": 5626,
+              "time": 0,
+              "name": "phoenix_sun_ray"
+            },
+            {
+              "ability_id": 5626,
+              "time": 0,
+              "name": "phoenix_sun_ray"
+            },
+            {
+              "ability_id": 5626,
+              "time": 0,
+              "name": "phoenix_sun_ray"
+            },
+            {
+              "ability_id": 406,
+              "time": 0,
+              "name": "special_bonus_unique_phoenix_6"
+            },
+            {
+              "ability_id": 5623,
+              "time": 0,
+              "name": "phoenix_icarus_dive"
+            },
+            {
+              "ability_id": 5630,
+              "time": 0,
+              "name": "phoenix_supernova"
+            },
+            {
+              "ability_id": 5623,
+              "time": 0,
+              "name": "phoenix_icarus_dive"
+            },
+            {
+              "ability_id": 5623,
+              "time": 0,
+              "name": "phoenix_icarus_dive"
+            },
+            {
+              "ability_id": 6308,
+              "time": 0,
+              "name": "special_bonus_hp_regen_25"
+            },
+            {
+              "ability_id": 5630,
+              "time": 0,
+              "name": "phoenix_supernova"
+            }
+          ],
+          "laneInfo": null
+        }
+      }
+    ]
+  },
+  "dire": {
+    "team": {
+      "name": "REKONIX",
+      "valve_id": 9828897,
+      "tag": "RKX",
+      "logo": "-2276330815015596600",
+      "display": true
+    },
+    "player_performances": [
+      {
+        "player": {
+          "nickname": "Fbz",
+          "steam32": 156328257
+        },
+        "laneInfo": {
+          "lane": "BOTTOM",
+          "switchTo": null,
+          "metaLane": "OFFLANE"
+        },
+        "performance": {
+          "hero": {
+            "valve_id": 28,
+            "short_name": "slardar"
+          },
+          "level": 20,
+          "kills": 1,
+          "deaths": 8,
+          "assists": 9,
+          "gpm": 401,
+          "xpm": 543,
+          "building_damage": 0,
+          "hero_damage": 6978,
+          "hero_healing": 0,
+          "end_game_gold": 456,
+          "gold_spent": 15275,
+          "hero_variant": 0,
+          "items": [
+            {
+              "item_id": 46,
+              "time": -89,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 20,
+              "time": -89,
+              "name": "item_circlet"
+            },
+            {
+              "item_id": 44,
+              "time": -89,
+              "name": "item_tango"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 11,
+              "time": -89,
+              "name": "item_quelling_blade"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 13,
+              "time": -89,
+              "name": "item_gauntlets"
+            },
+            {
+              "item_id": 72,
+              "time": 42,
+              "name": "item_recipe_bracer"
+            },
+            {
+              "item_id": 39,
+              "time": 68,
+              "name": "item_flask"
+            },
+            {
+              "item_id": 73,
+              "time": 97,
+              "name": "item_bracer"
+            },
+            {
+              "item_id": 34,
+              "time": 128,
+              "name": "item_magic_stick"
+            },
+            {
+              "item_id": 44,
+              "time": 149,
+              "name": "item_tango"
+            },
+            {
+              "item_id": 13,
+              "time": 151,
+              "name": "item_gauntlets"
+            },
+            {
+              "item_id": 20,
+              "time": 200,
+              "name": "item_circlet"
+            },
+            {
+              "item_id": 72,
+              "time": 241,
+              "name": "item_recipe_bracer"
+            },
+            {
+              "item_id": 39,
+              "time": 297,
+              "name": "item_flask"
+            },
+            {
+              "item_id": 73,
+              "time": 324,
+              "name": "item_bracer"
+            },
+            {
+              "item_id": 29,
+              "time": 384,
+              "name": "item_boots"
+            },
+            {
+              "item_id": 25,
+              "time": 507,
+              "name": "item_gloves"
+            },
+            {
+              "item_id": 17,
+              "time": 582,
+              "name": "item_belt_of_strength"
+            },
+            {
+              "item_id": 63,
+              "time": 600,
+              "name": "item_power_treads"
+            },
+            {
+              "item_id": 13,
+              "time": 603,
+              "name": "item_gauntlets"
+            },
+            {
+              "item_id": 12,
+              "time": 635,
+              "name": "item_ring_of_protection"
+            },
+            {
+              "item_id": 13,
+              "time": 674,
+              "name": "item_gauntlets"
+            },
+            {
+              "item_id": 177,
+              "time": 726,
+              "name": "item_recipe_soul_ring"
+            },
+            {
+              "item_id": 178,
+              "time": 766,
+              "name": "item_soul_ring"
+            },
+            {
+              "item_id": 609,
+              "time": 972,
+              "name": "item_aghanims_shard"
+            },
+            {
+              "item_id": 38,
+              "time": 1017,
+              "name": "item_clarity"
+            },
+            {
+              "item_id": 38,
+              "time": 1017,
+              "name": "item_clarity"
+            },
+            {
+              "item_id": 43,
+              "time": 1197,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 1,
+              "time": 1304,
+              "name": "item_blink"
+            },
+            {
+              "item_id": 21,
+              "time": 1430,
+              "name": "item_ogre_axe"
+            },
+            {
+              "item_id": 8,
+              "time": 1651,
+              "name": "item_mithril_hammer"
+            },
+            {
+              "item_id": 115,
+              "time": 1821,
+              "name": "item_recipe_black_king_bar"
+            },
+            {
+              "item_id": 116,
+              "time": 1857,
+              "name": "item_black_king_bar"
+            },
+            {
+              "item_id": 32,
+              "time": 2146,
+              "name": "item_talisman_of_evasion"
+            },
+            {
+              "item_id": 1847,
+              "time": 2147,
+              "name": "item_splintmail"
+            },
+            {
+              "item_id": 56,
+              "time": 2147,
+              "name": "item_ring_of_health"
+            },
+            {
+              "item_id": 209,
+              "time": 2147,
+              "name": "item_recipe_heavens_halberd"
+            },
+            {
+              "item_id": 210,
+              "time": 2173,
+              "name": "item_heavens_halberd"
+            }
+          ],
+          "abilities": [
+            {
+              "ability_id": 5115,
+              "time": 0,
+              "name": "slardar_slithereen_crush"
+            },
+            {
+              "ability_id": 5114,
+              "time": 0,
+              "name": "slardar_sprint"
+            },
+            {
+              "ability_id": 5115,
+              "time": 0,
+              "name": "slardar_slithereen_crush"
+            },
+            {
+              "ability_id": 5114,
+              "time": 0,
+              "name": "slardar_sprint"
+            },
+            {
+              "ability_id": 5115,
+              "time": 0,
+              "name": "slardar_slithereen_crush"
+            },
+            {
+              "ability_id": 5117,
+              "time": 0,
+              "name": "slardar_amplify_damage"
+            },
+            {
+              "ability_id": 5115,
+              "time": 0,
+              "name": "slardar_slithereen_crush"
+            },
+            {
+              "ability_id": 5116,
+              "time": 0,
+              "name": "slardar_bash"
+            },
+            {
+              "ability_id": 5114,
+              "time": 0,
+              "name": "slardar_sprint"
+            },
+            {
+              "ability_id": 5114,
+              "time": 0,
+              "name": "slardar_sprint"
+            },
+            {
+              "ability_id": 852,
+              "time": 0,
+              "name": "special_bonus_unique_slardar_7"
+            },
+            {
+              "ability_id": 5116,
+              "time": 0,
+              "name": "slardar_bash"
+            },
+            {
+              "ability_id": 5117,
+              "time": 0,
+              "name": "slardar_amplify_damage"
+            },
+            {
+              "ability_id": 5116,
+              "time": 0,
+              "name": "slardar_bash"
+            },
+            {
+              "ability_id": 5116,
+              "time": 0,
+              "name": "slardar_bash"
+            },
+            {
+              "ability_id": 5903,
+              "time": 0,
+              "name": "special_bonus_hp_250"
+            },
+            {
+              "ability_id": 5117,
+              "time": 0,
+              "name": "slardar_amplify_damage"
+            },
+            {
+              "ability_id": 6211,
+              "time": 0,
+              "name": "special_bonus_unique_slardar"
+            }
+          ],
+          "laneInfo": null
+        }
+      },
+      {
+        "player": {
+          "nickname": "TraVins",
+          "steam32": 140411011
+        },
+        "laneInfo": {
+          "lane": "TOP",
+          "switchTo": null,
+          "metaLane": "SAFE"
+        },
+        "performance": {
+          "hero": {
+            "valve_id": 9,
+            "short_name": "mirana"
+          },
+          "level": 23,
+          "kills": 9,
+          "deaths": 5,
+          "assists": 9,
+          "gpm": 623,
+          "xpm": 693,
+          "building_damage": 1254,
+          "hero_damage": 26708,
+          "hero_healing": 0,
+          "end_game_gold": 468,
+          "gold_spent": 26230,
+          "hero_variant": 0,
+          "items": [
+            {
+              "item_id": 237,
+              "time": -89,
+              "name": "item_faerie_fire"
+            },
+            {
+              "item_id": 34,
+              "time": -89,
+              "name": "item_magic_stick"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 11,
+              "time": -89,
+              "name": "item_quelling_blade"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 46,
+              "time": -89,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 44,
+              "time": -89,
+              "name": "item_tango"
+            },
+            {
+              "item_id": 18,
+              "time": 48,
+              "name": "item_boots_of_elves"
+            },
+            {
+              "item_id": 25,
+              "time": 147,
+              "name": "item_gloves"
+            },
+            {
+              "item_id": 29,
+              "time": 226,
+              "name": "item_boots"
+            },
+            {
+              "item_id": 28,
+              "time": 230,
+              "name": "item_sobi_mask"
+            },
+            {
+              "item_id": 63,
+              "time": 263,
+              "name": "item_power_treads"
+            },
+            {
+              "item_id": 2,
+              "time": 303,
+              "name": "item_blades_of_attack"
+            },
+            {
+              "item_id": 16,
+              "time": 366,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 35,
+              "time": 366,
+              "name": "item_recipe_magic_wand"
+            },
+            {
+              "item_id": 593,
+              "time": 366,
+              "name": "item_fluffy_hat"
+            },
+            {
+              "item_id": 599,
+              "time": 366,
+              "name": "item_recipe_falcon_blade"
+            },
+            {
+              "item_id": 596,
+              "time": 404,
+              "name": "item_falcon_blade"
+            },
+            {
+              "item_id": 36,
+              "time": 404,
+              "name": "item_magic_wand"
+            },
+            {
+              "item_id": 7,
+              "time": 464,
+              "name": "item_javelin"
+            },
+            {
+              "item_id": 8,
+              "time": 725,
+              "name": "item_mithril_hammer"
+            },
+            {
+              "item_id": 25,
+              "time": 792,
+              "name": "item_gloves"
+            },
+            {
+              "item_id": 166,
+              "time": 806,
+              "name": "item_maelstrom"
+            },
+            {
+              "item_id": 46,
+              "time": 830,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 265,
+              "time": 833,
+              "name": "item_infused_raindrop"
+            },
+            {
+              "item_id": 55,
+              "time": 1085,
+              "name": "item_hyperstone"
+            },
+            {
+              "item_id": 157,
+              "time": 1130,
+              "name": "item_recipe_mjollnir"
+            },
+            {
+              "item_id": 158,
+              "time": 1141,
+              "name": "item_mjollnir"
+            },
+            {
+              "item_id": 8,
+              "time": 1257,
+              "name": "item_mithril_hammer"
+            },
+            {
+              "item_id": 46,
+              "time": 1258,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 21,
+              "time": 1350,
+              "name": "item_ogre_axe"
+            },
+            {
+              "item_id": 115,
+              "time": 1403,
+              "name": "item_recipe_black_king_bar"
+            },
+            {
+              "item_id": 116,
+              "time": 1419,
+              "name": "item_black_king_bar"
+            },
+            {
+              "item_id": 22,
+              "time": 1490,
+              "name": "item_blade_of_alacrity"
+            },
+            {
+              "item_id": 46,
+              "time": 1491,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 17,
+              "time": 1539,
+              "name": "item_belt_of_strength"
+            },
+            {
+              "item_id": 234,
+              "time": 1539,
+              "name": "item_recipe_dragon_lance"
+            },
+            {
+              "item_id": 236,
+              "time": 1556,
+              "name": "item_dragon_lance"
+            },
+            {
+              "item_id": 609,
+              "time": 1653,
+              "name": "item_aghanims_shard"
+            },
+            {
+              "item_id": 46,
+              "time": 1719,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 22,
+              "time": 2044,
+              "name": "item_blade_of_alacrity"
+            },
+            {
+              "item_id": 3,
+              "time": 2044,
+              "name": "item_broadsword"
+            },
+            {
+              "item_id": 1076,
+              "time": 2044,
+              "name": "item_specialists_array"
+            },
+            {
+              "item_id": 1715,
+              "time": 2044,
+              "name": "item_recipe_specialists_array"
+            },
+            {
+              "item_id": 181,
+              "time": 2044,
+              "name": "item_orb_of_venom"
+            },
+            {
+              "item_id": 1857,
+              "time": 2044,
+              "name": "item_recipe_hydras_breath"
+            },
+            {
+              "item_id": 1858,
+              "time": 2054,
+              "name": "item_hydras_breath"
+            },
+            {
+              "item_id": 46,
+              "time": 2084,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 46,
+              "time": 2085,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 122,
+              "time": 2332,
+              "name": "item_recipe_sphere"
+            },
+            {
+              "item_id": 24,
+              "time": 2361,
+              "name": "item_ultimate_orb"
+            },
+            {
+              "item_id": 56,
+              "time": 2485,
+              "name": "item_ring_of_health"
+            },
+            {
+              "item_id": 69,
+              "time": 2485,
+              "name": "item_pers"
+            },
+            {
+              "item_id": 57,
+              "time": 2485,
+              "name": "item_void_stone"
+            }
+          ],
+          "abilities": [
+            {
+              "ability_id": 5048,
+              "time": 0,
+              "name": "mirana_arrow"
+            },
+            {
+              "ability_id": 5051,
+              "time": 0,
+              "name": "mirana_starfall"
+            },
+            {
+              "ability_id": 5050,
+              "time": 0,
+              "name": "mirana_leap"
+            },
+            {
+              "ability_id": 5051,
+              "time": 0,
+              "name": "mirana_starfall"
+            },
+            {
+              "ability_id": 5051,
+              "time": 0,
+              "name": "mirana_starfall"
+            },
+            {
+              "ability_id": 5050,
+              "time": 0,
+              "name": "mirana_leap"
+            },
+            {
+              "ability_id": 5051,
+              "time": 0,
+              "name": "mirana_starfall"
+            },
+            {
+              "ability_id": 5050,
+              "time": 0,
+              "name": "mirana_leap"
+            },
+            {
+              "ability_id": 1213,
+              "time": 0,
+              "name": "mirana_invis"
+            },
+            {
+              "ability_id": 5050,
+              "time": 0,
+              "name": "mirana_leap"
+            },
+            {
+              "ability_id": 817,
+              "time": 0,
+              "name": "special_bonus_unique_mirana_6"
+            },
+            {
+              "ability_id": 5048,
+              "time": 0,
+              "name": "mirana_arrow"
+            },
+            {
+              "ability_id": 1213,
+              "time": 0,
+              "name": "mirana_invis"
+            },
+            {
+              "ability_id": 5048,
+              "time": 0,
+              "name": "mirana_arrow"
+            },
+            {
+              "ability_id": 5048,
+              "time": 0,
+              "name": "mirana_arrow"
+            },
+            {
+              "ability_id": 6013,
+              "time": 0,
+              "name": "special_bonus_unique_mirana_1"
+            },
+            {
+              "ability_id": 1213,
+              "time": 0,
+              "name": "mirana_invis"
+            },
+            {
+              "ability_id": 1788,
+              "time": 0,
+              "name": null
+            }
+          ],
+          "laneInfo": null
+        }
+      },
+      {
+        "player": {
+          "nickname": "InYourdreaM",
+          "steam32": 181716137
+        },
+        "laneInfo": {
+          "lane": "MIDDLE",
+          "switchTo": null,
+          "metaLane": null
+        },
+        "performance": {
+          "hero": {
+            "valve_id": 106,
+            "short_name": "emberspirit"
+          },
+          "level": 18,
+          "kills": 5,
+          "deaths": 10,
+          "assists": 6,
+          "gpm": 395,
+          "xpm": 438,
+          "building_damage": 39,
+          "hero_damage": 20241,
+          "hero_healing": 0,
+          "end_game_gold": 2181,
+          "gold_spent": 12090,
+          "hero_variant": 0,
+          "items": [
+            {
+              "item_id": 237,
+              "time": -89,
+              "name": "item_faerie_fire"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 46,
+              "time": -89,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 42,
+              "time": -89,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 44,
+              "time": -89,
+              "name": "item_tango"
+            },
+            {
+              "item_id": 11,
+              "time": -89,
+              "name": "item_quelling_blade"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 41,
+              "time": 39,
+              "name": "item_bottle"
+            },
+            {
+              "item_id": 34,
+              "time": 81,
+              "name": "item_magic_stick"
+            },
+            {
+              "item_id": 35,
+              "time": 81,
+              "name": "item_recipe_magic_wand"
+            },
+            {
+              "item_id": 36,
+              "time": 125,
+              "name": "item_magic_wand"
+            },
+            {
+              "item_id": 20,
+              "time": 165,
+              "name": "item_circlet"
+            },
+            {
+              "item_id": 2,
+              "time": 293,
+              "name": "item_blades_of_attack"
+            },
+            {
+              "item_id": 29,
+              "time": 337,
+              "name": "item_boots"
+            },
+            {
+              "item_id": 4,
+              "time": 409,
+              "name": "item_chainmail"
+            },
+            {
+              "item_id": 50,
+              "time": 412,
+              "name": "item_phase_boots"
+            },
+            {
+              "item_id": 42,
+              "time": 415,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 416,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 416,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 56,
+              "time": 525,
+              "name": "item_ring_of_health"
+            },
+            {
+              "item_id": 57,
+              "time": 677,
+              "name": "item_void_stone"
+            },
+            {
+              "item_id": 69,
+              "time": 691,
+              "name": "item_pers"
+            },
+            {
+              "item_id": 31,
+              "time": 734,
+              "name": "item_cloak"
+            },
+            {
+              "item_id": 2,
+              "time": 770,
+              "name": "item_blades_of_attack"
+            },
+            {
+              "item_id": 181,
+              "time": 814,
+              "name": "item_orb_of_venom"
+            },
+            {
+              "item_id": 598,
+              "time": 824,
+              "name": "item_mage_slayer"
+            },
+            {
+              "item_id": 23,
+              "time": 1085,
+              "name": "item_staff_of_wizardry"
+            },
+            {
+              "item_id": 19,
+              "time": 1085,
+              "name": "item_robe"
+            },
+            {
+              "item_id": 258,
+              "time": 1122,
+              "name": "item_recipe_kaya"
+            },
+            {
+              "item_id": 259,
+              "time": 1144,
+              "name": "item_kaya"
+            },
+            {
+              "item_id": 46,
+              "time": 1343,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 21,
+              "time": 1598,
+              "name": "item_ogre_axe"
+            },
+            {
+              "item_id": 17,
+              "time": 1598,
+              "name": "item_belt_of_strength"
+            },
+            {
+              "item_id": 162,
+              "time": 1599,
+              "name": "item_sange"
+            },
+            {
+              "item_id": 273,
+              "time": 1599,
+              "name": "item_kaya_and_sange"
+            },
+            {
+              "item_id": 161,
+              "time": 1599,
+              "name": "item_recipe_sange"
+            },
+            {
+              "item_id": 40,
+              "time": 1740,
+              "name": "item_dust"
+            },
+            {
+              "item_id": 609,
+              "time": 2181,
+              "name": "item_aghanims_shard"
+            }
+          ],
+          "abilities": [
+            {
+              "ability_id": 5605,
+              "time": 0,
+              "name": "ember_spirit_flame_guard"
+            },
+            {
+              "ability_id": 5604,
+              "time": 0,
+              "name": "ember_spirit_sleight_of_fist"
+            },
+            {
+              "ability_id": 5605,
+              "time": 0,
+              "name": "ember_spirit_flame_guard"
+            },
+            {
+              "ability_id": 5603,
+              "time": 0,
+              "name": "ember_spirit_searing_chains"
+            },
+            {
+              "ability_id": 5604,
+              "time": 0,
+              "name": "ember_spirit_sleight_of_fist"
+            },
+            {
+              "ability_id": 5606,
+              "time": 0,
+              "name": "ember_spirit_fire_remnant"
+            },
+            {
+              "ability_id": 5604,
+              "time": 0,
+              "name": "ember_spirit_sleight_of_fist"
+            },
+            {
+              "ability_id": 5604,
+              "time": 0,
+              "name": "ember_spirit_sleight_of_fist"
+            },
+            {
+              "ability_id": 5603,
+              "time": 0,
+              "name": "ember_spirit_searing_chains"
+            },
+            {
+              "ability_id": 5603,
+              "time": 0,
+              "name": "ember_spirit_searing_chains"
+            },
+            {
+              "ability_id": 6172,
+              "time": 0,
+              "name": "special_bonus_unique_ember_spirit_1"
+            },
+            {
+              "ability_id": 5603,
+              "time": 0,
+              "name": "ember_spirit_searing_chains"
+            },
+            {
+              "ability_id": 5605,
+              "time": 0,
+              "name": "ember_spirit_flame_guard"
+            },
+            {
+              "ability_id": 5606,
+              "time": 0,
+              "name": "ember_spirit_fire_remnant"
+            },
+            {
+              "ability_id": 5605,
+              "time": 0,
+              "name": "ember_spirit_flame_guard"
+            },
+            {
+              "ability_id": 6647,
+              "time": 0,
+              "name": "special_bonus_unique_ember_spirit_3"
+            },
+            {
+              "ability_id": 5606,
+              "time": 0,
+              "name": "ember_spirit_fire_remnant"
+            }
+          ],
+          "laneInfo": null
+        }
+      },
+      {
+        "player": {
+          "nickname": "estel",
+          "steam32": 155447692
+        },
+        "laneInfo": {
+          "lane": "BOTTOM",
+          "switchTo": "ROAM",
+          "metaLane": "OFFLANE"
+        },
+        "performance": {
+          "hero": {
+            "valve_id": 21,
+            "short_name": "windrunner"
+          },
+          "level": 16,
+          "kills": 4,
+          "deaths": 7,
+          "assists": 11,
+          "gpm": 292,
+          "xpm": 356,
+          "building_damage": 26,
+          "hero_damage": 14369,
+          "hero_healing": 0,
+          "end_game_gold": 1538,
+          "gold_spent": 10755,
+          "hero_variant": 0,
+          "items": [
+            {
+              "item_id": 44,
+              "time": -89,
+              "name": "item_tango"
+            },
+            {
+              "item_id": 43,
+              "time": -89,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 46,
+              "time": -89,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 42,
+              "time": -89,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 1123,
+              "time": -89,
+              "name": "item_blood_grenade"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 20,
+              "time": -89,
+              "name": "item_circlet"
+            },
+            {
+              "item_id": 216,
+              "time": 15,
+              "name": "item_enchanted_mango"
+            },
+            {
+              "item_id": 216,
+              "time": 16,
+              "name": "item_enchanted_mango"
+            },
+            {
+              "item_id": 43,
+              "time": 86,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 38,
+              "time": 87,
+              "name": "item_clarity"
+            },
+            {
+              "item_id": 39,
+              "time": 88,
+              "name": "item_flask"
+            },
+            {
+              "item_id": 46,
+              "time": 149,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 44,
+              "time": 203,
+              "name": "item_tango"
+            },
+            {
+              "item_id": 46,
+              "time": 231,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 42,
+              "time": 342,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 29,
+              "time": 350,
+              "name": "item_boots"
+            },
+            {
+              "item_id": 218,
+              "time": 388,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 46,
+              "time": 402,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 28,
+              "time": 402,
+              "name": "item_sobi_mask"
+            },
+            {
+              "item_id": 43,
+              "time": 403,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 218,
+              "time": 404,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 42,
+              "time": 404,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 1123,
+              "time": 440,
+              "name": "item_blood_grenade"
+            },
+            {
+              "item_id": 12,
+              "time": 498,
+              "name": "item_ring_of_protection"
+            },
+            {
+              "item_id": 91,
+              "time": 545,
+              "name": "item_recipe_urn_of_shadows"
+            },
+            {
+              "item_id": 92,
+              "time": 575,
+              "name": "item_urn_of_shadows"
+            },
+            {
+              "item_id": 1849,
+              "time": 656,
+              "name": "item_wizard_hat"
+            },
+            {
+              "item_id": 38,
+              "time": 656,
+              "name": "item_clarity"
+            },
+            {
+              "item_id": 4,
+              "time": 710,
+              "name": "item_chainmail"
+            },
+            {
+              "item_id": 1851,
+              "time": 752,
+              "name": "item_recipe_essence_distiller"
+            },
+            {
+              "item_id": 46,
+              "time": 753,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 34,
+              "time": 755,
+              "name": "item_magic_stick"
+            },
+            {
+              "item_id": 35,
+              "time": 755,
+              "name": "item_recipe_magic_wand"
+            },
+            {
+              "item_id": 38,
+              "time": 755,
+              "name": "item_clarity"
+            },
+            {
+              "item_id": 1852,
+              "time": 776,
+              "name": "item_essence_distiller"
+            },
+            {
+              "item_id": 36,
+              "time": 776,
+              "name": "item_magic_wand"
+            },
+            {
+              "item_id": 43,
+              "time": 802,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 218,
+              "time": 804,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 42,
+              "time": 804,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 237,
+              "time": 804,
+              "name": "item_faerie_fire"
+            },
+            {
+              "item_id": 188,
+              "time": 806,
+              "name": "item_smoke_of_deceit"
+            },
+            {
+              "item_id": 46,
+              "time": 972,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 22,
+              "time": 977,
+              "name": "item_blade_of_alacrity"
+            },
+            {
+              "item_id": 43,
+              "time": 1043,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 46,
+              "time": 1142,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 19,
+              "time": 1230,
+              "name": "item_robe"
+            },
+            {
+              "item_id": 173,
+              "time": 1403,
+              "name": "item_recipe_diffusal_blade"
+            },
+            {
+              "item_id": 174,
+              "time": 1408,
+              "name": "item_diffusal_blade"
+            },
+            {
+              "item_id": 46,
+              "time": 1416,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 43,
+              "time": 1455,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 5,
+              "time": 1617,
+              "name": "item_claymore"
+            },
+            {
+              "item_id": 40,
+              "time": 1750,
+              "name": "item_dust"
+            },
+            {
+              "item_id": 40,
+              "time": 1750,
+              "name": "item_dust"
+            },
+            {
+              "item_id": 485,
+              "time": 1872,
+              "name": "item_blitz_knuckles"
+            },
+            {
+              "item_id": 215,
+              "time": 2029,
+              "name": "item_shadow_amulet"
+            },
+            {
+              "item_id": 152,
+              "time": 2045,
+              "name": "item_invis_sword"
+            },
+            {
+              "item_id": 40,
+              "time": 2091,
+              "name": "item_dust"
+            },
+            {
+              "item_id": 40,
+              "time": 2091,
+              "name": "item_dust"
+            }
+          ],
+          "abilities": [
+            {
+              "ability_id": 5131,
+              "time": 0,
+              "name": "windrunner_powershot"
+            },
+            {
+              "ability_id": 5132,
+              "time": 0,
+              "name": "windrunner_windrun"
+            },
+            {
+              "ability_id": 5131,
+              "time": 0,
+              "name": "windrunner_powershot"
+            },
+            {
+              "ability_id": 5130,
+              "time": 0,
+              "name": "windrunner_shackleshot"
+            },
+            {
+              "ability_id": 5131,
+              "time": 0,
+              "name": "windrunner_powershot"
+            },
+            {
+              "ability_id": 5133,
+              "time": 0,
+              "name": "windrunner_focusfire"
+            },
+            {
+              "ability_id": 5131,
+              "time": 0,
+              "name": "windrunner_powershot"
+            },
+            {
+              "ability_id": 5132,
+              "time": 0,
+              "name": "windrunner_windrun"
+            },
+            {
+              "ability_id": 5130,
+              "time": 0,
+              "name": "windrunner_shackleshot"
+            },
+            {
+              "ability_id": 5130,
+              "time": 0,
+              "name": "windrunner_shackleshot"
+            },
+            {
+              "ability_id": 6992,
+              "time": 0,
+              "name": "special_bonus_unique_windranger_4"
+            },
+            {
+              "ability_id": 5130,
+              "time": 0,
+              "name": "windrunner_shackleshot"
+            },
+            {
+              "ability_id": 5133,
+              "time": 0,
+              "name": "windrunner_focusfire"
+            },
+            {
+              "ability_id": 5132,
+              "time": 0,
+              "name": "windrunner_windrun"
+            },
+            {
+              "ability_id": 5132,
+              "time": 0,
+              "name": "windrunner_windrun"
+            },
+            {
+              "ability_id": 6562,
+              "time": 0,
+              "name": "special_bonus_unique_windranger_3"
+            }
+          ],
+          "laneInfo": null
+        }
+      },
+      {
+        "player": {
+          "nickname": "Varizh",
+          "steam32": 118559150
+        },
+        "laneInfo": {
+          "lane": "TOP",
+          "switchTo": null,
+          "metaLane": "SAFE"
+        },
+        "performance": {
+          "hero": {
+            "valve_id": 31,
+            "short_name": "lich"
+          },
+          "level": 17,
+          "kills": 3,
+          "deaths": 10,
+          "assists": 13,
+          "gpm": 291,
+          "xpm": 379,
+          "building_damage": 18,
+          "hero_damage": 17215,
+          "hero_healing": 313,
+          "end_game_gold": 1125,
+          "gold_spent": 11370,
+          "hero_variant": 0,
+          "items": [
+            {
+              "item_id": 188,
+              "time": -89,
+              "name": "item_smoke_of_deceit"
+            },
+            {
+              "item_id": 1123,
+              "time": -89,
+              "name": "item_blood_grenade"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 237,
+              "time": -89,
+              "name": "item_faerie_fire"
+            },
+            {
+              "item_id": 16,
+              "time": -89,
+              "name": "item_branches"
+            },
+            {
+              "item_id": 46,
+              "time": -89,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 237,
+              "time": -89,
+              "name": "item_faerie_fire"
+            },
+            {
+              "item_id": 44,
+              "time": -89,
+              "name": "item_tango"
+            },
+            {
+              "item_id": 43,
+              "time": -89,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 44,
+              "time": -39,
+              "name": "item_tango"
+            },
+            {
+              "item_id": 39,
+              "time": -26,
+              "name": "item_flask"
+            },
+            {
+              "item_id": 216,
+              "time": -10,
+              "name": "item_enchanted_mango"
+            },
+            {
+              "item_id": 216,
+              "time": -9,
+              "name": "item_enchanted_mango"
+            },
+            {
+              "item_id": 44,
+              "time": 24,
+              "name": "item_tango"
+            },
+            {
+              "item_id": 38,
+              "time": 37,
+              "name": "item_clarity"
+            },
+            {
+              "item_id": 1123,
+              "time": 134,
+              "name": "item_blood_grenade"
+            },
+            {
+              "item_id": 218,
+              "time": 135,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 42,
+              "time": 135,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 265,
+              "time": 193,
+              "name": "item_infused_raindrop"
+            },
+            {
+              "item_id": 44,
+              "time": 226,
+              "name": "item_tango"
+            },
+            {
+              "item_id": 43,
+              "time": 234,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 29,
+              "time": 368,
+              "name": "item_boots"
+            },
+            {
+              "item_id": 188,
+              "time": 401,
+              "name": "item_smoke_of_deceit"
+            },
+            {
+              "item_id": 43,
+              "time": 402,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 43,
+              "time": 405,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 218,
+              "time": 454,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 42,
+              "time": 454,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 526,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 526,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 244,
+              "time": 528,
+              "name": "item_wind_lace"
+            },
+            {
+              "item_id": 27,
+              "time": 600,
+              "name": "item_ring_of_regen"
+            },
+            {
+              "item_id": 214,
+              "time": 634,
+              "name": "item_tranquil_boots"
+            },
+            {
+              "item_id": 42,
+              "time": 650,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 650,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 650,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 218,
+              "time": 650,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 650,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 46,
+              "time": 651,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 188,
+              "time": 758,
+              "name": "item_smoke_of_deceit"
+            },
+            {
+              "item_id": 218,
+              "time": 759,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 759,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 34,
+              "time": 765,
+              "name": "item_magic_stick"
+            },
+            {
+              "item_id": 36,
+              "time": 765,
+              "name": "item_magic_wand"
+            },
+            {
+              "item_id": 35,
+              "time": 765,
+              "name": "item_recipe_magic_wand"
+            },
+            {
+              "item_id": 593,
+              "time": 766,
+              "name": "item_fluffy_hat"
+            },
+            {
+              "item_id": 218,
+              "time": 767,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 767,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 218,
+              "time": 773,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 773,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 42,
+              "time": 944,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 944,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 944,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 218,
+              "time": 970,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 970,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 42,
+              "time": 1003,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 1003,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 1003,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 40,
+              "time": 1072,
+              "name": "item_dust"
+            },
+            {
+              "item_id": 40,
+              "time": 1072,
+              "name": "item_dust"
+            },
+            {
+              "item_id": 43,
+              "time": 1122,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 218,
+              "time": 1125,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 42,
+              "time": 1125,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 188,
+              "time": 1239,
+              "name": "item_smoke_of_deceit"
+            },
+            {
+              "item_id": 218,
+              "time": 1240,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 1240,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 42,
+              "time": 1300,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 1310,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 1310,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 42,
+              "time": 1411,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 1411,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 1411,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 23,
+              "time": 1412,
+              "name": "item_staff_of_wizardry"
+            },
+            {
+              "item_id": 101,
+              "time": 1412,
+              "name": "item_recipe_force_staff"
+            },
+            {
+              "item_id": 218,
+              "time": 1412,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 102,
+              "time": 1421,
+              "name": "item_force_staff"
+            },
+            {
+              "item_id": 46,
+              "time": 1429,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 4205,
+              "time": 1502,
+              "name": "item_great_famango"
+            },
+            {
+              "item_id": 46,
+              "time": 1511,
+              "name": "item_tpscroll"
+            },
+            {
+              "item_id": 43,
+              "time": 1521,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 42,
+              "time": 1530,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 1530,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 1591,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 40,
+              "time": 1654,
+              "name": "item_dust"
+            },
+            {
+              "item_id": 42,
+              "time": 1671,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 1671,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 1671,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 215,
+              "time": 1741,
+              "name": "item_shadow_amulet"
+            },
+            {
+              "item_id": 188,
+              "time": 1742,
+              "name": "item_smoke_of_deceit"
+            },
+            {
+              "item_id": 30,
+              "time": 1745,
+              "name": "item_gem"
+            },
+            {
+              "item_id": 42,
+              "time": 1815,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 1816,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 1816,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 218,
+              "time": 1816,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 1816,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 188,
+              "time": 1816,
+              "name": "item_smoke_of_deceit"
+            },
+            {
+              "item_id": 42,
+              "time": 1985,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 1985,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 1985,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 218,
+              "time": 1985,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 1985,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 43,
+              "time": 2035,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 188,
+              "time": 2035,
+              "name": "item_smoke_of_deceit"
+            },
+            {
+              "item_id": 218,
+              "time": 2041,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 42,
+              "time": 2089,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 2089,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 2089,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 12,
+              "time": 2162,
+              "name": "item_ring_of_protection"
+            },
+            {
+              "item_id": 86,
+              "time": 2162,
+              "name": "item_buckler"
+            },
+            {
+              "item_id": 85,
+              "time": 2162,
+              "name": "item_recipe_buckler"
+            },
+            {
+              "item_id": 28,
+              "time": 2162,
+              "name": "item_sobi_mask"
+            },
+            {
+              "item_id": 88,
+              "time": 2163,
+              "name": "item_ring_of_basilius"
+            },
+            {
+              "item_id": 87,
+              "time": 2163,
+              "name": "item_recipe_ring_of_basilius"
+            },
+            {
+              "item_id": 26,
+              "time": 2163,
+              "name": "item_lifesteal"
+            },
+            {
+              "item_id": 81,
+              "time": 2163,
+              "name": "item_vladmir"
+            },
+            {
+              "item_id": 2,
+              "time": 2163,
+              "name": "item_blades_of_attack"
+            },
+            {
+              "item_id": 43,
+              "time": 2164,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 42,
+              "time": 2211,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 2221,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 2221,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 43,
+              "time": 2300,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 42,
+              "time": 2346,
+              "name": "item_ward_observer"
+            },
+            {
+              "item_id": 218,
+              "time": 2361,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 2361,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 188,
+              "time": 2430,
+              "name": "item_smoke_of_deceit"
+            },
+            {
+              "item_id": 218,
+              "time": 2431,
+              "name": "item_ward_dispenser"
+            },
+            {
+              "item_id": 43,
+              "time": 2431,
+              "name": "item_ward_sentry"
+            },
+            {
+              "item_id": 42,
+              "time": 2475,
+              "name": "item_ward_observer"
+            }
+          ],
+          "abilities": [
+            {
+              "ability_id": 5134,
+              "time": 0,
+              "name": "lich_frost_nova"
+            },
+            {
+              "ability_id": 7325,
+              "time": 0,
+              "name": "lich_sinister_gaze"
+            },
+            {
+              "ability_id": 5136,
+              "time": 0,
+              "name": "lich_frost_shield"
+            },
+            {
+              "ability_id": 5134,
+              "time": 0,
+              "name": "lich_frost_nova"
+            },
+            {
+              "ability_id": 5134,
+              "time": 0,
+              "name": "lich_frost_nova"
+            },
+            {
+              "ability_id": 5137,
+              "time": 0,
+              "name": "lich_chain_frost"
+            },
+            {
+              "ability_id": 5134,
+              "time": 0,
+              "name": "lich_frost_nova"
+            },
+            {
+              "ability_id": 5136,
+              "time": 0,
+              "name": "lich_frost_shield"
+            },
+            {
+              "ability_id": 7325,
+              "time": 0,
+              "name": "lich_sinister_gaze"
+            },
+            {
+              "ability_id": 775,
+              "time": 0,
+              "name": "special_bonus_unique_lich_8"
+            },
+            {
+              "ability_id": 7325,
+              "time": 0,
+              "name": "lich_sinister_gaze"
+            },
+            {
+              "ability_id": 5136,
+              "time": 0,
+              "name": "lich_frost_shield"
+            },
+            {
+              "ability_id": 5137,
+              "time": 0,
+              "name": "lich_chain_frost"
+            },
+            {
+              "ability_id": 7325,
+              "time": 0,
+              "name": "lich_sinister_gaze"
+            },
+            {
+              "ability_id": 5136,
+              "time": 0,
+              "name": "lich_frost_shield"
+            },
+            {
+              "ability_id": 6292,
+              "time": 0,
+              "name": "special_bonus_unique_lich_2"
+            }
+          ],
+          "laneInfo": null
+        }
+      }
+    ]
+  },
+  "rating_shifts": {
+    "elo32": null,
+    "elo64": null
+  },
+  "replay_info": {
+    "cluster": "272",
+    "salt": "633461987"
+  },
+  "channels": [
+    {
+      "channel_number": 0,
+      "name": "DreamLeague Earth",
+      "country": "",
+      "casters": [
+        {
+          "nickname": "NoMeLlamoJavier",
+          "steam32": 125154850
+        },
+        {
+          "nickname": "Glembot",
+          "steam32": 49002045
+        },
+        {
+          "nickname": "ttv/mathmagician10",
+          "steam32": 94202887
+        },
+        {
+          "nickname": "Gunnar",
+          "steam32": 126238768
+        }
+      ]
+    },
+    {
+      "channel_number": 1,
+      "name": "Paragon Events",
+      "country": "",
+      "casters": [
+        {
+          "nickname": "paragonobs3",
+          "steam32": 1536272978
+        },
+        {
+          "nickname": "paragonobs21",
+          "steam32": 1716467047
+        }
+      ]
+    }
+  ],
+  "derived_series": null,
+  "map_control": {
+    "radiant": {
+      "control_value": 11.536907622283884,
+      "one_sidedness": 0.2757826523255113,
+      "neutral_control_value": 59175.26152224887,
+      "raw_control_values": [
+        0.10391684308957796,
+        0.06336598751596337,
+        0.08489650244913907,
+        0.08157194670954529,
+        0.08186142649219381,
+        0.0853930683576474,
+        0.0841142062909877,
+        0.08427618170382062,
+        0.08401862245203537,
+        0.08719681511724782,
+        0.09022240647872509,
+        0.08974580375624622,
+        0.06229864194865166,
+        0.06001665145941083,
+        0.046181383830375164,
+        0.06940760600253632,
+        0.0505968441314267,
+        0.07531285253853343,
+        0.0675788337916525,
+        0.07124750711019104,
+        0.0702771840302464,
+        0.06934215136062677,
+        0.07214833985919936,
+        0.08914943167420908,
+        0.07771266304458527,
+        0.07669064227952038,
+        0.0870391844930271,
+        0.0937580058324438,
+        0.09319519202350068,
+        0.08361304446740316,
+        0.06352018064405379,
+        0.07138390735420291,
+        0.08511404524642371,
+        0.08009721895486381,
+        0.07687177272848245,
+        0.07979962353652592,
+        0.08380017771641876,
+        0.07927079019783742,
+        0.08250960628527874,
+        0.08782092385188561,
+        0.08254220967631648,
+        0.07146874428449337,
+        0.07770980408851848,
+        0.08877375055187783,
+        0.08702840299153589,
+        0.08404231966145423,
+        0.08624634130378755,
+        0.0851032318984791,
+        0.07042902384484308,
+        0.07837742289263461,
+        0.06959714778822536,
+        0.06204866640830992,
+        0.06795375865654432,
+        0.0781058860268688,
+        0.08030953762514599,
+        0.07817861301580976,
+        0.07447562671424907,
+        0.07813257023033876,
+        0.07781069681876743,
+        0.09413863714761758,
+        0.0874828328429939,
+        0.08039488071553443,
+        0.07516790592348503,
+        0.07733011069428891,
+        0.07635208207265648,
+        0.03389797190212692,
+        0.07012641707958801,
+        0.08450732721435764,
+        0.07602264285856566,
+        0.08255134967788734,
+        0.09369117668728268,
+        0.09502409741085821,
+        0.10558873491217963,
+        0.12431368093497436,
+        0.14116713863480107,
+        0.15755488675295548,
+        0.16013594651181293,
+        0.1660622479394631,
+        0.12760439152986752,
+        0.13341584250262065,
+        0.0904603878746022,
+        0.09727169438157658,
+        0.09761867646979752,
+        0.10258172267072752,
+        0.09065227947851294,
+        0.09036710396942037,
+        0.09538508645747251,
+        0.08429503079541734,
+        0.08024666407450637,
+        0.07328573894771444,
+        0.06594963886030747,
+        0.06668399928413761,
+        0.03775663678750173,
+        0.03581341076307699,
+        0.03550637348448358,
+        0.04399651363729366,
+        0.04493544552432171,
+        0.048937627355552404,
+        0.05397645665086615,
+        0.04567049565845023,
+        0.04141790286159089,
+        0.05491749132195416,
+        0.05118398592653281,
+        0.043348316216899246,
+        0.042539338206908896,
+        0.03742739979834004,
+        0.051755985544768,
+        0.038722706256019535,
+        0.04926767868230743,
+        0.08127018201556485,
+        0.07817874882215924,
+        0.07546187308738429,
+        0.07395367491958973,
+        0.07725710558860457,
+        0.07230456201744596,
+        0.07251384799497716,
+        0.06634864499324733,
+        0.06269250326978199,
+        0.05839449363552429,
+        0.05562208946251003,
+        0.04487718348353312,
+        0.025597581793402283,
+        0.017838678352482283,
+        0.02095944804401819,
+        0.023608478926481057,
+        0.02891308505180784,
+        0.02823771808726249,
+        0.05003799765809863,
+        0.050555467916825775,
+        0.0433105577422555,
+        0.048791306526859625,
+        0.05811104737395867,
+        0.05755837171189147,
+        0.06036551603459068,
+        0.06399864257459523,
+        0.0727115435472177,
+        0.08245594430228018,
+        0.11677082246478492,
+        0.13082273022607732,
+        0.1450761419844497,
+        0.14855403652845223,
+        0.14974860968738132,
+        0.162742802888905,
+        0.17598791289895338,
+        0.18246765269527568,
+        0.1770594335984631,
+        0.1728493310263931,
+        0.17734772223626152,
+        0.17302763997985804,
+        0.14858097242178578,
+        0.15029470158726654,
+        0.1497535305087151,
+        0.19834095433525425,
+        0.18984192551311568,
+        0.18248941568593235,
+        0.17673500257861438,
+        0.1767923960257079,
+        0.1860989437993993,
+        0.1800713894211005,
+        0.19104614731531033,
+        0.18165977698901925,
+        0.21235007429423033,
+        0.18777243869676302,
+        0.17095621722379906,
+        0.1850028718209517,
+        0.1509792030017088,
+        0.1727017273068966,
+        0.14205832483921269,
+        0.14883821471659842,
+        0.14447521742493985,
+        0.1266617013364235,
+        0.15106022862197474,
+        0.15652306240260436,
+        0.21778077161089693,
+        0.23046085836636734,
+        0.221643878287359,
+        0.21580717859109985,
+        0.22079096424042904,
+        0.21806214235554713,
+        0.21002150635282302,
+        0.19817569931123638,
+        0.20055891533426337,
+        0.19894864627396014,
+        0.20635181157927732,
+        0.21701228079823387,
+        0.22053405439354073,
+        0.2052444251586339,
+        0.19205139183491765,
+        0.19950870369401755,
+        0.19435070370233817,
+        0.2572468503779229,
+        0.2667559923460605,
+        0.27155465509202154,
+        0.2743842653599822,
+        0.28225279270343206,
+        0.2798890485584711,
+        0.29126533891722267,
+        0.3046387292241424,
+        0.30099059945655005,
+        0.3195318390316031,
+        0.3142724224022937,
+        0.2923218764898719,
+        0.28536180578549275,
+        0.2532905067674645,
+        0.24546772373491324,
+        0.25296956274350557,
+        0.24325914982306973,
+        0.21661054081478306,
+        0.23353516002011768,
+        0.21897904964616152,
+        0.23722107665567485,
+        0.24359260081356313,
+        0.23385085918955165,
+        0.21173275173565914,
+        0.20094002683007467,
+        0.20106088970814745,
+        0.1952947724841097,
+        0.20344426530952783,
+        0.20806242421647766,
+        0.2015231791791584,
+        0.2177441192448959,
+        0.2160030471755097,
+        0.21012698721229117,
+        0.21384988146273332,
+        0.2182459920028471,
+        0.2224588664186353,
+        0.20409552836661315,
+        0.20357137343145199,
+        0.2123356466106894,
+        0.21570023073917063,
+        0.22231370504730089,
+        0.21818879791962087,
+        0.20838576094040348,
+        0.21042627767626923,
+        0.2015619599565559,
+        0.19367896677599938,
+        0.19803661010561957,
+        0.2109977465168028,
+        0.19381101278275056,
+        0.1913977926231071,
+        0.1852728752455077,
+        0.16007129838107673,
+        0.1643774001063737,
+        0.1701959118193697,
+        0.19210706832193022,
+        0.19791472834083584,
+        0.24054474550601945,
+        0.2632048476111532,
+        0.2594990736737073,
+        0.2691961959666359,
+        0.27631183712090146,
+        0.2897340611627611,
+        0.2959354084734146,
+        0.27910296045267263,
+        0.29767425896194055,
+        0.2783456277135249,
+        0.22284930616326848,
+        0.1987100082737323,
+        0.17706623458630064,
+        0.18422495683188228,
+        0.20056889296662292,
+        0.20899521363122436,
+        0.1558193673117104,
+        0.15200057217477236,
+        0.16396518905809254,
+        0.16744674773997342,
+        0.17457454656851634,
+        0.1686934624821673,
+        0.1747349310077961,
+        0.16238957673751886,
+        0.16775956429923897,
+        0.22090076564300534,
+        0.22319244774052724,
+        0.261667888710922,
+        0.25273344952906357,
+        0.23970003234058218,
+        0.23227226966162562,
+        0.25282387026493935,
+        0.2413064283116792,
+        0.23945022879403835,
+        0.2548516317532442,
+        0.26525216339932206,
+        0.26893271250290834,
+        0.2537616769320123,
+        0.2706953687056789,
+        0.27926437818488803,
+        0.27642879907227125,
+        0.27242629302199733,
+        0.26252893530714805,
+        0.24920173912794275,
+        0.24604270765486488,
+        0.24811706631819266,
+        0.26454282053100225,
+        0.28121072939619224,
+        0.2292672611071821,
+        0.20328365927189135,
+        0.2033045340163974,
+        0.19414547847217978,
+        0.2297427222777094,
+        0.2547455717915886,
+        0.3056571794755293,
+        0.30309913916721376,
+        0.2905983511257509,
+        0.2753940596635306,
+        0.26680388026825586,
+        0.27636170790179654,
+        0.2628113510022085,
+        0.2698436593940325,
+        0.26015617431207166,
+        0.26018187299666184,
+        0.28893037362226603,
+        0.26121546263038686,
+        0.24524110778313002,
+        0.23350885307328056,
+        0.21320556009702737,
+        0.21396786082537814,
+        0.21654874097557186,
+        0.2433615513092395,
+        0.24414971892054935,
+        0.2509710325524024,
+        0.3057266470130472,
+        0.3269428728205479,
+        0.3125684164118344,
+        0.29495329456029595,
+        0.2991526128273303,
+        0.2900891396056166,
+        0.3227769485412731,
+        0.2832759936987013,
+        0.32245176178421414,
+        0.28619273809650203,
+        0.27193532091453465,
+        0.26091754715684384,
+        0.2721854495004962,
+        0.295439152797702,
+        0.2783347245436472,
+        0.30800299960124433,
+        0.30272471536839685,
+        0.2998632872699448,
+        0.3084712262209959,
+        0.3515938722130617,
+        0.32027403209966027,
+        0.33803602326001725,
+        0.34213708962666967,
+        0.31583122246349604,
+        0.31450059834963373,
+        0.35799071467560467,
+        0.3521386749502138,
+        0.33172723172640634,
+        0.3162668069899793,
+        0.36522947010443685,
+        0.37762023466756656,
+        0.38180803702613725,
+        0.3917894853945483,
+        0.39674473383061537,
+        0.39569956698210346,
+        0.388459093108472,
+        0.3607701744868008,
+        0.3909897056327188,
+        0.39912311702242154,
+        0.40411268602206146,
+        0.40065702987890406,
+        0.4230044738282588,
+        0.4254759927887428,
+        0.438728324217035,
+        0.4329549538792152,
+        0.42724232537384077,
+        0.39385530949065545,
+        0.446697870743154,
+        0.4764012093808146,
+        0.5010053610319128,
+        0.5029928656531257,
+        0.4913586899708663,
+        0.4594453572714082,
+        0.4572914599988065,
+        0.44916799227497506,
+        0.4406559732176287,
+        0.4269788262948366,
+        0.42298567524983793,
+        0.4760503717234789,
+        0.4594585658056196,
+        0.42424488167068647,
+        0.4216823157658942,
+        0.44142307420590465,
+        0.49178406746728026,
+        0.4921416199619562,
+        0.4935742924271391,
+        0.5188912299266916,
+        0.5434866854999466,
+        0.5386444313370753,
+        0.545764640984698,
+        0.5922320561033332,
+        0.6146870177019302,
+        0.613596603936593,
+        0.618134849735207,
+        0.6071170198060326,
+        0.5980135855243944,
+        0.5741845113770355,
+        0.5570807774532465,
+        0.5574057585798201,
+        0.5749461946474234,
+        0.5812725052383522,
+        0.5901479767895949,
+        0.5915392175332715,
+        0.6309824826916167,
+        0.598848431051899,
+        0.5918130079982183,
+        0.6135920234083151,
+        0.6040604634792921,
+        0.6078918063474188,
+        0.601375391160144,
+        0.5762478214385122,
+        0.6035731951167191,
+        0.6031310959039744,
+        0.5923677622328667,
+        0.5935288043202565,
+        0.5373779025171618,
+        0.5501400999312837,
+        0.5602905097875147,
+        0.5633880667560928,
+        0.5575108307174124,
+        0.5212106734162183,
+        0.5105359010924594,
+        0.5021952583101021,
+        0.5065975669203501,
+        0.5569145885198108,
+        0.5475079246611728,
+        0.5432724885471921,
+        0.5339542427934529,
+        0.5379800168206279,
+        0.5456330975869012,
+        0.4769008378067702,
+        0.46962771158317895,
+        0.479003451079712,
+        0.4728475554073311,
+        0.4426338426468176,
+        0.4359098915412446,
+        0.4421403507938745,
+        0.44631558528895077,
+        0.48027216163096065,
+        0.5091184800349301,
+        0.4950959063790585,
+        0.4857917450856138,
+        0.46165501038232587,
+        0.45937434113040587,
+        0.4323788003086726,
+        0.4709614179177636,
+        0.48856392132214665,
+        0.47170770567695874,
+        0.4325067087551496,
+        0.43727169795120496,
+        0.45183956248508506,
+        0.4661775551359658,
+        0.4820024310011035,
+        0.5267739946902474,
+        0.5194293624489251,
+        0.5301414004669391,
+        0.5554769662507829,
+        0.5489785397856208,
+        0.5653700113011292,
+        0.5690943679706485,
+        0.571406486192733,
+        0.554275266272435,
+        0.5717719784473771,
+        0.5363071373375659,
+        0.55371928707452,
+        0.5551507481094072,
+        0.555194107577345,
+        0.5800703103878176,
+        0.5800559763367866,
+        0.5903337917563469,
+        0.5905010317832617,
+        0.5805075192181415,
+        0.5729095918306493,
+        0.5639563107810794,
+        0.5764558390081019,
+        0.5868625861296954,
+        0.5865186134321719,
+        0.5899073413939779,
+        0.5888205946827082,
+        0.5860261130381433,
+        0.6026604294471745,
+        0.5943432721933487,
+        0.5947875046941828,
+        0.5897347037020846,
+        0.5345089937499266,
+        0.5137952006237868,
+        0.503987746603158,
+        0.5552389383242103,
+        0.5726527694272467,
+        0.5657534422077255,
+        0.5441703677454354,
+        0.538809536197345,
+        0.5535222531112987,
+        0.5604612825955771,
+        0.5639978980487875,
+        0.5583706790058725,
+        0.5582169664735659,
+        0.551070671398628,
+        0.5480838168662816,
+        0.5475576984535262,
+        0.5263329045683701,
+        0.5182908761520223
+      ],
+      "raw_neutral_control_values": [
+        360.3738110452264,
+        213.11148725475957,
+        310.6841268112529,
+        310.9785871113112,
+        317.31987758742804,
+        299.93043405885527,
+        274.43654291377703,
+        287.5333093092794,
+        247.10667330695247,
+        227.36569182164385,
+        315.8409000244803,
+        263.7168124590623,
+        142.03964519308045,
+        137.55442790168416,
+        119.54962458950727,
+        382.6228931892934,
+        182.04161993030363,
+        128.93182115660937,
+        184.43006890271926,
+        339.02082538859986,
+        257.4749674648634,
+        100.07419322566854,
+        278.38972958242397,
+        190.58901502595734,
+        55.72793610005838,
+        353.8835299167445,
+        193.9761773430662,
+        335.58925468527826,
+        381.8856561025081,
+        49.140223131674894,
+        61.08506153501857,
+        387.85788914275435,
+        303.32630857680994,
+        423.02899141398706,
+        104.93284919052702,
+        246.3846447221876,
+        296.84298210537594,
+        268.94416031412896,
+        284.5461069297235,
+        307.6884673644094,
+        381.1614962536769,
+        271.83908739836465,
+        452.5943747301257,
+        539.9617651843236,
+        578.6069630214134,
+        441.5591183730049,
+        375.6787433326422,
+        307.3213641966435,
+        64.95353659417314,
+        301.52818211767334,
+        231.34062786599628,
+        71.07072921513715,
+        93.87951055305275,
+        303.6916089290808,
+        316.15060832752187,
+        511.41813252865444,
+        279.73815748900887,
+        321.18277769991,
+        407.78679075237693,
+        472.50420894608516,
+        421.44735914173776,
+        403.3576865251014,
+        260.0961862639189,
+        189.67031784800082,
+        196.2693614400755,
+        138.0704928335118,
+        283.2006853852394,
+        336.0904871203536,
+        331.8370318999651,
+        344.6012494205524,
+        370.8354452528955,
+        319.0776511546164,
+        412.608993706106,
+        511.18789408019563,
+        528.4729412195903,
+        527.8930319458291,
+        643.0716922657749,
+        526.3442840958309,
+        434.7243494795059,
+        694.7375372889602,
+        653.6604815496436,
+        616.2606094195853,
+        630.7310095170859,
+        555.6938106705302,
+        427.7491223337637,
+        430.9058027862083,
+        360.80204122894776,
+        521.238626293179,
+        359.47197770100803,
+        186.17658941774636,
+        368.83014522271145,
+        333.7849616845186,
+        295.8749446277981,
+        102.0768685225375,
+        11.198788861411785,
+        -177.11130929604928,
+        -227.91698260090783,
+        -310.8698972699626,
+        43.55561360999755,
+        304.764392199154,
+        136.7510249002575,
+        223.98361392264792,
+        176.796807049693,
+        274.00605284750156,
+        338.68178768481243,
+        314.2192578979525,
+        412.08842172490625,
+        315.24690833465763,
+        432.10816118783794,
+        446.26966654988485,
+        601.6258472780767,
+        393.8897836788735,
+        502.6517352524361,
+        415.36690475575534,
+        333.4085338841264,
+        203.8871023322286,
+        324.0208728195884,
+        208.8512324560586,
+        307.25997267891347,
+        332.84802005460193,
+        285.87615118637297,
+        38.01987167727161,
+        16.035834835928625,
+        241.12709781225425,
+        81.5792684592795,
+        174.94492507086545,
+        66.27930595593013,
+        303.08929052908104,
+        217.4765909958514,
+        120.99716054331881,
+        160.24439366467445,
+        240.11252878447576,
+        266.9950241582876,
+        200.8889364203379,
+        186.85861949672957,
+        221.803046721282,
+        12.818078356629059,
+        -94.20600557944049,
+        382.42203653872195,
+        570.7291648699957,
+        598.0378847686085,
+        802.9587248859502,
+        651.1462028500919,
+        891.9817037484545,
+        973.8486167502797,
+        854.1487166335003,
+        795.5276939865232,
+        905.8365442609074,
+        697.4990231543406,
+        571.6082529904836,
+        520.8383015195753,
+        511.8493383810291,
+        779.5590347806194,
+        658.3746642480671,
+        451.0523196573392,
+        314.5819907067913,
+        469.4852663654609,
+        785.2840116936034,
+        650.3933324573272,
+        568.2987566820244,
+        567.4704934690639,
+        496.45307161285604,
+        471.2647851189081,
+        390.5838984812287,
+        570.2595516524178,
+        616.4681282066739,
+        634.055328426031,
+        520.1657620289806,
+        492.8293126647808,
+        616.2952122952233,
+        252.4699046591974,
+        162.7859797363384,
+        27.12189591952012,
+        267.8228575436527,
+        627.9220832931231,
+        702.84236901554,
+        812.2954317204678,
+        651.1194791195602,
+        725.8894503042865,
+        734.2460741843369,
+        703.687157731571,
+        591.334805727293,
+        490.33901781970565,
+        554.0058121969988,
+        486.0250880954466,
+        468.72554718467177,
+        467.231729446017,
+        560.2507459015669,
+        747.7247198575566,
+        830.8151638823737,
+        989.4989333284094,
+        482.3759457795472,
+        812.2185511042032,
+        776.9624171139872,
+        872.5443439281541,
+        700.6424059653382,
+        719.7294601839549,
+        688.0448169460142,
+        817.6326489954527,
+        854.2514509882336,
+        900.6558556333042,
+        965.6609710098561,
+        866.5762412600538,
+        828.1707174312961,
+        773.3181810381817,
+        779.4880308015398,
+        777.9696599664549,
+        669.061096482328,
+        628.6802089549507,
+        799.1615402216263,
+        937.6078774003372,
+        955.1818983553217,
+        680.5780817738284,
+        475.03973337072404,
+        490.1158677173658,
+        503.41142443819393,
+        480.0841192560708,
+        538.6256099252397,
+        584.6142107169014,
+        616.7480885059572,
+        601.3619243433762,
+        694.3579998679886,
+        676.442190887196,
+        445.46259190661965,
+        545.4136522754626,
+        474.99384797005865,
+        476.542674279658,
+        472.34337998879556,
+        444.93035444840365,
+        502.2410146266191,
+        681.4118057926161,
+        510.69830491039505,
+        512.1439141379079,
+        489.4205758102637,
+        444.6818755572618,
+        385.11860202169896,
+        551.1029944878701,
+        548.1709462945333,
+        576.8453123421921,
+        383.52492677224814,
+        305.48706455227017,
+        415.58793734836576,
+        442.80929039318283,
+        249.11656537379008,
+        435.9744437925482,
+        586.6665509628752,
+        755.411475637168,
+        838.6183453276603,
+        704.315206821546,
+        682.0616594676367,
+        823.5925854408804,
+        930.2887236781004,
+        956.0383147876098,
+        969.3785921100454,
+        1072.103677259873,
+        833.440105049489,
+        604.3857382196641,
+        677.57991657006,
+        307.5563665211954,
+        275.13268045880517,
+        493.28787123195934,
+        508.3980654990165,
+        416.9117122154778,
+        545.3361331068221,
+        609.5677812994352,
+        527.5746946815694,
+        537.4692113583511,
+        526.4042956203879,
+        445.8687872092942,
+        328.2241185917281,
+        332.86411059896534,
+        674.9267675277961,
+        607.79992019194,
+        713.4292150017079,
+        633.624105093513,
+        658.0187891148092,
+        693.1437433324365,
+        891.2743226596725,
+        613.3246273864424,
+        680.2782902108769,
+        684.7734082616691,
+        802.3075573435365,
+        845.5326902464625,
+        931.4476644849885,
+        1014.5107560376243,
+        915.8731443358354,
+        739.9304033998251,
+        858.4303438231282,
+        875.3564791753678,
+        786.9841430175021,
+        879.8296362960997,
+        924.6994243029301,
+        990.2619990487384,
+        918.5708721157432,
+        623.1016311498151,
+        1030.98568196355,
+        932.9808529290484,
+        663.4941807302076,
+        804.068914943049,
+        702.3028967286231,
+        1250.865412019033,
+        1169.875326379342,
+        940.7270978834595,
+        975.0537474026665,
+        1041.4907467336593,
+        1038.6955080917996,
+        901.8751020900653,
+        1090.9894243052559,
+        889.330071943452,
+        962.1255527647337,
+        960.6816330646172,
+        915.2768310418261,
+        873.8712300384739,
+        750.4281577309782,
+        683.0528416718049,
+        668.7630051292235,
+        802.9675575443159,
+        907.64295136842,
+        1012.4260649985955,
+        1182.5126372512107,
+        1171.7679920554626,
+        1276.653837152007,
+        976.3843481352984,
+        938.2864860617454,
+        978.7954747747859,
+        989.4421626323839,
+        1149.054986414672,
+        946.0867583792993,
+        1005.8536432808495,
+        1070.8577819414454,
+        1084.9706475937646,
+        843.4683629743421,
+        872.6510174673969,
+        1024.794870578279,
+        1002.2919807816842,
+        922.3427976670966,
+        1040.537392453812,
+        1230.2708989581645,
+        1293.0600686033388,
+        1288.8795111035806,
+        1063.6655808159294,
+        1112.865739518454,
+        1164.620088286087,
+        1063.099214937754,
+        1053.1884532681563,
+        1240.1239105650945,
+        1225.6962303388466,
+        1052.9146874544504,
+        1055.2310313016833,
+        1301.2723163074431,
+        1243.383638295626,
+        1244.2830355928477,
+        1241.165036190562,
+        1241.0548300081127,
+        1241.1844344162857,
+        1240.3711607413834,
+        1156.9435555396497,
+        1280.4582913927768,
+        1366.3698835337166,
+        1432.1848672100832,
+        1405.3130885209785,
+        1523.2018092908681,
+        1677.5138351849232,
+        1833.825758690714,
+        1699.3449743750505,
+        1704.2596137550076,
+        1500.7338466662593,
+        1715.2805717050474,
+        1774.0455111368765,
+        1808.476077151066,
+        1760.8942794306581,
+        1733.0540300181128,
+        1590.1364030162047,
+        1651.9773241061155,
+        1640.0950245363447,
+        1580.9263569862674,
+        1443.0327309520683,
+        1409.816710540474,
+        1474.6341722163445,
+        1307.2871455147015,
+        1197.606386614152,
+        1069.2760193637407,
+        1075.81233168263,
+        1165.9938057830584,
+        1215.3230968167775,
+        1081.3092659947656,
+        1208.1503610285608,
+        1180.3450945386214,
+        1247.887601051757,
+        1424.5698481205743,
+        1862.3457271495956,
+        2124.583983277771,
+        2123.341515793004,
+        2121.9181656897413,
+        2106.6976171429133,
+        2080.943743461593,
+        1910.8558752704298,
+        1739.8046750484361,
+        1686.175194271276,
+        1703.1404292298882,
+        1966.103598612564,
+        1939.2422699127792,
+        1920.346619979381,
+        1923.0365844162761,
+        1996.727843944876,
+        1962.1744090088164,
+        2031.059756087188,
+        1732.7673542493253,
+        1751.868671491331,
+        1996.6417601066573,
+        1954.757520017965,
+        2089.6443793974445,
+        1995.4624568474421,
+        2108.9819677668306,
+        2062.718090397577,
+        1667.5885786007314,
+        1917.0882567614635,
+        1819.334682757084,
+        1661.3667025775676,
+        1659.9063774759402,
+        1563.6622862096774,
+        1454.7109906256576,
+        1414.8543512192698,
+        1446.2858551477336,
+        1730.2722461254396,
+        1594.9078985550148,
+        1817.1016384840404,
+        1676.4818767136057,
+        1653.263424388611,
+        1533.4183174787293,
+        1631.514691236801,
+        1237.493206928186,
+        1314.7435676946309,
+        1415.464832630764,
+        1397.3865140543896,
+        1334.555664950581,
+        1528.8332060310977,
+        1499.2035450954672,
+        1625.980425163571,
+        1718.0371738072279,
+        1602.7586073948405,
+        1413.4035587085032,
+        1199.1785677324892,
+        1151.3253093116016,
+        1024.503219699272,
+        1108.606602502078,
+        1280.4219838720096,
+        1366.1394720881178,
+        1326.283599305078,
+        1096.3013879370653,
+        1030.8390912736807,
+        1087.9144569021778,
+        1251.5256562527177,
+        1682.1393161160559,
+        1453.5587955629699,
+        1433.6498799111284,
+        1432.9715732263405,
+        1405.9444667775488,
+        1601.7309690366778,
+        1825.324058294591,
+        1921.9451043095087,
+        1814.8143439461342,
+        1920.4675194887875,
+        1528.6046010594007,
+        1785.3363899381393,
+        1762.1712797407183,
+        1709.2128794404339,
+        1801.0028180350744,
+        1855.9101784636307,
+        1912.87151324018,
+        1904.7708223123147,
+        1926.4113620828132,
+        1886.8532530210264,
+        1919.858393400755,
+        1890.7228619805626,
+        1930.3122663756287,
+        1941.0019808562392,
+        1958.7397628439494,
+        1900.6879036513244,
+        1846.8369069447456,
+        1914.5523192932044,
+        1934.0951467654952,
+        1940.7338130269202,
+        1853.7058530578536,
+        1693.7524318836226,
+        1703.5778324677747,
+        1478.578657658304,
+        1739.6376198415421,
+        1733.5446230718564,
+        1686.660000285474,
+        1670.1829067516203,
+        1720.1909101241076,
+        1749.8549614574606,
+        1754.7781484247826,
+        1735.2945204890805,
+        1745.8414787936051,
+        1717.0832323130157,
+        1711.333617530338,
+        1686.3831157852346,
+        1707.9175706242195,
+        1623.658182567378,
+        1581.3149492185735
+      ]
+    },
+    "dire": {
+      "control_value": -11.536907622283884,
+      "one_sidedness": 0.2757826523255113,
+      "neutral_control_value": -59175.26152224887,
+      "raw_control_values": [
+        -0.10391684308957796,
+        -0.06336598751596337,
+        -0.08489650244913907,
+        -0.08157194670954529,
+        -0.08186142649219381,
+        -0.0853930683576474,
+        -0.0841142062909877,
+        -0.08427618170382062,
+        -0.08401862245203537,
+        -0.08719681511724782,
+        -0.09022240647872509,
+        -0.08974580375624622,
+        -0.06229864194865166,
+        -0.06001665145941083,
+        -0.046181383830375164,
+        -0.06940760600253632,
+        -0.0505968441314267,
+        -0.07531285253853343,
+        -0.0675788337916525,
+        -0.07124750711019104,
+        -0.0702771840302464,
+        -0.06934215136062677,
+        -0.07214833985919936,
+        -0.08914943167420908,
+        -0.07771266304458527,
+        -0.07669064227952038,
+        -0.0870391844930271,
+        -0.0937580058324438,
+        -0.09319519202350068,
+        -0.08361304446740316,
+        -0.06352018064405379,
+        -0.07138390735420291,
+        -0.08511404524642371,
+        -0.08009721895486381,
+        -0.07687177272848245,
+        -0.07979962353652592,
+        -0.08380017771641876,
+        -0.07927079019783742,
+        -0.08250960628527874,
+        -0.08782092385188561,
+        -0.08254220967631648,
+        -0.07146874428449337,
+        -0.07770980408851848,
+        -0.08877375055187783,
+        -0.08702840299153589,
+        -0.08404231966145423,
+        -0.08624634130378755,
+        -0.0851032318984791,
+        -0.07042902384484308,
+        -0.07837742289263461,
+        -0.06959714778822536,
+        -0.06204866640830992,
+        -0.06795375865654432,
+        -0.0781058860268688,
+        -0.08030953762514599,
+        -0.07817861301580976,
+        -0.07447562671424907,
+        -0.07813257023033876,
+        -0.07781069681876743,
+        -0.09413863714761758,
+        -0.0874828328429939,
+        -0.08039488071553443,
+        -0.07516790592348503,
+        -0.07733011069428891,
+        -0.07635208207265648,
+        -0.03389797190212692,
+        -0.07012641707958801,
+        -0.08450732721435764,
+        -0.07602264285856566,
+        -0.08255134967788734,
+        -0.09369117668728268,
+        -0.09502409741085821,
+        -0.10558873491217963,
+        -0.12431368093497436,
+        -0.14116713863480107,
+        -0.15755488675295548,
+        -0.16013594651181293,
+        -0.1660622479394631,
+        -0.12760439152986752,
+        -0.13341584250262065,
+        -0.0904603878746022,
+        -0.09727169438157658,
+        -0.09761867646979752,
+        -0.10258172267072752,
+        -0.09065227947851294,
+        -0.09036710396942037,
+        -0.09538508645747251,
+        -0.08429503079541734,
+        -0.08024666407450637,
+        -0.07328573894771444,
+        -0.06594963886030747,
+        -0.06668399928413761,
+        -0.03775663678750173,
+        -0.03581341076307699,
+        -0.03550637348448358,
+        -0.04399651363729366,
+        -0.04493544552432171,
+        -0.048937627355552404,
+        -0.05397645665086615,
+        -0.04567049565845023,
+        -0.04141790286159089,
+        -0.05491749132195416,
+        -0.05118398592653281,
+        -0.043348316216899246,
+        -0.042539338206908896,
+        -0.03742739979834004,
+        -0.051755985544768,
+        -0.038722706256019535,
+        -0.04926767868230743,
+        -0.08127018201556485,
+        -0.07817874882215924,
+        -0.07546187308738429,
+        -0.07395367491958973,
+        -0.07725710558860457,
+        -0.07230456201744596,
+        -0.07251384799497716,
+        -0.06634864499324733,
+        -0.06269250326978199,
+        -0.05839449363552429,
+        -0.05562208946251003,
+        -0.04487718348353312,
+        -0.025597581793402283,
+        -0.017838678352482283,
+        -0.02095944804401819,
+        -0.023608478926481057,
+        -0.02891308505180784,
+        -0.02823771808726249,
+        -0.05003799765809863,
+        -0.050555467916825775,
+        -0.0433105577422555,
+        -0.048791306526859625,
+        -0.05811104737395867,
+        -0.05755837171189147,
+        -0.06036551603459068,
+        -0.06399864257459523,
+        -0.0727115435472177,
+        -0.08245594430228018,
+        -0.11677082246478492,
+        -0.13082273022607732,
+        -0.1450761419844497,
+        -0.14855403652845223,
+        -0.14974860968738132,
+        -0.162742802888905,
+        -0.17598791289895338,
+        -0.18246765269527568,
+        -0.1770594335984631,
+        -0.1728493310263931,
+        -0.17734772223626152,
+        -0.17302763997985804,
+        -0.14858097242178578,
+        -0.15029470158726654,
+        -0.1497535305087151,
+        -0.19834095433525425,
+        -0.18984192551311568,
+        -0.18248941568593235,
+        -0.17673500257861438,
+        -0.1767923960257079,
+        -0.1860989437993993,
+        -0.1800713894211005,
+        -0.19104614731531033,
+        -0.18165977698901925,
+        -0.21235007429423033,
+        -0.18777243869676302,
+        -0.17095621722379906,
+        -0.1850028718209517,
+        -0.1509792030017088,
+        -0.1727017273068966,
+        -0.14205832483921269,
+        -0.14883821471659842,
+        -0.14447521742493985,
+        -0.1266617013364235,
+        -0.15106022862197474,
+        -0.15652306240260436,
+        -0.21778077161089693,
+        -0.23046085836636734,
+        -0.221643878287359,
+        -0.21580717859109985,
+        -0.22079096424042904,
+        -0.21806214235554713,
+        -0.21002150635282302,
+        -0.19817569931123638,
+        -0.20055891533426337,
+        -0.19894864627396014,
+        -0.20635181157927732,
+        -0.21701228079823387,
+        -0.22053405439354073,
+        -0.2052444251586339,
+        -0.19205139183491765,
+        -0.19950870369401755,
+        -0.19435070370233817,
+        -0.2572468503779229,
+        -0.2667559923460605,
+        -0.27155465509202154,
+        -0.2743842653599822,
+        -0.28225279270343206,
+        -0.2798890485584711,
+        -0.29126533891722267,
+        -0.3046387292241424,
+        -0.30099059945655005,
+        -0.3195318390316031,
+        -0.3142724224022937,
+        -0.2923218764898719,
+        -0.28536180578549275,
+        -0.2532905067674645,
+        -0.24546772373491324,
+        -0.25296956274350557,
+        -0.24325914982306973,
+        -0.21661054081478306,
+        -0.23353516002011768,
+        -0.21897904964616152,
+        -0.23722107665567485,
+        -0.24359260081356313,
+        -0.23385085918955165,
+        -0.21173275173565914,
+        -0.20094002683007467,
+        -0.20106088970814745,
+        -0.1952947724841097,
+        -0.20344426530952783,
+        -0.20806242421647766,
+        -0.2015231791791584,
+        -0.2177441192448959,
+        -0.2160030471755097,
+        -0.21012698721229117,
+        -0.21384988146273332,
+        -0.2182459920028471,
+        -0.2224588664186353,
+        -0.20409552836661315,
+        -0.20357137343145199,
+        -0.2123356466106894,
+        -0.21570023073917063,
+        -0.22231370504730089,
+        -0.21818879791962087,
+        -0.20838576094040348,
+        -0.21042627767626923,
+        -0.2015619599565559,
+        -0.19367896677599938,
+        -0.19803661010561957,
+        -0.2109977465168028,
+        -0.19381101278275056,
+        -0.1913977926231071,
+        -0.1852728752455077,
+        -0.16007129838107673,
+        -0.1643774001063737,
+        -0.1701959118193697,
+        -0.19210706832193022,
+        -0.19791472834083584,
+        -0.24054474550601945,
+        -0.2632048476111532,
+        -0.2594990736737073,
+        -0.2691961959666359,
+        -0.27631183712090146,
+        -0.2897340611627611,
+        -0.2959354084734146,
+        -0.27910296045267263,
+        -0.29767425896194055,
+        -0.2783456277135249,
+        -0.22284930616326848,
+        -0.1987100082737323,
+        -0.17706623458630064,
+        -0.18422495683188228,
+        -0.20056889296662292,
+        -0.20899521363122436,
+        -0.1558193673117104,
+        -0.15200057217477236,
+        -0.16396518905809254,
+        -0.16744674773997342,
+        -0.17457454656851634,
+        -0.1686934624821673,
+        -0.1747349310077961,
+        -0.16238957673751886,
+        -0.16775956429923897,
+        -0.22090076564300534,
+        -0.22319244774052724,
+        -0.261667888710922,
+        -0.25273344952906357,
+        -0.23970003234058218,
+        -0.23227226966162562,
+        -0.25282387026493935,
+        -0.2413064283116792,
+        -0.23945022879403835,
+        -0.2548516317532442,
+        -0.26525216339932206,
+        -0.26893271250290834,
+        -0.2537616769320123,
+        -0.2706953687056789,
+        -0.27926437818488803,
+        -0.27642879907227125,
+        -0.27242629302199733,
+        -0.26252893530714805,
+        -0.24920173912794275,
+        -0.24604270765486488,
+        -0.24811706631819266,
+        -0.26454282053100225,
+        -0.28121072939619224,
+        -0.2292672611071821,
+        -0.20328365927189135,
+        -0.2033045340163974,
+        -0.19414547847217978,
+        -0.2297427222777094,
+        -0.2547455717915886,
+        -0.3056571794755293,
+        -0.30309913916721376,
+        -0.2905983511257509,
+        -0.2753940596635306,
+        -0.26680388026825586,
+        -0.27636170790179654,
+        -0.2628113510022085,
+        -0.2698436593940325,
+        -0.26015617431207166,
+        -0.26018187299666184,
+        -0.28893037362226603,
+        -0.26121546263038686,
+        -0.24524110778313002,
+        -0.23350885307328056,
+        -0.21320556009702737,
+        -0.21396786082537814,
+        -0.21654874097557186,
+        -0.2433615513092395,
+        -0.24414971892054935,
+        -0.2509710325524024,
+        -0.3057266470130472,
+        -0.3269428728205479,
+        -0.3125684164118344,
+        -0.29495329456029595,
+        -0.2991526128273303,
+        -0.2900891396056166,
+        -0.3227769485412731,
+        -0.2832759936987013,
+        -0.32245176178421414,
+        -0.28619273809650203,
+        -0.27193532091453465,
+        -0.26091754715684384,
+        -0.2721854495004962,
+        -0.295439152797702,
+        -0.2783347245436472,
+        -0.30800299960124433,
+        -0.30272471536839685,
+        -0.2998632872699448,
+        -0.3084712262209959,
+        -0.3515938722130617,
+        -0.32027403209966027,
+        -0.33803602326001725,
+        -0.34213708962666967,
+        -0.31583122246349604,
+        -0.31450059834963373,
+        -0.35799071467560467,
+        -0.3521386749502138,
+        -0.33172723172640634,
+        -0.3162668069899793,
+        -0.36522947010443685,
+        -0.37762023466756656,
+        -0.38180803702613725,
+        -0.3917894853945483,
+        -0.39674473383061537,
+        -0.39569956698210346,
+        -0.388459093108472,
+        -0.3607701744868008,
+        -0.3909897056327188,
+        -0.39912311702242154,
+        -0.40411268602206146,
+        -0.40065702987890406,
+        -0.4230044738282588,
+        -0.4254759927887428,
+        -0.438728324217035,
+        -0.4329549538792152,
+        -0.42724232537384077,
+        -0.39385530949065545,
+        -0.446697870743154,
+        -0.4764012093808146,
+        -0.5010053610319128,
+        -0.5029928656531257,
+        -0.4913586899708663,
+        -0.4594453572714082,
+        -0.4572914599988065,
+        -0.44916799227497506,
+        -0.4406559732176287,
+        -0.4269788262948366,
+        -0.42298567524983793,
+        -0.4760503717234789,
+        -0.4594585658056196,
+        -0.42424488167068647,
+        -0.4216823157658942,
+        -0.44142307420590465,
+        -0.49178406746728026,
+        -0.4921416199619562,
+        -0.4935742924271391,
+        -0.5188912299266916,
+        -0.5434866854999466,
+        -0.5386444313370753,
+        -0.545764640984698,
+        -0.5922320561033332,
+        -0.6146870177019302,
+        -0.613596603936593,
+        -0.618134849735207,
+        -0.6071170198060326,
+        -0.5980135855243944,
+        -0.5741845113770355,
+        -0.5570807774532465,
+        -0.5574057585798201,
+        -0.5749461946474234,
+        -0.5812725052383522,
+        -0.5901479767895949,
+        -0.5915392175332715,
+        -0.6309824826916167,
+        -0.598848431051899,
+        -0.5918130079982183,
+        -0.6135920234083151,
+        -0.6040604634792921,
+        -0.6078918063474188,
+        -0.601375391160144,
+        -0.5762478214385122,
+        -0.6035731951167191,
+        -0.6031310959039744,
+        -0.5923677622328667,
+        -0.5935288043202565,
+        -0.5373779025171618,
+        -0.5501400999312837,
+        -0.5602905097875147,
+        -0.5633880667560928,
+        -0.5575108307174124,
+        -0.5212106734162183,
+        -0.5105359010924594,
+        -0.5021952583101021,
+        -0.5065975669203501,
+        -0.5569145885198108,
+        -0.5475079246611728,
+        -0.5432724885471921,
+        -0.5339542427934529,
+        -0.5379800168206279,
+        -0.5456330975869012,
+        -0.4769008378067702,
+        -0.46962771158317895,
+        -0.479003451079712,
+        -0.4728475554073311,
+        -0.4426338426468176,
+        -0.4359098915412446,
+        -0.4421403507938745,
+        -0.44631558528895077,
+        -0.48027216163096065,
+        -0.5091184800349301,
+        -0.4950959063790585,
+        -0.4857917450856138,
+        -0.46165501038232587,
+        -0.45937434113040587,
+        -0.4323788003086726,
+        -0.4709614179177636,
+        -0.48856392132214665,
+        -0.47170770567695874,
+        -0.4325067087551496,
+        -0.43727169795120496,
+        -0.45183956248508506,
+        -0.4661775551359658,
+        -0.4820024310011035,
+        -0.5267739946902474,
+        -0.5194293624489251,
+        -0.5301414004669391,
+        -0.5554769662507829,
+        -0.5489785397856208,
+        -0.5653700113011292,
+        -0.5690943679706485,
+        -0.571406486192733,
+        -0.554275266272435,
+        -0.5717719784473771,
+        -0.5363071373375659,
+        -0.55371928707452,
+        -0.5551507481094072,
+        -0.555194107577345,
+        -0.5800703103878176,
+        -0.5800559763367866,
+        -0.5903337917563469,
+        -0.5905010317832617,
+        -0.5805075192181415,
+        -0.5729095918306493,
+        -0.5639563107810794,
+        -0.5764558390081019,
+        -0.5868625861296954,
+        -0.5865186134321719,
+        -0.5899073413939779,
+        -0.5888205946827082,
+        -0.5860261130381433,
+        -0.6026604294471745,
+        -0.5943432721933487,
+        -0.5947875046941828,
+        -0.5897347037020846,
+        -0.5345089937499266,
+        -0.5137952006237868,
+        -0.503987746603158,
+        -0.5552389383242103,
+        -0.5726527694272467,
+        -0.5657534422077255,
+        -0.5441703677454354,
+        -0.538809536197345,
+        -0.5535222531112987,
+        -0.5604612825955771,
+        -0.5639978980487875,
+        -0.5583706790058725,
+        -0.5582169664735659,
+        -0.551070671398628,
+        -0.5480838168662816,
+        -0.5475576984535262,
+        -0.5263329045683701,
+        -0.5182908761520223
+      ],
+      "raw_neutral_control_values": [
+        -360.3738110452264,
+        -213.11148725475957,
+        -310.6841268112529,
+        -310.9785871113112,
+        -317.31987758742804,
+        -299.93043405885527,
+        -274.43654291377703,
+        -287.5333093092794,
+        -247.10667330695247,
+        -227.36569182164385,
+        -315.8409000244803,
+        -263.7168124590623,
+        -142.03964519308045,
+        -137.55442790168416,
+        -119.54962458950727,
+        -382.6228931892934,
+        -182.04161993030363,
+        -128.93182115660937,
+        -184.43006890271926,
+        -339.02082538859986,
+        -257.4749674648634,
+        -100.07419322566854,
+        -278.38972958242397,
+        -190.58901502595734,
+        -55.72793610005838,
+        -353.8835299167445,
+        -193.9761773430662,
+        -335.58925468527826,
+        -381.8856561025081,
+        -49.140223131674894,
+        -61.08506153501857,
+        -387.85788914275435,
+        -303.32630857680994,
+        -423.02899141398706,
+        -104.93284919052702,
+        -246.3846447221876,
+        -296.84298210537594,
+        -268.94416031412896,
+        -284.5461069297235,
+        -307.6884673644094,
+        -381.1614962536769,
+        -271.83908739836465,
+        -452.5943747301257,
+        -539.9617651843236,
+        -578.6069630214134,
+        -441.5591183730049,
+        -375.6787433326422,
+        -307.3213641966435,
+        -64.95353659417314,
+        -301.52818211767334,
+        -231.34062786599628,
+        -71.07072921513715,
+        -93.87951055305275,
+        -303.6916089290808,
+        -316.15060832752187,
+        -511.41813252865444,
+        -279.73815748900887,
+        -321.18277769991,
+        -407.78679075237693,
+        -472.50420894608516,
+        -421.44735914173776,
+        -403.3576865251014,
+        -260.0961862639189,
+        -189.67031784800082,
+        -196.2693614400755,
+        -138.0704928335118,
+        -283.2006853852394,
+        -336.0904871203536,
+        -331.8370318999651,
+        -344.6012494205524,
+        -370.8354452528955,
+        -319.0776511546164,
+        -412.608993706106,
+        -511.18789408019563,
+        -528.4729412195903,
+        -527.8930319458291,
+        -643.0716922657749,
+        -526.3442840958309,
+        -434.7243494795059,
+        -694.7375372889602,
+        -653.6604815496436,
+        -616.2606094195853,
+        -630.7310095170859,
+        -555.6938106705302,
+        -427.7491223337637,
+        -430.9058027862083,
+        -360.80204122894776,
+        -521.238626293179,
+        -359.47197770100803,
+        -186.17658941774636,
+        -368.83014522271145,
+        -333.7849616845186,
+        -295.8749446277981,
+        -102.0768685225375,
+        -11.198788861411785,
+        177.11130929604928,
+        227.91698260090783,
+        310.8698972699626,
+        -43.55561360999755,
+        -304.764392199154,
+        -136.7510249002575,
+        -223.98361392264792,
+        -176.796807049693,
+        -274.00605284750156,
+        -338.68178768481243,
+        -314.2192578979525,
+        -412.08842172490625,
+        -315.24690833465763,
+        -432.10816118783794,
+        -446.26966654988485,
+        -601.6258472780767,
+        -393.8897836788735,
+        -502.6517352524361,
+        -415.36690475575534,
+        -333.4085338841264,
+        -203.8871023322286,
+        -324.0208728195884,
+        -208.8512324560586,
+        -307.25997267891347,
+        -332.84802005460193,
+        -285.87615118637297,
+        -38.01987167727161,
+        -16.035834835928625,
+        -241.12709781225425,
+        -81.5792684592795,
+        -174.94492507086545,
+        -66.27930595593013,
+        -303.08929052908104,
+        -217.4765909958514,
+        -120.99716054331881,
+        -160.24439366467445,
+        -240.11252878447576,
+        -266.9950241582876,
+        -200.8889364203379,
+        -186.85861949672957,
+        -221.803046721282,
+        -12.818078356629059,
+        94.20600557944049,
+        -382.42203653872195,
+        -570.7291648699957,
+        -598.0378847686085,
+        -802.9587248859502,
+        -651.1462028500919,
+        -891.9817037484545,
+        -973.8486167502797,
+        -854.1487166335003,
+        -795.5276939865232,
+        -905.8365442609074,
+        -697.4990231543406,
+        -571.6082529904836,
+        -520.8383015195753,
+        -511.8493383810291,
+        -779.5590347806194,
+        -658.3746642480671,
+        -451.0523196573392,
+        -314.5819907067913,
+        -469.4852663654609,
+        -785.2840116936034,
+        -650.3933324573272,
+        -568.2987566820244,
+        -567.4704934690639,
+        -496.45307161285604,
+        -471.2647851189081,
+        -390.5838984812287,
+        -570.2595516524178,
+        -616.4681282066739,
+        -634.055328426031,
+        -520.1657620289806,
+        -492.8293126647808,
+        -616.2952122952233,
+        -252.4699046591974,
+        -162.7859797363384,
+        -27.12189591952012,
+        -267.8228575436527,
+        -627.9220832931231,
+        -702.84236901554,
+        -812.2954317204678,
+        -651.1194791195602,
+        -725.8894503042865,
+        -734.2460741843369,
+        -703.687157731571,
+        -591.334805727293,
+        -490.33901781970565,
+        -554.0058121969988,
+        -486.0250880954466,
+        -468.72554718467177,
+        -467.231729446017,
+        -560.2507459015669,
+        -747.7247198575566,
+        -830.8151638823737,
+        -989.4989333284094,
+        -482.3759457795472,
+        -812.2185511042032,
+        -776.9624171139872,
+        -872.5443439281541,
+        -700.6424059653382,
+        -719.7294601839549,
+        -688.0448169460142,
+        -817.6326489954527,
+        -854.2514509882336,
+        -900.6558556333042,
+        -965.6609710098561,
+        -866.5762412600538,
+        -828.1707174312961,
+        -773.3181810381817,
+        -779.4880308015398,
+        -777.9696599664549,
+        -669.061096482328,
+        -628.6802089549507,
+        -799.1615402216263,
+        -937.6078774003372,
+        -955.1818983553217,
+        -680.5780817738284,
+        -475.03973337072404,
+        -490.1158677173658,
+        -503.41142443819393,
+        -480.0841192560708,
+        -538.6256099252397,
+        -584.6142107169014,
+        -616.7480885059572,
+        -601.3619243433762,
+        -694.3579998679886,
+        -676.442190887196,
+        -445.46259190661965,
+        -545.4136522754626,
+        -474.99384797005865,
+        -476.542674279658,
+        -472.34337998879556,
+        -444.93035444840365,
+        -502.2410146266191,
+        -681.4118057926161,
+        -510.69830491039505,
+        -512.1439141379079,
+        -489.4205758102637,
+        -444.6818755572618,
+        -385.11860202169896,
+        -551.1029944878701,
+        -548.1709462945333,
+        -576.8453123421921,
+        -383.52492677224814,
+        -305.48706455227017,
+        -415.58793734836576,
+        -442.80929039318283,
+        -249.11656537379008,
+        -435.9744437925482,
+        -586.6665509628752,
+        -755.411475637168,
+        -838.6183453276603,
+        -704.315206821546,
+        -682.0616594676367,
+        -823.5925854408804,
+        -930.2887236781004,
+        -956.0383147876098,
+        -969.3785921100454,
+        -1072.103677259873,
+        -833.440105049489,
+        -604.3857382196641,
+        -677.57991657006,
+        -307.5563665211954,
+        -275.13268045880517,
+        -493.28787123195934,
+        -508.3980654990165,
+        -416.9117122154778,
+        -545.3361331068221,
+        -609.5677812994352,
+        -527.5746946815694,
+        -537.4692113583511,
+        -526.4042956203879,
+        -445.8687872092942,
+        -328.2241185917281,
+        -332.86411059896534,
+        -674.9267675277961,
+        -607.79992019194,
+        -713.4292150017079,
+        -633.624105093513,
+        -658.0187891148092,
+        -693.1437433324365,
+        -891.2743226596725,
+        -613.3246273864424,
+        -680.2782902108769,
+        -684.7734082616691,
+        -802.3075573435365,
+        -845.5326902464625,
+        -931.4476644849885,
+        -1014.5107560376243,
+        -915.8731443358354,
+        -739.9304033998251,
+        -858.4303438231282,
+        -875.3564791753678,
+        -786.9841430175021,
+        -879.8296362960997,
+        -924.6994243029301,
+        -990.2619990487384,
+        -918.5708721157432,
+        -623.1016311498151,
+        -1030.98568196355,
+        -932.9808529290484,
+        -663.4941807302076,
+        -804.068914943049,
+        -702.3028967286231,
+        -1250.865412019033,
+        -1169.875326379342,
+        -940.7270978834595,
+        -975.0537474026665,
+        -1041.4907467336593,
+        -1038.6955080917996,
+        -901.8751020900653,
+        -1090.9894243052559,
+        -889.330071943452,
+        -962.1255527647337,
+        -960.6816330646172,
+        -915.2768310418261,
+        -873.8712300384739,
+        -750.4281577309782,
+        -683.0528416718049,
+        -668.7630051292235,
+        -802.9675575443159,
+        -907.64295136842,
+        -1012.4260649985955,
+        -1182.5126372512107,
+        -1171.7679920554626,
+        -1276.653837152007,
+        -976.3843481352984,
+        -938.2864860617454,
+        -978.7954747747859,
+        -989.4421626323839,
+        -1149.054986414672,
+        -946.0867583792993,
+        -1005.8536432808495,
+        -1070.8577819414454,
+        -1084.9706475937646,
+        -843.4683629743421,
+        -872.6510174673969,
+        -1024.794870578279,
+        -1002.2919807816842,
+        -922.3427976670966,
+        -1040.537392453812,
+        -1230.2708989581645,
+        -1293.0600686033388,
+        -1288.8795111035806,
+        -1063.6655808159294,
+        -1112.865739518454,
+        -1164.620088286087,
+        -1063.099214937754,
+        -1053.1884532681563,
+        -1240.1239105650945,
+        -1225.6962303388466,
+        -1052.9146874544504,
+        -1055.2310313016833,
+        -1301.2723163074431,
+        -1243.383638295626,
+        -1244.2830355928477,
+        -1241.165036190562,
+        -1241.0548300081127,
+        -1241.1844344162857,
+        -1240.3711607413834,
+        -1156.9435555396497,
+        -1280.4582913927768,
+        -1366.3698835337166,
+        -1432.1848672100832,
+        -1405.3130885209785,
+        -1523.2018092908681,
+        -1677.5138351849232,
+        -1833.825758690714,
+        -1699.3449743750505,
+        -1704.2596137550076,
+        -1500.7338466662593,
+        -1715.2805717050474,
+        -1774.0455111368765,
+        -1808.476077151066,
+        -1760.8942794306581,
+        -1733.0540300181128,
+        -1590.1364030162047,
+        -1651.9773241061155,
+        -1640.0950245363447,
+        -1580.9263569862674,
+        -1443.0327309520683,
+        -1409.816710540474,
+        -1474.6341722163445,
+        -1307.2871455147015,
+        -1197.606386614152,
+        -1069.2760193637407,
+        -1075.81233168263,
+        -1165.9938057830584,
+        -1215.3230968167775,
+        -1081.3092659947656,
+        -1208.1503610285608,
+        -1180.3450945386214,
+        -1247.887601051757,
+        -1424.5698481205743,
+        -1862.3457271495956,
+        -2124.583983277771,
+        -2123.341515793004,
+        -2121.9181656897413,
+        -2106.6976171429133,
+        -2080.943743461593,
+        -1910.8558752704298,
+        -1739.8046750484361,
+        -1686.175194271276,
+        -1703.1404292298882,
+        -1966.103598612564,
+        -1939.2422699127792,
+        -1920.346619979381,
+        -1923.0365844162761,
+        -1996.727843944876,
+        -1962.1744090088164,
+        -2031.059756087188,
+        -1732.7673542493253,
+        -1751.868671491331,
+        -1996.6417601066573,
+        -1954.757520017965,
+        -2089.6443793974445,
+        -1995.4624568474421,
+        -2108.9819677668306,
+        -2062.718090397577,
+        -1667.5885786007314,
+        -1917.0882567614635,
+        -1819.334682757084,
+        -1661.3667025775676,
+        -1659.9063774759402,
+        -1563.6622862096774,
+        -1454.7109906256576,
+        -1414.8543512192698,
+        -1446.2858551477336,
+        -1730.2722461254396,
+        -1594.9078985550148,
+        -1817.1016384840404,
+        -1676.4818767136057,
+        -1653.263424388611,
+        -1533.4183174787293,
+        -1631.514691236801,
+        -1237.493206928186,
+        -1314.7435676946309,
+        -1415.464832630764,
+        -1397.3865140543896,
+        -1334.555664950581,
+        -1528.8332060310977,
+        -1499.2035450954672,
+        -1625.980425163571,
+        -1718.0371738072279,
+        -1602.7586073948405,
+        -1413.4035587085032,
+        -1199.1785677324892,
+        -1151.3253093116016,
+        -1024.503219699272,
+        -1108.606602502078,
+        -1280.4219838720096,
+        -1366.1394720881178,
+        -1326.283599305078,
+        -1096.3013879370653,
+        -1030.8390912736807,
+        -1087.9144569021778,
+        -1251.5256562527177,
+        -1682.1393161160559,
+        -1453.5587955629699,
+        -1433.6498799111284,
+        -1432.9715732263405,
+        -1405.9444667775488,
+        -1601.7309690366778,
+        -1825.324058294591,
+        -1921.9451043095087,
+        -1814.8143439461342,
+        -1920.4675194887875,
+        -1528.6046010594007,
+        -1785.3363899381393,
+        -1762.1712797407183,
+        -1709.2128794404339,
+        -1801.0028180350744,
+        -1855.9101784636307,
+        -1912.87151324018,
+        -1904.7708223123147,
+        -1926.4113620828132,
+        -1886.8532530210264,
+        -1919.858393400755,
+        -1890.7228619805626,
+        -1930.3122663756287,
+        -1941.0019808562392,
+        -1958.7397628439494,
+        -1900.6879036513244,
+        -1846.8369069447456,
+        -1914.5523192932044,
+        -1934.0951467654952,
+        -1940.7338130269202,
+        -1853.7058530578536,
+        -1693.7524318836226,
+        -1703.5778324677747,
+        -1478.578657658304,
+        -1739.6376198415421,
+        -1733.5446230718564,
+        -1686.660000285474,
+        -1670.1829067516203,
+        -1720.1909101241076,
+        -1749.8549614574606,
+        -1754.7781484247826,
+        -1735.2945204890805,
+        -1745.8414787936051,
+        -1717.0832323130157,
+        -1711.333617530338,
+        -1686.3831157852346,
+        -1707.9175706242195,
+        -1623.658182567378,
+        -1581.3149492185735
+      ]
+    }
+  },
+  "frames": {
+    "times": [
+      -60,
+      0,
+      60,
+      120,
+      180,
+      240,
+      300,
+      360,
+      420,
+      480,
+      540,
+      600,
+      660,
+      720,
+      780,
+      840,
+      900,
+      960,
+      1020,
+      1080,
+      1140,
+      1200,
+      1260,
+      1320,
+      1380,
+      1440,
+      1500,
+      1560,
+      1620,
+      1680,
+      1740,
+      1800,
+      1860,
+      1920,
+      1980,
+      2040,
+      2100,
+      2160,
+      2220,
+      2280,
+      2340,
+      2400,
+      2460,
+      2509
+    ],
+    "radiant_networth_advantage": [
+      0,
+      -344,
+      -377,
+      26,
+      979,
+      847,
+      1313,
+      1711,
+      1338,
+      1909,
+      2042,
+      2080,
+      2388,
+      3412,
+      3336,
+      4384,
+      4920,
+      5689,
+      7076,
+      8023,
+      8532,
+      9866,
+      9878,
+      10026,
+      10948,
+      11710,
+      13561,
+      14702,
+      15250,
+      16225,
+      16133,
+      19685,
+      23804,
+      24350,
+      25711,
+      26261,
+      25279,
+      25570,
+      26102,
+      27381,
+      28556,
+      30345,
+      34784,
+      39689
+    ]
+  }
+}

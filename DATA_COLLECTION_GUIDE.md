@@ -125,11 +125,6 @@ Dota_analyst/
 - **GetLiveLeagueGames:** unlimited
 - **Key:** `STEAM_API_KEY` в `.env`
 
-### Stratz API (опционально)
-- **Free tier:** 30 req/min total
-- **Pro tier:** $50/mo (не нужен!)
-- **Ключ:** `STRAZT_API_KEY` в `.env`
-
 **Рекомендация:** Использовать ТОЛЬКО Steam API бесплатно!
 
 ---

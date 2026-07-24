@@ -3,7 +3,7 @@ Bulk Download Script using Steam Web API.
 
 Collects historical Dota 2 matches since March 25, 2026.
 
-Advantages over Stratz:
+Advantages:
 - No rate limits on most endpoints
 - More comprehensive match data
 - Direct Valve integration

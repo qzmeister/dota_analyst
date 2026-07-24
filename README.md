@@ -23,14 +23,10 @@ pip install -r requirements.txt
 ```env
 # Steam Web API Key (for GetLiveLeagueGames endpoint)
 STEAM_API_KEY=your_steam_api_key_here
-
-# Stratz API Token (for detailed draft/lanes analysis)
-STRAZT_API_KEY=your_stratz_token_here
 ```
 
 **Где получить:**
 - **Steam API Key**: https://steamcommunity.com/dev/apikey (бесплатно)
-- **Stratz API Token**: https://stratz.com/oauth (бесплатный tier: 30 req/min)
 
 ### 3. Запуск сервера
 
@@ -101,7 +97,6 @@ Dota_analyst/
 │   ├── dltv_client.py         # DLTV v1 API client
 │   ├── discovery.py           # Match discovery (scraper + Steam)
 │   ├── datdota_client.py      # DatDota API client (ML data)
-│   ├── stratz_api.py          # Stratz API client (lane data)
 │   └── ml_trainer.py          # ML training pipeline
 ├── frontend/                   # Static frontend
 │   ├── index.html
@@ -276,11 +271,7 @@ prediction = trainer.predict(match_features)
 - **Данные**: events, series, heroes, teams
 - **Используется**: для discovery и текущих матчей
 
-### Stratz API (для lane analysis)
 
-- **Base URL**: `https://api.stratz.com`
-- **Rate limit**: 30 req/min (бесплатный tier)
-- **Данные**: lane assignments, FB/F10 rates
 
 ## 🔧 Разработка
 

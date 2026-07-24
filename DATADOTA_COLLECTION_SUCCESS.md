@@ -106,7 +106,6 @@ trainer.save_models()
 |-----|-----------|-----------|--------------|
 | **DatDota** | 3s | 500 req/day | ✅ Excellent |
 | Steam API | Unlimited | Free | ✅ Good (requires enrichment) |
-| Stratz API | 2s | $50/mo for Pro | ✅ Excellent |
 | OpenDota | Varies | Free tier available | ✅ Good |
 
 ## Conclusion

@@ -25,9 +25,6 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-# Import Stratz API for real lane stats (first blood / first 10 rates)
-from .stratz_api import cached_line_distribution
-
 BASE = "https://dltv.org/api/v1"
 LIVE_BASE = "https://dltv.org/live"
 SITE = "https://dltv.org"
@@ -186,46 +183,6 @@ class DLTVClient:
     def _val(dct: Optional[Dict], key: str, fallback: float) -> float:
         """Get value from dict or fallback."""
         return dct.get(key) if dct is not None else fallback
-    
-    def normalize_team_with_stratz(self, team: Optional[Dict], match_id: Optional[int] = None) -> Dict:
-        """
-        Normalize team data with real FB/F10 rates from Stratz if match_id provided.
-        Falls back to DLTV data if Stratz unavailable.
-        """
-        team = team or {}
-        norm = {
-            "id": team.get("id"),
-            "name": team.get("title") or "TBD",
-            "tag": team.get("tag"),
-            "logo": _abs_url(team.get("image")),
-            "rank": team.get("rank"),
-            "win_rate": _to_float(team.get("win_rate")),
-            "fb_rate": _to_float(team.get("fb_rate")),
-            "f10_rate": _to_float(team.get("f10_rate")),
-            "maps_total": team.get("maps_total"),
-        }
-        
-        # Try to get real FB/F10 from Stratz for this match (postmatch analysis)
-        if match_id:
-            try:
-                line_data = cached_line_distribution(match_id, ttl=60.0)
-                if line_data:
-                    # Update with Stratz data
-                    fb_actual = line_data.get("fb_rate_actual", 0.5)
-                    f10_actual = line_data.get("f10_rate_actual", 0.5)
-                    
-                    # If we have enough matches, use these as the team's rates
-                    # Otherwise blend them with DLTV values
-                    dltv_fb = self._val(norm, "fb_rate", 0.48)
-                    dltv_f10 = self._val(norm, "f10_rate", 0.49)
-                    
-                    # Blend: 50% Stratz / 50% DLTV for more stable prediction
-                    norm["fb_rate"] = (fb_actual + dltv_fb) / 2.0
-                    norm["f10_rate"] = (f10_actual + dltv_f10) / 2.0
-            except Exception as e:
-                print(f"[stratz] failed to fetch for {match_id}: {e}")
-        
-        return norm
 
     def hero_by_dltv_id(self, hid: Optional[int]) -> Optional[Dict]:
         if not self._hero_by_id:

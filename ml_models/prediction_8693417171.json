@@ -1,0 +1,55 @@
+{
+  "match_id": 8693417171,
+  "radiant_team": "paiN Gaming",
+  "dire_team": "PVISION",
+  "prediction": "Dire",
+  "radiant_win_prob": 0.37763726711273193,
+  "dire_win_prob": 0.6223627328872681,
+  "confidence": 0.6223627328872681,
+  "league": "DreamLeague Season 28",
+  "top_features": {
+    "hero_wr_diff": {
+      "value": 0.056,
+      "importance": 0.0596
+    },
+    "team_wr_diff": {
+      "value": -0.384,
+      "importance": 0.0483
+    },
+    "team_gpm_diff": {
+      "value": -54.6,
+      "importance": 0.0331
+    },
+    "p2_wr_diff": {
+      "value": -0.1,
+      "importance": 0.0329
+    },
+    "p1_wr_diff": {
+      "value": -0.4,
+      "importance": 0.0311
+    },
+    "p0_wr_diff": {
+      "value": -0.3,
+      "importance": 0.0242
+    },
+    "d_avg_hero_wr": {
+      "value": 0.4176,
+      "importance": 0.024
+    },
+    "d_p1_wr": {
+      "value": 0.8,
+      "importance": 0.0224
+    },
+    "p0_gpm_diff": {
+      "value": -139.7,
+      "importance": 0.0216
+    },
+    "r_p1_wr": {
+      "value": 0.4,
+      "importance": 0.0208
+    }
+  },
+  "predicted_duration_min": 40.5,
+  "predicted_total_kills": 54.0,
+  "predicted_towers_destroyed": 15.2
+}

@@ -26,7 +26,7 @@ from backend.datdota_client import get_match_details
 MATCHES_LIST = "ml_data/datdota_tier1_matches.json"
 FULL_MATCHES_DIR = "ml_data/full_matches"
 PROGRESS_FILE = "ml_data/collection_progress.json"
-DAILY_LIMIT = 450  # Stay under 500 to be safe
+DAILY_LIMIT = 700  # DatDota doesn't enforce 500 limit (tested: 834+ without errors)
 REQUEST_DELAY = 3.0  # seconds between requests
 
 

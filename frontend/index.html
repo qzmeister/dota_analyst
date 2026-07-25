@@ -4,9 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dota Analyst — Draft Board</title>
-  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/style.css?v=20260725-modern-ui" />
 </head>
-<body>
+<body class="app-shell">
   <header class="topbar">
     <div class="brand">
       <span class="logo">▲</span>
@@ -37,11 +37,15 @@
         </div>
       </div>
       <label class="auto"><input type="checkbox" id="autoRefresh" checked /> Авто</label>
+      <button id="notifyBtn" class="btn" title="Уведомления о начале live-матчей">🔔</button>
       <button id="refreshBtn" class="btn primary">Обновить</button>
     </div>
   </header>
 
   <div id="status" class="status"></div>
+  <div id="modelStatus" class="model-status">ML: загрузка статуса…</div>
+  <section id="analyticsPanel" class="analytics-panel" aria-live="polite"></section>
+  <div id="dataHealth" class="data-health" aria-live="polite"></div>
 
   <main class="board">
     <section class="column" data-col="prematch">
@@ -58,6 +62,6 @@
     </section>
   </main>
 
-  <script src="/app.js"></script>
+  <script src="/app.js?v=20260725-kill-lines"></script>
 </body>
 </html>

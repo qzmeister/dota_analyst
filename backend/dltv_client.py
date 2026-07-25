@@ -212,20 +212,60 @@ class DLTVClient:
         }
 
     def classify_stage(self, series: Dict) -> str:
-        """prematch | live | postmatch, robust to unknown status codes."""
+        """Classify a series, keeping it live between maps until it is complete.
+
+        Some upstream responses mark an individual map as finished before the
+        BO series is over.  Score/played-map completion therefore takes
+        precedence over a stale ``status`` or ``ended_at`` field.
+        """
         status = series.get("status")
         ended = _parse_dt(series.get("ended_at"))
         started = _parse_dt(series.get("started_at")) or _parse_dt(series.get("liquipedia_date"))
         now = datetime.now(timezone.utc)
 
-        if status == 2 or ended is not None:
+        complete = self._is_series_complete(series)
+        if complete:
             return "postmatch"
-        # a played/in-progress map present but series not ended -> live
-        if self._has_active_map(series):
+        # A finished first/second map still means that BO3/BO5 is live while
+        # the next map is being drafted or is about to start.
+        if any(m.get("winner") for m in (series.get("maps") or [])) or self._has_active_map(series):
             return "live"
         if started is not None and started <= now:
             return "live"
+        # Without a usable BO/maps payload, preserve the original upstream
+        # terminal signal as the fallback.
+        if status == 2 or ended is not None:
+            return "postmatch"
         return "prematch"
+
+    @staticmethod
+    def _series_bo(series: Dict) -> Optional[int]:
+        value = series.get("type") or series.get("_scraper_bo")
+        if isinstance(value, int) and value in {1, 2, 3, 5}:
+            return value
+        if isinstance(value, str):
+            value = value.lower().strip()
+            if value.startswith("bo") and value[2:].isdigit():
+                parsed = int(value[2:])
+                return parsed if parsed in {1, 2, 3, 5} else None
+        return None
+
+    @classmethod
+    def _is_series_complete(cls, series: Dict) -> bool:
+        """Return True only when the BO format's required maps are complete."""
+        bo = cls._series_bo(series)
+        if bo is None:
+            return False
+        played = [game_map for game_map in (series.get("maps") or []) if game_map.get("winner")]
+        if bo == 2:
+            return len(played) >= 2
+        required_wins = bo // 2 + 1
+        score: Dict[Any, int] = {}
+        for game_map in played:
+            winner_id = game_map.get("radiant_team_id") if game_map.get("winner") == "radiant" else game_map.get("dire_team_id")
+            if winner_id is not None:
+                score[winner_id] = score.get(winner_id, 0) + 1
+        return max(score.values(), default=0) >= required_wins or len(played) >= bo
 
     @staticmethod
     def _has_active_map(series: Dict) -> bool:

@@ -3,19 +3,25 @@
 const API = "";
 const LS_KEY = "dota_analyst_leagues";
 const LS_WATCH = "dota_analyst_watchlist";
+const LS_FAVORITES = "dota_analyst_favorite_teams";
 let LEAGUES = [];
 let SELECTED = new Set(JSON.parse(localStorage.getItem(LS_KEY) || "[]"));
 let WATCHLIST = JSON.parse(localStorage.getItem(LS_WATCH) || "[]"); // [{id, title?}]
+let FAVORITE_TEAMS = new Set(JSON.parse(localStorage.getItem(LS_FAVORITES) || "[]"));
 let refreshTimer = null;
+const COLUMN_LIMIT = 10;
+const EXPANDED_COLUMNS = new Set();
+const SEEN_LIVE = new Set(JSON.parse(sessionStorage.getItem("dota_analyst_seen_live") || "[]"));
 
 const $ = (id) => document.getElementById(id);
 
 // ---------------- League picker ----------------
 async function loadLeagues() {
   try {
-    const r = await fetch(`${API}/api/leagues`);
+    const r = await fetch(`${API}/api/leagues`, { cache: "no-store" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
-    LEAGUES = d.leagues || [];
+    LEAGUES = Array.isArray(d.leagues) ? d.leagues : [];
     renderLeagueList();
     updateLeagueCount();
   } catch (e) {
@@ -71,6 +77,7 @@ function renderLeagueList(filter = "") {
 function persist() {
   localStorage.setItem(LS_KEY, JSON.stringify([...SELECTED]));
   localStorage.setItem(LS_WATCH, JSON.stringify(WATCHLIST));
+  localStorage.setItem(LS_FAVORITES, JSON.stringify([...FAVORITE_TEAMS]));
 }
 function updateLeagueCount() {
   $("leagueCount").textContent = SELECTED.size;
@@ -122,6 +129,10 @@ async function refresh() {
     renderColumn("prematch", d.prematch, prematchCard);
     renderColumn("live", d.live, liveCard);
     renderColumn("postmatch", d.postmatch, postmatchCard);
+    notifyAboutLiveMatches(d.live || []);
+    loadModelStatus();
+    loadAnalytics();
+    loadDataQuality();
     // enrich watchlist titles from fetched live cards (best-effort)
     const byMatchId = {};
     (d.live || []).forEach(c => { if (c.match_id) byMatchId[String(c.match_id)] = c; });
@@ -155,7 +166,101 @@ function renderColumn(name, items, builder) {
     col.innerHTML = `<div class="empty">Нет матчей</div>`;
     return;
   }
-  items.forEach((it) => col.appendChild(builder(it)));
+  const expanded = EXPANDED_COLUMNS.has(name);
+  const visibleItems = expanded ? items : items.slice(0, COLUMN_LIMIT);
+  visibleItems.forEach((it) => col.appendChild(builder(it)));
+
+  if (items.length > COLUMN_LIMIT) {
+    const toggle = document.createElement("button");
+    toggle.className = "show-more";
+    toggle.textContent = expanded
+      ? "Свернуть список"
+      : `Показать ещё (${items.length - COLUMN_LIMIT})`;
+    toggle.onclick = () => {
+      expanded ? EXPANDED_COLUMNS.delete(name) : EXPANDED_COLUMNS.add(name);
+      renderColumn(name, items, builder);
+    };
+    col.appendChild(toggle);
+  }
+}
+
+function notifyAboutLiveMatches(liveCards) {
+  const isAllowed = "Notification" in window && Notification.permission === "granted";
+  liveCards.forEach((card) => {
+    const key = String(card.match_id || card.series_id || "");
+    if (!key || SEEN_LIVE.has(key)) return;
+    SEEN_LIVE.add(key);
+    if (isAllowed) {
+      new Notification("Матч начался", {
+        body: `${card.radiant_team?.name || "?"} vs ${card.dire_team?.name || "?"} · ${card.event || ""}`,
+      });
+    }
+  });
+  sessionStorage.setItem("dota_analyst_seen_live", JSON.stringify([...SEEN_LIVE].slice(-200)));
+}
+
+async function loadModelStatus() {
+  try {
+    const response = await fetch(`${API}/api/model-status`, { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    const model = data.model || {}, learning = data.learning || {}, collection = data.collection || {};
+    const accuracy = model.accuracy == null ? "—" : `${(model.accuracy * 100).toFixed(1)}%`;
+    const total = collection.total || 0;
+    const fetched = collection.fetched || 0;
+    const remaining = collection.remaining ?? Math.max(0, total - fetched);
+    let collectionText = "";
+    if (collection.state === "training") {
+      collectionText = " · дообучение модели…";
+    } else if (collection.state === "complete") {
+      collectionText = ` · исторический сбор завершён: ${fetched}/${total}`;
+    } else if (collection.state === "blocked_by_failed_maps") {
+      collectionText = ` · сбор остановлен: ${fetched}/${total}, ошибок: ${collection.failed || 0}`;
+    } else if (total) {
+      collectionText = ` · сбор карт: ${fetched}/${total} · осталось ${remaining}`;
+    }
+    const liveQueue = learning.queued_maps ? ` · live-очередь: ${learning.queued_maps}` : "";
+    $("modelStatus").textContent = `ML: ${model.samples || 0} карт · accuracy ${accuracy}${collectionText}${liveQueue}`;
+  } catch (_) {
+    $("modelStatus").textContent = "ML: статус временно недоступен";
+  }
+}
+
+async function loadAnalytics() {
+  const panel = $("analyticsPanel");
+  try {
+    const response = await fetch(API + "/api/analytics", { cache: "no-store" });
+    if (!response.ok) throw new Error();
+    const audit = (await response.json()).prediction_audit || {};
+    if (!audit.settled) {
+      panel.innerHTML = '<div class="analytics-empty">Проверка прогнозов начнётся после завершения первой live-карты. Журнал фиксирует только прогнозы, которые были показаны на доске.</div>';
+      return;
+    }
+    const accuracy = (audit.accuracy * 100).toFixed(1) + "%";
+    const brier = audit.brier_score.toFixed(3);
+    const rows = (audit.calibration || []).map((bucket) =>
+      '<div class="cal-row"><span>' + bucket.range + '</span><span>' + bucket.samples + '</span><span>' +
+      (bucket.predicted * 100).toFixed(0) + '%</span><span>' + (bucket.actual * 100).toFixed(0) + '%</span></div>'
+    ).join("");
+    panel.innerHTML =
+      '<div class="analytics-head"><span>Качество live-прогнозов</span><span>' + audit.settled + ' завершено / ' + audit.shown + ' показано</span></div>' +
+      '<div class="analytics-metrics"><div><small>Accuracy</small><b>' + accuracy + '</b></div><div><small>Brier score</small><b>' + brier + '</b></div></div>' +
+      (rows ? '<div class="calibration"><div class="cal-row cal-title"><span>Прогноз</span><span>Карт</span><span>Модель</span><span>Факт</span></div>' + rows + '</div>' : "");
+  } catch (_) {
+    panel.innerHTML = "";
+  }
+}
+
+async function loadDataQuality() {
+  try {
+    const response = await fetch(API + "/api/data-quality", { cache: "no-store" });
+    if (!response.ok) return;
+    const quality = await response.json();
+    const health = $("dataHealth");
+    health.textContent = "Данные: " + quality.full_maps + " полных карт · " +
+      quality.target_fetched + " загружено из целевого набора · ошибок: " +
+      quality.target_failed + " · проверенных прогнозов: " + quality.audited_predictions;
+  } catch (_) {}
 }
 
 // ---------------- Card builders ----------------
@@ -171,7 +276,8 @@ function teamLogo(t) {
 }
 function teamBlock(t, side) {
   const rank = t.rank ? `<span class="trank">#${t.rank}</span>` : "";
-  return `<div class="team ${side}">${teamLogo(t)}<div style="min-width:0"><div class="tname">${t.name}</div>${rank}</div></div>`;
+  const favorite = FAVORITE_TEAMS.has(t.name);
+  return `<div class="team ${side}">${teamLogo(t)}<div style="min-width:0"><div class="tname">${t.name}</div>${rank}</div><button class="fav-btn ${favorite ? "active" : ""}" data-team="${t.name}" title="Избранная команда">${favorite ? "★" : "☆"}</button></div>`;
 }
 function heroIcon(h, cls = "") {
   const inner = h.image
@@ -186,8 +292,25 @@ function fmtDate(iso) {
 }
 
 function prematchCard(c) {
+  const p = c.predictions || {};
+  const form = c.form_context || {};
+  const maps = p.total_maps || {};
+  const prematchMarkets = p.winner ? `
+    <div class="prematch-markets">
+      <div class="market-head">Прематч · ${p.source === "prematch_team_form" ? "форма команд" : "—"}</div>
+      <div class="market-grid">
+        <div><span>Победитель серии</span><b>${p.winner.team} · ${p.winner.probability}%</b></div>
+        <div><span>Счёт серии</span><b>${p.series_score?.favourite || "—"} ${p.series_score?.score || "—"}</b></div>
+      </div>
+    </div>` : "";
+  const formHtml = form.team_a?.maps || form.team_b?.maps ? `
+    <div class="form-context">
+      <span>${c.team_a.name}: Elo ${form.team_a?.elo ?? "—"} · форма ${form.team_a?.recent_win_rate ?? "—"}%</span>
+      <span>${c.team_b.name}: Elo ${form.team_b?.elo ?? "—"} · форма ${form.team_b?.recent_win_rate ?? "—"}%</span>
+      ${form.h2h_maps ? `<small>Очные карты: ${form.h2h_maps}</small>` : ""}
+    </div>` : "";
   return el(`
-    <div class="card">
+    <div class="card card--prematch">
       <div class="event"><span>${c.event}</span><span class="bo-tag">${c.bo}</span></div>
       <div class="teams-row">
         ${teamBlock(c.team_a, "")}
@@ -195,46 +318,27 @@ function prematchCard(c) {
         ${teamBlock(c.team_b, "right")}
       </div>
       <div class="starttime">🕓 ${fmtDate(c.start_time) || "Время уточняется"}</div>
+      ${prematchMarkets}
+      ${formHtml}
     </div>`);
 }
 
 function postmatchCard(c) {
   const aWin = c.score_a >= c.score_b;
-  const pred = c.prediction || {};
   const detailed = c.games_detailed || [];
-
-  // Header: series-level prediction summary (only if available)
-  let predSummaryHtml = "";
-  if (pred.winner_team) {
-    const correct = pred.winner_team === c.winner;
-    predSummaryHtml = `
-      <div class="postmatch-pred ${correct ? "correct" : "wrong"}">
-        <div class="pred-label">🤖 Итог серии</div>
-        <div class="pred-row">
-          <span class="pred-winner">${pred.winner_team}</span>
-          <span class="pred-prob">${pred.winner_probability ?? "—"}%</span>
-        </div>
-        <div class="pred-actual">
-          <span class="pred-actual-label">Факт:</span>
-          <span class="pred-actual-winner">${c.winner} (${c.score_a}–${c.score_b})</span>
-          <span class="pred-verdict">${correct ? "✓ точно" : "✗ мимо"}</span>
-        </div>
-      </div>`;
-  }
 
   // Collapsible per-game detailed blocks
   const gamesHtml = detailed.map((g) => gameDetailedHtml(g, c)).join("");
   const hasDetailed = detailed.length > 0;
 
   return el(`
-    <div class="card postmatch-card">
+    <div class="card postmatch-card card--postmatch">
       <div class="event"><span>${c.event}</span><span class="bo-tag">${c.bo}</span></div>
       <div class="teams-row">
         ${teamBlock(c.team_a, "")}
         <span class="score-badge"><span class="${aWin ? "win" : ""}">${c.score_a}</span> : <span class="${!aWin ? "win" : ""}">${c.score_b}</span></span>
         ${teamBlock(c.team_b, "right")}
       </div>
-      ${predSummaryHtml}
       ${hasDetailed ? `
         <div class="pm-games">
           <div class="pm-games-toggle" onclick="this.parentNode.classList.toggle('open')">
@@ -284,7 +388,7 @@ function gameDetailedHtml(g, c) {
       <div class="pm-col-head">Факт</div>
       <div class="pm-stat-row"><span class="pm-label">Длительность</span><span>${_fmtDur(g.duration_sec)} (${g.duration_min ?? "—"} мин)</span></div>
       <div class="pm-stat-row">
-        <span class="pm-label">Команды ( frags )</span>
+        <span class="pm-label">Фраги</span>
         <span>${teamA.slice(0,6)}: ${_valOr(g.team_a_score)} | ${teamB.slice(0,6)}: ${_valOr(g.team_b_score)}</span>
       </div>
       <div class="pm-stat-row">
@@ -311,7 +415,7 @@ function gameDetailedHtml(g, c) {
       </div>
       <div class="pm-stat-row">
         <span class="pm-label">Длительность ${_verdictBadge(v.duration)}</span>
-        <span>${total.side ? (total.side === "over" ? "ТБ" : "ТМ") : "—"} ${total.threshold !== undefined ? total.threshold : "—"} мин (${total.formatted || "—"})</span>
+        <span>${total.side ? (total.side === "over" ? "ТБ" : "ТМ") : "—"} ${total.threshold !== undefined ? total.threshold : "—"} мин</span>
       </div>
       <div class="pm-stat-row">
         <span class="pm-label">Киллы (всего) ${_verdictBadge(v.kills_total)}</span>
@@ -354,8 +458,17 @@ function liveCard(c) {
   const w = p.winner || {};
   const pr = w.prob_radiant ?? 50;
   const draft = c.draft || {};
+  const series = c.series_outlook || {};
+  const draftContext = c.draft_context || {};
+  const signalNames = { skip: "Пропустить", watch: "Наблюдать", strong: "Сильный сигнал" };
+  const insightHtml = `
+    <div class="live-insights">
+      <div class="signal signal-${c.signal || "skip"}"><span>Сигнал</span><b>${signalNames[c.signal] || "Пропустить"}</b></div>
+      ${series.favourite ? `<div><span>${series.mode === "series" ? "Серия" : "Следующая карта"}</span><b>${series.favourite} · ${series.probability}%</b></div>` : ""}
+      ${draftContext.radiant?.win_rate != null ? `<div><span>Драфт · история</span><b>${c.radiant_team.name} ${draftContext.radiant.win_rate}% / ${c.dire_team.name} ${draftContext.dire.win_rate ?? "—"}%</b></div>` : ""}
+    </div>`;
   return el(`
-    <div class="card">
+    <div class="card card--live">
       <div class="event"><span>${c.event} · Игра ${c.game_no}</span><span class="bo-tag">${c.bo}</span></div>
       <div class="teams-row">
         ${teamBlock(c.radiant_team, "")}
@@ -373,15 +486,15 @@ function liveCard(c) {
 
       <div class="pred">
         <div class="pbox full">
-          <div class="plabel">Победитель</div>
+          <div class="plabel">Победитель${p.ml_winner ? " · ML" : ""}</div>
           <div class="pval">${w.team || "—"} · ${w.probability ?? "—"}%</div>
           <div class="winbar"><div style="width:${pr}%"></div></div>
           <div class="winrow"><span class="r">${c.radiant_team.name} ${pr}%</span><span class="d">${100 - pr}% ${c.dire_team.name}</span></div>
         </div>
         <div class="pbox">
-          <div class="plabel">Киллы (потенциал)</div>
-          <div class="pval">${p.kills?.total ?? "—"}</div>
-          <div class="psub">${p.kills?.radiant ?? "—"} ☀ / 🌙 ${p.kills?.dire ?? "—"}</div>
+          <div class="plabel">Тотал фрагов</div>
+          <div class="pval">${p.kills_total_over_under?.side === "over" ? "ТБ" : p.kills_total_over_under?.side === "under" ? "ТМ" : "—"} ${p.kills_total_over_under?.threshold ?? "—"}</div>
+          <div class="psub">линия без возврата</div>
         </div>
         <div class="pbox">
           <div class="plabel">Длительность</div>
@@ -403,6 +516,7 @@ function liveCard(c) {
             <span class="psub">чаще у ${p.multikill?.likely_side || "—"}</span></div>
         </div>
       </div>
+      ${insightHtml}
       <div class="conf">достоверность данных: ${Math.round((p.confidence || 0) * 100)}%</div>
     </div>`);
 }
@@ -428,6 +542,18 @@ function init() {
       $("watchPanel").classList.add("hidden");
     }
   });
+  document.addEventListener("click", (e) => {
+    const button = e.target.closest(".fav-btn");
+    if (!button) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const team = button.dataset.team;
+    if (!team) return;
+    FAVORITE_TEAMS.has(team) ? FAVORITE_TEAMS.delete(team) : FAVORITE_TEAMS.add(team);
+    persist();
+    button.classList.toggle("active", FAVORITE_TEAMS.has(team));
+    button.textContent = FAVORITE_TEAMS.has(team) ? "★" : "☆";
+  });
   $("leagueSearch").oninput = (e) => renderLeagueList(e.target.value);
   $("watchAddBtn").onclick = () => {
     const v = $("watchInput").value;
@@ -437,6 +563,12 @@ function init() {
     if (e.key === "Enter") { e.preventDefault(); addWatch($("watchInput").value); $("watchInput").value = ""; }
   };
   $("refreshBtn").onclick = refresh;
+  $("notifyBtn").onclick = async () => {
+    if (!("Notification" in window)) { alert("Этот браузер не поддерживает уведомления"); return; }
+    const permission = await Notification.requestPermission();
+    $("notifyBtn").classList.toggle("is-active", permission === "granted");
+  };
+  if ("Notification" in window) $("notifyBtn").classList.toggle("is-active", Notification.permission === "granted");
   $("autoRefresh").onchange = setupAutoRefresh;
 
   renderWatchList();

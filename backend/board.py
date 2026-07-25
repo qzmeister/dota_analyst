@@ -8,10 +8,33 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Set
 
-from .analysis import analyze, analyze_map_with_verdict, decode_towers
+from .analysis import analyze, analyze_map_with_verdict, analyze_prematch_series, decode_towers
 from .dltv_client import client, _parse_dt
+from .liquipedia_client import is_tier_1_or_2
+from .learning_pipeline import learning_pipeline
+from .ml_predictor import draft_context, predict_prematch_winner, predict_winner, team_form_context
+from .prediction_audit import prediction_audit
 
 BO_LABELS = {1: "BO1", 2: "BO2", 3: "BO3", 5: "BO5"}
+
+
+def _series_outlook(map_probability_a: float, bo: Optional[int], score_a: int, score_b: int) -> Dict:
+    """Calculate series win chances from current score and independent map strength."""
+    if bo not in {2, 3, 5}:
+        return {}
+    if bo == 2:
+        # BO2 can finish tied: useful signal is the chance to win the remaining map.
+        return {"team_a_probability": round(map_probability_a * 100), "mode": "next_map"}
+    needed = bo // 2 + 1
+
+    def chance(a: int, b: int) -> float:
+        if a >= needed:
+            return 1.0
+        if b >= needed:
+            return 0.0
+        return map_probability_a * chance(a + 1, b) + (1 - map_probability_a) * chance(a, b + 1)
+
+    return {"team_a_probability": round(chance(score_a, score_b) * 100), "mode": "series"}
 
 
 def classify_event_status(event_id: int) -> str:
@@ -65,7 +88,7 @@ def leagues_with_status() -> List[Dict]:
     out: List[Dict] = []
     for e in events:
         eid = e.get("id")
-        if not eid or int(eid) not in active_ids:
+        if not eid or int(eid) not in active_ids or not is_tier_1_or_2(e.get("title") or ""):
             continue
         out.append({
             "id": eid,
@@ -150,15 +173,19 @@ def _active_map(series: Dict) -> Optional[Dict]:
 
 
 def _prematch_card(series: Dict, event_title: str) -> Dict:
+    team_a, team_b = client.normalize_team(series.get("first_team")), client.normalize_team(series.get("second_team"))
+    bo = _bo_label(series.get("type"))
     return {
         "stage": "prematch",
         "series_id": series.get("id"),
         "event_id": series.get("_scraper_event_id") or series.get("event_id"),
         "event": event_title,
-        "bo": _bo_label(series.get("type")),
+        "bo": bo,
         "start_time": series.get("started_at") or series.get("liquipedia_date"),
-        "team_a": client.normalize_team(series.get("first_team")),
-        "team_b": client.normalize_team(series.get("second_team")),
+        "team_a": team_a,
+        "team_b": team_b,
+        "predictions": _prematch_predictions(team_a, team_b, bo),
+        "form_context": team_form_context(team_a, team_b),
     }
 
 
@@ -189,6 +216,8 @@ def _prematch_card_from_scraper(m: Dict) -> Dict:
         "start_time": m.get("start_time"),
         "team_a": team_a,
         "team_b": team_b,
+        "predictions": _prematch_predictions(team_a, team_b, bo_label),
+        "form_context": team_form_context(team_a, team_b),
         "is_tracked": bool(m.get("steam_id")),  # we already know its steam_id
     }
 
@@ -230,6 +259,7 @@ def _postmatch_prediction(series: Dict, is_watchlist: bool = False) -> Optional[
 
 
 def _postmatch_card(series: Dict, event_title: str, is_watchlist: bool = False) -> Dict:
+    learning_pipeline.queue_completed_maps(series.get("maps") or [])
     first = client.normalize_team(series.get("first_team"))
     second = client.normalize_team(series.get("second_team"))
     first_id = series.get("first_team_id")
@@ -332,6 +362,7 @@ def _postmatch_card(series: Dict, event_title: str, is_watchlist: bool = False) 
             "prediction": pred_verdict.get("prediction"),
             "verdict": pred_verdict.get("verdict"),
         })
+        prediction_audit.settle(m.get("steam_id"), actual_winner_name)
 
     return {
         "stage": "postmatch",
@@ -367,6 +398,35 @@ def _live_card(series: Dict, event_title: str) -> Dict:
     d_metas, d_cards = _picks_to_heroes(m.get("dire_picks"), use_steam_id=is_watchlist)
 
     predictions = analyze(radiant_team, dire_team, r_metas, d_metas)
+    ml_prediction = predict_winner(
+        radiant_team,
+        dire_team,
+        [hero.get("steam_id") for hero in r_metas if hero and hero.get("steam_id") is not None],
+        [hero.get("steam_id") for hero in d_metas if hero and hero.get("steam_id") is not None],
+    )
+    if ml_prediction:
+        predictions["winner"] = {
+            "team": ml_prediction["winner"],
+            "probability": ml_prediction["probability"],
+            "prob_radiant": ml_prediction["prob_radiant"],
+        }
+        predictions["ml_winner"] = ml_prediction
+    radiant_ids = [hero.get("steam_id") for hero in r_metas if hero and hero.get("steam_id") is not None]
+    dire_ids = [hero.get("steam_id") for hero in d_metas if hero and hero.get("steam_id") is not None]
+    learning_pipeline.observe_live_map(m.get("steam_id"), {
+        "event": event_title,
+        "radiant_team": radiant_team,
+        "dire_team": dire_team,
+        "radiant_picks": r_cards,
+        "dire_picks": d_cards,
+        "prediction": predictions,
+    })
+    prediction_audit.record_live(m.get("steam_id"), {
+        "event": event_title,
+        "radiant_team": radiant_team,
+        "dire_team": dire_team,
+        "prediction": predictions,
+    })
 
     # current series score so far
     played = _played_maps(series)
@@ -385,6 +445,19 @@ def _live_card(series: Dict, event_title: str) -> Dict:
         score_a = tally.get(series.get("first_team_id"), 0)
         score_b = tally.get(series.get("second_team_id"), 0)
         game_no = len(played) + 1
+
+    bo = _series_bo_int(series)
+    map_probability_first = (predictions.get("winner") or {}).get("prob_radiant", 50) / 100.0
+    if not radiant_is_first:
+        map_probability_first = 1.0 - map_probability_first
+    series_outlook = _series_outlook(map_probability_first, bo, score_a, score_b)
+    if series_outlook:
+        series_outlook["team_a"] = first["name"]
+        series_outlook["team_b"] = second["name"]
+        series_outlook["favourite"] = first["name"] if series_outlook["team_a_probability"] >= 50 else second["name"]
+        series_outlook["probability"] = max(series_outlook["team_a_probability"], 100 - series_outlook["team_a_probability"])
+    winner_probability = (predictions.get("winner") or {}).get("probability", 50)
+    signal = "skip" if winner_probability < 55 else ("watch" if winner_probability < 62 else "strong")
 
     return {
         "stage": "live",
@@ -409,6 +482,9 @@ def _live_card(series: Dict, event_title: str) -> Dict:
             "dire_bans": _bans_to_cards(m.get("dire_bans"), use_steam_id=is_watchlist),
         },
         "predictions": predictions,
+        "draft_context": draft_context(radiant_ids, dire_ids),
+        "series_outlook": series_outlook,
+        "signal": signal,
         "is_watchlist": is_watchlist,
     }
 
@@ -416,7 +492,18 @@ def _live_card(series: Dict, event_title: str) -> Dict:
 def build_board(event_ids: List[int], watch_ids: Optional[List[int]] = None) -> Dict:
     # ensure hero index is warm
     client.get_heroes()
-    all_events = {e["id"]: e.get("title", f"Event {e['id']}") for e in client.get_events()}
+    raw_events = client.get_events()
+    allowed_tier_events = {
+        int(event["id"])
+        for event in raw_events
+        if event.get("id") and is_tier_1_or_2(event.get("title") or "")
+    }
+    all_events = {
+        event["id"]: event.get("title", f"Event {event['id']}")
+        for event in raw_events
+        if int(event["id"]) in allowed_tier_events
+    }
+    event_ids = [event_id for event_id in event_ids if event_id in allowed_tier_events]
 
     # When no filter is provided, auto-include all currently-active leagues so
     # that the unfiltered board still surfaces post-match cards (v1 API path)
@@ -575,3 +662,17 @@ def build_board(event_ids: List[int], watch_ids: Optional[List[int]] = None) -> 
     postmatch.sort(key=lambda c: c.get("ended_at") or "", reverse=True)
 
     return {"prematch": prematch, "live": live, "postmatch": postmatch}
+
+
+def _prematch_predictions(team_a: Dict, team_b: Dict, bo: str) -> Dict:
+    """Use ML historical Elo/form when possible, heuristic only as fallback."""
+    if team_a.get("name") == "TBD" or team_b.get("name") == "TBD":
+        return {}
+    prediction = analyze_prematch_series(team_a, team_b, bo)
+    ml_prediction = predict_prematch_winner(team_a, team_b)
+    if not ml_prediction:
+        return prediction
+    prediction["winner"] = {"team": ml_prediction["team"], "probability": ml_prediction["probability"]}
+    prediction["source"] = ml_prediction["source"]
+    prediction["series_score"]["favourite"] = ml_prediction["team"]
+    return prediction

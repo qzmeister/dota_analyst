@@ -9,8 +9,9 @@ server.err
 _matches.html
 _m2.html
 
-# ML data files (too large for GitHub)
-ml_data/**
+# Downloaded and generated ML data stays local. It can be collected again with
+# the scripts in this repository and is too large/noisy for source control.
+ml_data/
 
 # IDE
 .vscode/

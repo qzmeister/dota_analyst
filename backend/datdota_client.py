@@ -156,6 +156,35 @@ def get_team_matches(team_id: int, limit: int = 50) -> Optional[Dict]:
     return _http_json(url, params)
 
 
+def get_laning_stats(tier: str = "1,2", threshold: int = 1, after: str = "2010-01-01", before: str = "2026-07-24", patch: str = "7.41") -> Optional[Dict]:
+    """
+    Get team laning statistics from DatDota.
+    
+    Returns lane performance data including:
+    - Win rates per lane (safe, offlane, mid)
+    - GPM/XPM differences
+    - First blood rates
+    - Tower take rates
+    
+    Args:
+        tier: Comma-separated tier IDs (1=PREMIUM, 2=PRO)
+        threshold: Minimum matches threshold
+        after: Start date (YYYY-MM-DD)
+        before: End date (YYYY-MM-DD)
+        patch: Patch version (e.g., "7.41")
+    """
+    url = f"{BASE_URL}/api/lanes/laning/teams"
+    params = {
+        "tier": tier,
+        "threshold": threshold,
+        "after": after,
+        "before": before,
+        "patch": patch
+    }
+    
+    return _http_json(url, params)
+
+
 # ========================================================================= #
 # BULK COLLECTION
 # ========================================================================= #

@@ -1,0 +1,24 @@
+{
+  "models": {
+    "duration": {
+      "mae": 9.087832706636194,
+      "rmse": NaN,
+      "target_mean": 42.42746174617462,
+      "target_std": 12.183393215559295
+    },
+    "kills": {
+      "mae": 10.5948974609375,
+      "rmse": NaN,
+      "target_mean": 50.65616561656166,
+      "target_std": 13.966678078506312
+    },
+    "towers": {
+      "mae": 3.858486759934922,
+      "rmse": NaN,
+      "target_mean": 13.868046804680468,
+      "target_std": 4.937212948879135
+    }
+  },
+  "n_samples": 1111,
+  "n_features": 69
+}

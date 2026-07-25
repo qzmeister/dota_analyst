@@ -103,11 +103,11 @@ def analyze(
     if total_kills >= 50:
         # Высокие убийства — ставим Under (будет меньше или равно)
         kills_side = "under"
-        kills_threshold = int(round(total_kills))
+        kills_threshold = int(round(total_kills)) + 0.5
     else:
         # Низкие убийства — ставим Over (будет больше)
         kills_side = "over"
-        kills_threshold = int(round(total_kills)) + 1
+        kills_threshold = int(round(total_kills)) - 0.5
     
     # =================================================================== #
     # 2. Potential duration
@@ -203,10 +203,55 @@ def analyze(
             "team": first15_team["name"],
             "probability": pct(first15_conf),
         },
+        "first_blood": {
+            "team": team_a["name"] if fb_a >= fb_b else team_b["name"],
+            "probability": pct(max(fb_a, fb_b) / 100.0),
+        },
+        "first_tower": {
+            "team": team_a["name"] if p_a >= 0.5 else team_b["name"],
+            "probability": pct(max(p_a, 1.0 - p_a)),
+        },
         "multikill": {
             "level": multikill,          # Low / Medium / High
             "likely_side": multikill_side,
         },
+    }
+
+
+def analyze_prematch_series(team_a: Dict, team_b: Dict, bo: str) -> Dict:
+    """Produce pre-draft markets using only team form/rank and series format.
+
+    This intentionally avoids hero, lane and live-game inputs: it is suitable
+    for cards shown before a draft exists.
+    """
+    wr_a, wr_b = _val(team_a, "win_rate", FALLBACK_WR), _val(team_b, "win_rate", FALLBACK_WR)
+    rank_a, rank_b = team_a.get("rank"), team_b.get("rank")
+    z = 0.045 * (wr_a - wr_b)
+    if isinstance(rank_a, int) and isinstance(rank_b, int) and rank_a > 0 and rank_b > 0:
+        z += 0.015 * _clamp(rank_b - rank_a, -40, 40)
+    probability_a = _logistic(z)
+    favourite = team_a if probability_a >= 0.5 else team_b
+    confidence = int(round(max(probability_a, 1.0 - probability_a) * 100))
+    bo_number = int(bo[2:]) if isinstance(bo, str) and bo.lower().startswith("bo") and bo[2:].isdigit() else 3
+    close_series = abs(probability_a - 0.5) < 0.12
+    if bo_number == 2:
+        score, total = "1:1", 2
+    elif bo_number == 5:
+        score, total = ("3:2", 5) if close_series else ("3:1", 4)
+    else:
+        score, total = ("2:1", 3) if close_series else ("2:0", 2)
+    return {
+        "winner": {"team": favourite["name"], "probability": confidence},
+        "first_map": {"team": favourite["name"], "probability": confidence},
+        "series_score": {"favourite": favourite["name"], "score": score},
+        "total_maps": {
+            "side": "exact" if bo_number == 2 else ("over" if total == bo_number else "under"),
+            "threshold": 2 if bo_number == 2 else bo_number - 0.5,
+        },
+        "first_blood": {"team": team_a["name"] if _val(team_a, "fb_rate", FALLBACK_FB) >= _val(team_b, "fb_rate", FALLBACK_FB) else team_b["name"]},
+        "first_tower": {"team": favourite["name"]},
+        "confidence": confidence,
+        "source": "prematch_team_form",
     }
 
 

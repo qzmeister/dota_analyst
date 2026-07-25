@@ -71,6 +71,7 @@ services:
 
   # -------------------------------------------------------------- business
   # Heuristic engine + future ML. Internal-only. Not exposed to host.
+  # Needs `external` network to reach DLTV/Steam/DatDota APIs.
   business:
     build:
       context: .
@@ -87,6 +88,7 @@ services:
       - PREDICTION_ENGINE=${PREDICTION_ENGINE:-heuristic}
     networks:
       - backend
+      - external
     volumes:
       # ml_data is large (200+ MB) and gitignored. Mount it from the host
       # so rebuilds don't redownload and the data survives container death.
@@ -104,3 +106,7 @@ networks:
     driver: bridge
     # No host exposure — purely internal
     internal: true
+  external:
+    # Bridge with internet access — used by `business` to reach
+    # DLTV/Steam/DatDota upstream APIs. Keeps backend internal-only.
+    driver: bridge

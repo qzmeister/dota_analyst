@@ -167,8 +167,15 @@ class DLTVClient:
         return series
 
     def get_live_json(self, match_id: int) -> Optional[Dict]:
-        """Rich live/finished match JSON (draft + per-hero team win-rates)."""
-        return _http_json(f"{LIVE_BASE}/{match_id}.json", timeout=6.0)
+        """Rich live/finished match JSON (draft + per-hero team win-rates).
+
+        v0.3.14: timeout cut from 6s -> 3s.  Called in a loop for every
+        live match by `discovery.get_live_and_prematch()`; with 30+
+        live matches on the wire a 6s timeout made the cold-cache
+        /api/board take 3+ minutes.  3s is still long enough for a
+        healthy response and short enough that a 404 fails fast.
+        """
+        return _http_json(f"{LIVE_BASE}/{match_id}.json", timeout=3.0)
 
     # ---- hero index ---- #
 

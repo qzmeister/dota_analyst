@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from contextlib import asynccontextmanager
 from typing import List
 
@@ -34,6 +35,30 @@ from .stream import board_publisher_loop, event_stream, get_stream
 # Configure logging once on import. `setup_logging` is idempotent.
 setup_logging()
 log = get_logger(__name__)
+
+# --------------------------------------------------------------------------- #
+# Board cache (v0.3.14+)
+# --------------------------------------------------------------------------- #
+# `build_board()` walks DLTV events + the discovery scraper + Steam live
+# feed, which on cold cache can take 1-3 minutes (many sequential HTTP
+# calls each bounded by a 12s timeout).  We don't want a browser
+# request to wait that long.
+#
+# Strategy: SSE publisher calls `build_board()` every 5s and writes the
+# result here.  `/api/board` reads from this cache — if it's fresh, the
+# response is instant.  If it's stale (publisher loop is mid-build or
+# the process just started), we still trigger a fresh build but the
+# browser waits.  Subsequent requests always get the cached version.
+#
+# The publisher is the single owner of the cache; multiple workers
+# would race.  We use a simple dict + monotonic timestamp; a lock is
+# not needed because the writes happen from one coroutine and the
+# reads are tolerant of a 1-tick stale value.
+# --------------------------------------------------------------------------- #
+_BOARD_CACHE_TTL = 30.0   # if a board is older than this, refetch
+_board_cache: dict = {}    # cache_key -> (board, ts) — see /api/board
+_latest_auto_board: dict = {}   # board produced by SSE publisher (events=[], watch=[])
+_latest_auto_board_ts: float = 0.0
 
 
 # --------------------------------------------------------------------------- #
@@ -67,7 +92,7 @@ async def _lifespan(app: FastAPI):
         log.info("sse publisher task stopped")
 
 
-app = FastAPI(title="Dota Analyst — business", version="0.3.9", lifespan=_lifespan)
+app = FastAPI(title="Dota Analyst — business", version="0.3.14", lifespan=_lifespan)
 
 # CORS: read allowed origins from env. Default to the gateway only.
 # The gateway terminates browser-facing CORS; this is just for direct
@@ -107,6 +132,7 @@ def get_board(
     events: List[str] = Query([], description="event ids (repeated or comma-separated)"),
     watch: List[str] = Query([], description="steam match ids (repeated or comma-separated; watchlist, bypasses v1 API)"),
 ):
+    global _latest_auto_board, _latest_auto_board_ts
     ids: List[int] = []
     for group in events:
         for part in group.split(","):
@@ -130,15 +156,41 @@ def get_board(
             if part.isdigit() and int(part) not in seen_w:
                 seen_w.add(int(part))
                 watch_ids.append(int(part))
-    # Always build board — even with empty events/watch, the discovery
-    # scraper (dltv.org/matches) auto-populates prematch + live.
+
+    # Stale-while-revalidate cache: serialise (ids, watch_ids) as the key.
+    cache_key = (tuple(ids), tuple(watch_ids))
+    now = time.monotonic()
+    cached = _board_cache.get(cache_key)
+    if cached and (now - cached[1]) < _BOARD_CACHE_TTL:
+        return JSONResponse(cached[0])
+
+    # If the SSE publisher has a fresh auto-board (events=[]) and
+    # this is a "show everything" request, reuse it to avoid a
+    # potentially 1-3 minute cold-cache rebuild.
+    if not ids and not watch_ids and _latest_auto_board:
+        age = now - _latest_auto_board_ts
+        if age < _BOARD_CACHE_TTL:
+            return JSONResponse(_latest_auto_board)
+
+    # Stale or missing — compute a fresh board.  The SSE publisher
+    # updates _latest_auto_board every 5s; an unfiltered request that
+    # finds that cache fresh returns immediately (see above).  If we
+    # reach this branch it's a filtered request (specific events or
+    # watchlist) that the auto-board doesn't cover; build it inline.
+    # If that turns out to be slow, future work would dispatch to
+    # `asyncio.to_thread` here too.
     engine = get_default_engine()
-    board = build_board(ids, watch_ids=watch_ids, engine=engine)
+    board = build_board(ids, watch_ids=watch_ids)
     board["selected"] = ids
     board["watch"] = watch_ids
     # Surface which engine produced the predictions — useful for debugging
     # the ml vs heuristic switch from the browser / curl.
     board["engine"] = engine.name
+    _board_cache[cache_key] = (board, now)
+    if not ids and not watch_ids:
+        # Update the auto-board so other in-flight requests can reuse it.
+        _latest_auto_board = board
+        _latest_auto_board_ts = now
     return JSONResponse(board)
 
 

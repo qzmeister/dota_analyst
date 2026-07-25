@@ -55,7 +55,7 @@ log = get_logger(__name__)
 SCRAPE_URL = f"{SITE}/matches"
 SCRAPE_TTL = 90.0          # seconds between re-scrapes
 ENRICH_WINDOW_H = 2.0      # hours before start to begin probing /live
-ENRICH_TTL = 15.0          # seconds between /live/{id}.json probes per match
+ENRICH_TTL = 120.0         # seconds between /live/{id}.json probes per match (v0.3.14: was 15s, too aggressive for cold cache)
 STEAM_TTL = 30.0           # seconds between GetLiveLeagueGames calls
 HTTP_TIMEOUT = 12.0
 

@@ -1,0 +1,70 @@
+# Exclude from Docker build context
+# Keep images lean and avoid leaking dev artefacts.
+
+# VCS
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.py[cod]
+*.pyo
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.tox/
+
+# Virtualenv
+.venv
+venv
+env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local data (mounted as volume instead)
+# NOTE: ml_data IS needed inside the container at runtime, but it's
+# mounted as a volume, so we keep the build context small. However,
+# the models are large and versioned — leave them out of the build,
+# mount the directory instead.
+ml_data/models/winner_v*
+ml_data/models/kills_v*
+ml_data/models/duration_*
+ml_data/full_matches/
+ml_data/imports/
+
+# Local logs
+*.log
+logs/
+
+# Scratch / dev scripts
+scratch_*.py
+scripts/diag_*.py
+scripts/grid_*.py
+scripts/save_*.py
+scripts/expand_*.py
+scripts/forward_*.py
+
+# Docker meta
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Docs
+*.md
+docs/
+ARCHITECTURE.md
+CHANGELOG.md
+TODO.md

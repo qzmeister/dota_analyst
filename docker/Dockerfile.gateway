@@ -15,10 +15,12 @@ WORKDIR /app
 
 # Install deps first (cache layer)
 COPY pyproject.toml ./
-RUN pip install --upgrade pip && pip install .
-
-# Copy just the gateway package
+# Both packages must be present before `pip install .` because
+# pyproject.toml's `packages = [...]` lists both. We install the
+# whole project, but only run the gateway entrypoint.
 COPY gateway/ ./gateway/
+COPY business/ ./business/
+RUN pip install --upgrade pip && pip install .
 
 USER app
 

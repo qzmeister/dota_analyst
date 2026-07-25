@@ -12,9 +12,13 @@ RUN groupadd --system app && useradd --system --gid app --create-home --home-dir
 WORKDIR /app
 
 COPY pyproject.toml ./
+# Both packages must be present before `pip install .` because
+# pyproject.toml's `packages = ["gateway", "business", "business.ml"]`
+# makes setuptools scan all of them at build time.
+COPY gateway/ ./gateway/
+COPY business/ ./business/
 RUN pip install --upgrade pip && pip install .
 
-COPY business/ ./business/
 # Mount the ml_data/ directory at runtime; the image stays clean.
 RUN mkdir -p /app/ml_data && chown -R app:app /app
 

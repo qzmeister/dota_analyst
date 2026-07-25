@@ -213,14 +213,25 @@ async def board_publisher_loop(
     it as a `lifespan` task without taking on the implementation.
     """
     from .board import build_board  # local import — avoids cycle on app startup
-    from .ml.engine import get_default_engine
+    from . import app as _app  # for the module-level board cache (v0.3.14+)
 
     log.info("sse publisher loop started; interval=%.1fs", interval_sec)
     try:
         while True:
             try:
-                engine = get_default_engine()
-                board = build_board([], watch_ids=[], engine=engine)
+                # `build_board` is synchronous and on cold cache can take
+                # 1-3 minutes (DLTV events + scraper + Steam live feed).
+                # Running it inline would block the asyncio event loop
+                # and prevent the FastAPI lifespan from completing
+                # startup (uvicorn never reaches "Application startup
+                # complete").  We run it in a worker thread.
+                board = await asyncio.to_thread(build_board, [], [])
+                # Expose the latest auto-board to /api/board so a fresh
+                # browser request returns instantly instead of triggering
+                # a parallel build (which would race with this one).
+                import time as _t
+                _app._latest_auto_board = board
+                _app._latest_auto_board_ts = _t.monotonic()
                 delivered = await stream.publish_if_changed(board)
                 if delivered:
                     log.debug("sse publish delivered to %d subscribers", delivered)

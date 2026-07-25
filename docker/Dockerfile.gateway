@@ -1,0 +1,32 @@
+# Gateway — FastAPI service that authenticates, rate-limits, and proxies.
+# Image is internal-only; nginx in front of the web tier reaches it
+# through the private `backend` network in docker-compose.
+
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Create non-root user
+RUN groupadd --system app && useradd --system --gid app --create-home --home-dir /app app
+WORKDIR /app
+
+# Install deps first (cache layer)
+COPY pyproject.toml ./
+RUN pip install --upgrade pip && pip install .
+
+# Copy just the gateway package
+COPY gateway/ ./gateway/
+
+USER app
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3).read()" || exit 1
+
+# Single worker — the gateway is stateless. Scale by adding replicas
+# in compose / k8s, not by forking here.
+CMD ["uvicorn", "gateway.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

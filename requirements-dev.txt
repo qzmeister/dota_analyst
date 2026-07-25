@@ -1,0 +1,13 @@
+# Development / test dependencies.
+# Install with:  pip install -r requirements-dev.txt
+
+-r requirements.txt
+
+# Testing
+pytest>=7.0
+pytest-cov>=4.0
+
+# Security audit (audit P1-6).  Local `pip-audit` runs complement the
+# .github/workflows/pip-audit.yml CI job — same tool, same flags, so a
+# green local run is a confident push.
+pip-audit~=2.10.0

@@ -1,0 +1,207 @@
+"""
+Smoke tests for `business.app` — the FastAPI service endpoints.
+
+Strategy:
+  - Use `fastapi.testclient.TestClient` to drive the real app
+    (so middleware, exception handlers and the lifespan
+    startup hook all run).
+  - Mock the external collaborators: `client.get_events`,
+    `client.get_heroes`, `build_board`, the SSE publisher.
+  - We don't go deep on response shape here — the unit tests
+    for `board.py` and the A/B harness in `scripts/eval_engines.py`
+    cover that.  These are the "does it boot and answer 200"
+    smoke tests.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List
+from unittest.mock import MagicMock
+
+import pytest
+from fastapi.testclient import TestClient
+
+
+# --------------------------------------------------------------------------- #
+# Module-level fixtures
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture
+def mock_collaborators(monkeypatch):
+    """Stub out the heavy collaborators `business.app` calls.
+
+    `client.get_events` and `client.get_heroes` are wired into
+    the readiness check and the build_board path.  `build_board`
+    is stubbed to return a minimal valid payload so /api/board
+    doesn't try to talk to DLTV.
+    """
+    fake_client = MagicMock()
+    fake_client.get_events.return_value = []
+    fake_client.get_heroes.return_value = [{"id": 1, "name": "axe"}]
+
+    monkeypatch.setattr("business.app.client", fake_client)
+    # `app` is imported lazily so the TestClient startup picks
+    # up the patched client.
+    return fake_client
+
+
+@pytest.fixture
+def client(mock_collaborators, monkeypatch):
+    """Build a TestClient around the FastAPI app.
+
+    Two collaborators are stubbed so the lifespan hook and the
+    SSE endpoint don't try to talk to anything:
+      - `business.stream.board_publisher_loop` → sleeps forever
+        (cancelled by the lifespan's `finally` block)
+      - `business.app.event_stream` → yields a single keepalive
+        byte and returns, so the SSE endpoint closes immediately
+        instead of blocking the test on a long-lived queue.
+    """
+    # Import inside the fixture so `monkeypatch` is in scope.
+    from business import app as app_module
+
+    async def _no_publisher(*_args, **_kwargs):
+        import asyncio
+        await asyncio.Event().wait()
+
+    # Both `board_publisher_loop` and `event_stream` are imported
+    # into `app.py` via `from .stream import ...`, so the binding
+    # the lifespan / endpoint sees lives in `business.app.__dict__`,
+    # not `business.stream.__dict__`.  Patching the *stream* module
+    # would miss the import shadowing and the real function would
+    # still run.  Patch `app_module` instead.
+    monkeypatch.setattr(app_module, "board_publisher_loop", _no_publisher)
+
+    async def _fake_event_stream(*_args, **_kwargs):
+        yield b": test keepalive\n\n"
+    monkeypatch.setattr(app_module, "event_stream", _fake_event_stream)
+
+    monkeypatch.setenv("PREDICTION_ENGINE", "heuristic")
+    from business.ml.engine import reset_default_engine
+    reset_default_engine()
+
+    with TestClient(app_module.app) as c:
+        yield c
+
+    reset_default_engine()
+
+
+# --------------------------------------------------------------------------- #
+# Health endpoints
+# --------------------------------------------------------------------------- #
+
+class TestHealth:
+    def test_healthz_returns_ok(self, client):
+        r = client.get("/api/healthz")
+        assert r.status_code == 200
+        assert r.json() == {"status": "ok"}
+
+    def test_readyz_returns_ready_when_client_ok(self, client, mock_collaborators):
+        # `get_heroes` is set up by the mock_collaborators fixture.
+        r = client.get("/api/readyz")
+        # The readyz endpoint pings `client.get_heroes()` which our
+        # mock returns a list for — that path is the "ready" branch.
+        assert r.status_code == 200
+        assert r.json()["status"] == "ready"
+
+    def test_readyz_returns_not_ready_on_client_failure(self, client, mock_collaborators):
+        # The endpoint catches `DLTVError` (and the broader upstream family)
+        # — any error from the DLTV client stack translates to a 503.  We
+        # raise a DLTVError directly so the test exercises the real
+        # exception type, not a generic RuntimeError.
+        from business.exceptions import DLTVError
+        mock_collaborators.get_heroes.side_effect = DLTVError("dltv down")
+        r = client.get("/api/readyz")
+        assert r.status_code == 503
+        assert r.json()["status"] == "not-ready"
+        assert "dltv down" in r.json()["error"]
+
+
+# --------------------------------------------------------------------------- #
+# Read endpoints (board / leagues)
+# --------------------------------------------------------------------------- #
+
+class TestLeagues:
+    def test_leagues_returns_list(self, client, monkeypatch):
+        from business import board as board_module
+        # `leagues_with_status` is called via `app.py`.  Stub it
+        # directly so we don't drag the DLTV client in.
+        monkeypatch.setattr(
+            "business.app.leagues_with_status",
+            lambda: [{"id": 42, "title": "DreamLeague", "is_active": True, "status": "live"}],
+        )
+        r = client.get("/api/leagues")
+        assert r.status_code == 200
+        body = r.json()
+        assert "leagues" in body
+        assert body["leagues"][0]["id"] == 42
+
+
+class TestBoard:
+    def test_board_returns_full_dict(self, client, monkeypatch):
+        # Stub `build_board` so we don't need real DLTV data.
+        async def _stub():
+            return {"prematch": [], "live": [], "postmatch": []}
+        # In app.py, `build_board` is called as a function — patch
+        # the symbol on the app module.
+        monkeypatch.setattr(
+            "business.app.build_board",
+            lambda *a, **kw: {
+                "prematch": [{"stage": "prematch", "series_id": 1}],
+                "live": [],
+                "postmatch": [],
+            },
+        )
+        r = client.get("/api/board")
+        assert r.status_code == 200
+        body = r.json()
+        assert "prematch" in body
+        assert "live" in body
+        assert "postmatch" in body
+        assert "engine" in body  # the engine name surfaces here
+
+    def test_board_includes_engine_field(self, client, monkeypatch):
+        monkeypatch.setattr(
+            "business.app.build_board",
+            lambda *a, **kw: {"prematch": [], "live": [], "postmatch": []},
+        )
+        r = client.get("/api/board")
+        body = r.json()
+        # heuristic default in test env.
+        assert body["engine"] in ("heuristic", "ml")
+
+    def test_board_event_ids_dedup_and_parse(self, client, monkeypatch):
+        captured: Dict[str, Any] = {}
+
+        def _stub(ids, watch_ids=None, **kwargs):
+            captured["event_ids"] = ids
+            captured["watch_ids"] = watch_ids
+            return {"prematch": [], "live": [], "postmatch": []}
+
+        monkeypatch.setattr("business.app.build_board", _stub)
+        # Pass `events=1,2,2,3` and `watch=4,4,5`; both should
+        # dedup and parse to ints.
+        r = client.get("/api/board?events=1,2,2,3&watch=4,4,5")
+        assert r.status_code == 200
+        assert captured["event_ids"] == [1, 2, 3]
+        assert captured["watch_ids"] == [4, 5]
+
+
+# --------------------------------------------------------------------------- #
+# SSE endpoint
+# --------------------------------------------------------------------------- #
+
+class TestSse:
+    def test_stream_endpoint_is_text_event_stream(self, client):
+        # We use `client.stream(...)` so the streaming response is
+        # read incrementally and we can verify the headers.
+        with client.stream("GET", "/api/stream/matches") as r:
+            assert r.status_code == 200
+            # media_type is set on the StreamingResponse in app.py.
+            assert r.headers["content-type"].startswith("text/event-stream")
+            # The polling publisher is stubbed to sleep forever, so
+            # the first SSE frame we'd see is the keepalive comment.
+            # We don't need to drain it; the headers are enough.
+            # Read at most a tiny chunk to confirm the response is open.
+            for _ in r.iter_bytes():
+                break

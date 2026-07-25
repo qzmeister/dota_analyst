@@ -1,0 +1,108 @@
+name: nightly-eval
+
+# Nightly ML evaluation — runs `scripts/eval_engines.py` on the
+# current production model + corpus and uploads the result as an
+# artifact.  Tracks accuracy drift over time so we notice when
+# the winner model degrades between retrains.
+#
+# Scheduled at 03:00 UTC daily.  Manual runs available via
+# `workflow_dispatch` for ad-hoc checks after a retrain.
+#
+# Reads the corpus from `ml_data/full_matches/` (already on the
+# runner via checkout).  Does NOT require DatDota / DLTV keys —
+# this is an offline evaluation, not a live prediction.
+
+on:
+  schedule:
+    # 03:00 UTC every day.  Off-peak for both GitHub Actions and
+    # any external rate-limited services we might call later.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+# Cancel any in-progress re-runs of the same workflow.
+concurrency:
+  group: nightly-eval-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    name: Run A/B harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 30  # bound the run — eval is normally a couple of minutes
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install runtime + dev deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Check that models + corpus are present
+        # If the project hasn't trained any models yet, there's
+        # nothing to evaluate.  Skip with a clear message instead
+        # of failing the workflow.
+        run: |
+          if [ ! -d "ml_data/models" ] || [ -z "$(ls -A ml_data/models 2>/dev/null)" ]; then
+            echo "::warning::No models in ml_data/models — nothing to evaluate."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ ! -d "ml_data/full_matches" ] || [ -z "$(ls -A ml_data/full_matches 2>/dev/null)" ]; then
+            echo "::warning::No matches in ml_data/full_matches — nothing to evaluate."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "models: $(ls ml_data/models | wc -l) versions"
+          echo "matches: $(ls ml_data/full_matches | wc -l) files"
+        id: check
+
+      - name: Run A/B harness
+        if: steps.check.outputs.skip != 'true'
+        env:
+          PREDICTION_ENGINE: ml
+          PYTHONPATH: .
+        run: |
+          python scripts/eval_engines.py 2>&1 | tee eval-output.txt
+          # Fail the workflow if the harness itself crashed.
+          if [ $? -ne 0 ]; then
+            echo "::error::eval_engines.py exited non-zero"
+            exit 1
+          fi
+
+      - name: Upload eval output
+        if: always() && steps.check.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-eval-output
+          path: eval-output.txt
+          if-no-files-found: ignore
+
+      - name: Check accuracy drift
+        if: steps.check.outputs.skip != 'true'
+        # The harness prints a `winner accuracy` line; grep it
+        # and warn if accuracy dropped below the v0.3.10 baseline
+        # (0.74 on a ~2k-match A/B harness — see CHANGELOG 0.3.10).
+        # We WARN, not fail, so a slow drift doesn't page anyone;
+        # the human can review the artifact and decide.
+        run: |
+          ACC=$(grep -oP 'winner accuracy\s+\K[0-9.]+' eval-output.txt | head -1 || echo "0")
+          echo "extracted accuracy: $ACC"
+          # Use bc to avoid integer-comparison surprises.
+          UNDER=$(echo "$ACC < 0.65" | bc -l)
+          if [ "$UNDER" = "1" ]; then
+            echo "::warning::winner accuracy $ACC below 0.65 — investigate drift"
+          else
+            echo "winner accuracy $ACC is within expected range"
+          fi

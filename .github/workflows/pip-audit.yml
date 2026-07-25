@@ -1,0 +1,70 @@
+name: pip-audit
+
+# Security audit for Python dependencies.
+# Triggers on every push and PR — fails the build if a known
+# vulnerability is found in any of our pinned packages.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+# Cancel in-progress runs for the same branch on a new push.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    name: pip-audit (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install pip-audit
+        # Pinned via ~= in requirements-dev.txt; reinstalled here so a
+        # cache-miss on `pip` doesn't leave us without the tool.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "pip-audit~=2.10"
+
+      - name: Audit prod deps
+        # -r requirements.txt — the deps that ship to production.
+        # We audit the file directly (not the live env) so the result
+        # matches what `pip install -r requirements.txt` will pull.
+        # --strict: fail on any vuln, even unfixed ones.
+        # We DO audit the transitive tree (no --no-deps) so a CVE in
+        # e.g. pydantic-core or urllib3 surfaces here.
+        run: python -m pip_audit -r requirements.txt --strict
+
+      - name: Audit dev deps (advisory)
+        # Dev-only deps don't ship, so a vuln there is lower-severity.
+        # We still audit them, but `continue-on-error: true` so the
+        # build only blocks on prod vulns.  The artifact upload below
+        # makes the dev-dep result visible for review.
+        continue-on-error: true
+        run: python -m pip_audit -r requirements-dev.txt --strict 2>&1 | tee pip-audit-dev-report.txt
+
+      - name: Upload dev-dep audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-dev-deps
+          path: pip-audit-dev-report.txt
+          if-no-files-found: ignore

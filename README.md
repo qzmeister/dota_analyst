@@ -2,49 +2,116 @@
 
 Профессиональная система анализа драфтов и предсказания исходов матчей Dota 2. Фокусируется исключительно на профессиональных турнирных матчах (не pub games).
 
-## 🚀 Быстрый старт
+**Версия: 0.1.0** — три сервиса, Docker Compose, авторизация с первого дня.
 
-### 1. Установка зависимостей
+## 🏗️ Архитектура
+
+```
+┌────────────────┐    ┌────────────────┐    ┌────────────────┐
+│   web (nginx)  │───▶│ gateway (FAPI) │───▶│business (FAPI) │
+│   :80 static   │    │  :8000 auth    │    │ :8000 heuristic│
+└────────────────┘    └────────────────┘    └────────────────┘
+       ▲                                          ▲
+       └──── :80 ─── host                         └── private net
+```
+
+- **web** — nginx, отдаёт статику. **Ноль Python, ноль логики.**
+- **gateway** — единственная публичная точка. Проверяет `X-API-Key`, проксирует в business.
+- **business** — внутренний. Вся эвристика, ML, API-клиенты.
+
+См. [ARCHITECTURE.md](ARCHITECTURE.md) для подробной диаграммы и обоснования.
+
+## 🚀 Быстрый старт (Docker — рекомендуемый)
+
+### 1. Подготовь `.env`
 
 ```bash
-pip install -r requirements.txt
+cp .env.example .env
+# Открой .env и подставь свой DEV_API_KEY (сгенерируй: openssl rand -hex 32)
+# Опционально: STEAM_API_KEY, STRAZT_API_KEY
 ```
 
-**Зависимости:**
-- `fastapi>=0.110` - Web framework
-- `uvicorn[standard]>=0.27` - ASGI server
-- `requests>=2.31` - HTTP client
-- `python-dotenv>=1.0` - Environment variables
-
-### 2. Настройка API ключей
-
-Создайте файл `.env` в корне проекта:
-
-```env
-# Steam Web API Key (for GetLiveLeagueGames endpoint)
-STEAM_API_KEY=your_steam_api_key_here
-```
-
-**Где получить:**
-- **Steam API Key**: https://steamcommunity.com/dev/apikey (бесплатно)
-
-### 3. Запуск сервера
+### 2. Запусти стек
 
 ```bash
-uvicorn backend.app:app --reload --host 0.0.0.0 --port 8000
+docker compose up --build
 ```
 
-Или через Python:
+Через несколько секунд:
+- **Фронт:** http://localhost
+- **Gateway health:** http://localhost/healthz
+- **Business health (через gateway):** `curl -H "X-API-Key: $DEV_API_KEY" http://localhost/api/healthz`
+
+### 3. Только API (без Docker)
 
 ```bash
-python -m uvicorn backend.app:app --reload
+pip install -e ".[dev]"
+
+# Только business
+make run-business
+# -> http://localhost:8000/api/healthz
+
+# Бизнес + gateway (в двух терминалах)
+make run-business   # :8000
+make run-gateway    # :8000 (на другом порту в compose, или :8001 локально)
 ```
 
-### 4. Открыть в браузере
+### 4. Тесты
+
+```bash
+make test           # pytest -v
+make test-cov       # с coverage
+make ci             # compile + test
+```
+
+## 📦 Что внутри
 
 ```
-http://localhost:8000
+.
+├── web/                  # nginx + static frontend
+│   ├── public/           # index.html, app.js, style.css
+│   ├── nginx.conf        # reverse-proxy to gateway
+│   └── README.md
+├── gateway/             # security + routing (FastAPI)
+│   ├── app.py
+│   ├── _middleware.py    # CORS, auth, body-size, access log, correlation id
+│   └── _proxy.py         # httpx reverse-proxy to business
+├── business/            # heuristic + ML (FastAPI)
+│   ├── app.py            # /api/leagues, /api/board, /api/healthz
+│   ├── analysis.py       # the 6-prediction heuristic
+│   ├── dltv_client.py
+│   ├── datdota_client.py
+│   ├── discovery.py      # scraper + Steam
+│   ├── board.py          # Kanban assembly
+│   ├── _http.py          # shared retry + backoff
+│   └── _logging.py       # shared JSON logger
+├── docker/              # Dockerfile.web, Dockerfile.gateway, Dockerfile.business
+├── docker-compose.yml    # 3 services, 2 networks
+├── tests/                # 23 tests for analysis
+├── ml_data/              # collected matches (gitignored)
+├── pyproject.toml
+├── Makefile              # make help
+├── ARCHITECTURE.md
+├── CHANGELOG.md
+└── TODO.md
 ```
+
+## 🔌 API (с версии 0.1.0 — требует `X-API-Key`)
+
+### GET `/api/leagues`
+```bash
+curl -H "X-API-Key: $DEV_API_KEY" http://localhost/api/leagues
+```
+
+### GET `/api/board?events=1,2&watch=789`
+```bash
+curl -H "X-API-Key: $DEV_API_KEY" "http://localhost/api/board?events=1"
+```
+
+### GET `/api/healthz`
+Не требует auth — для liveness/readiness проб.
+
+## 📊 Сбор данных для ML обучения
 
 ## 📊 Сбор данных для ML обучения
 
@@ -86,31 +153,46 @@ python scripts/bulk_download_steam.py
 python scripts/collect_manual_tier1.py
 ```
 
-## 🏗️ Архитектура проекта
+## 🏗️ Архитектура проекта (0.2.0 — 3-сервисная + ML)
 
 ```
 Dota_analyst/
-├── backend/                    # FastAPI backend
-│   ├── app.py                 # FastAPI app, endpoints
-│   ├── board.py               # Board assembly (Kanban cards)
-│   ├── analysis.py            # Draft analysis engine (heuristic)
-│   ├── dltv_client.py         # DLTV v1 API client
+├── business/                  # FastAPI service — internal only
+│   ├── app.py                 # /api/board, /api/leagues, /api/healthz
+│   ├── board.py               # Kanban assembly
+│   ├── analysis.py            # Heuristic engine (winner, kills, towers, duration, f15, multikill)
+│   ├── dltv_client.py         # DLTV v1 API client (thread-safe)
 │   ├── discovery.py           # Match discovery (scraper + Steam)
 │   ├── datdota_client.py      # DatDota API client (ML data)
-│   └── ml_trainer.py          # ML training pipeline
-├── frontend/                   # Static frontend
-│   ├── index.html
-│   ├── app.js
-│   └── style.css
-├── ml_data/                    # Collected match data
-│   ├── datdota_tier1_matches.json
-│   └── all_matches_steam.json
-├── scripts/                    # Data collection scripts
-│   ├── collect_datdota_targeted.py
-│   ├── find_league_ids.py
-│   └── bulk_download_steam.py
-├── .env                        # API keys (не коммитить!)
+│   ├── _http.py               # Shared HTTP retry + exp backoff
+│   ├── _logging.py            # JSON / text logger
+│   └── ml/                    # 0.2.0 — ML engine (Strategy pattern)
+│       ├── features.py        # HeroWinRateEncoder, FEATURE_ORDER, extract_features
+│       ├── storage.py         # ModelStorage (versioned joblib + metadata.json)
+│       ├── engine.py          # IPredictionEngine, HeuristicEngine, MLEngine
+│       └── train.py           # CLI: python -m business.ml.train
+├── gateway/                   # FastAPI gateway — auth, CORS, body-size, proxy
+│   ├── app.py
+│   ├── _middleware.py
+│   └── _proxy.py
+├── web/                       # Static frontend (nginx)
+│   ├── public/                # index.html, app.js, style.css
+│   └── nginx.conf
+├── ml_data/
+│   ├── full_matches/          # 1111 DatDota match JSONs (training corpus)
+│   ├── models/                # Trained artifacts (winner_v1/, ...)
+│   └── imports/               # Ingest manifests
+├── scripts/                   # One-off utilities
+│   ├── collect_full_matches.py
+│   ├── smoke_ml_0_2_0.py      # 0.2.0 — side-by-side engine comparison
+│   └── ...
+├── tests/                     # pytest suite (97 tests, 4 files)
+├── docker/                    # 3 Dockerfiles (web, gateway, business)
+├── docker-compose.yml
+├── Makefile
+├── pyproject.toml
 ├── requirements.txt
+├── .env                       # API keys (never committed)
 └── README.md
 ```
 
@@ -157,52 +239,80 @@ Dota_analyst/
 
 Вернуть frontend (Kanban board UI).
 
-## 📈 ML Training Pipeline
+## 📈 ML Training Pipeline (0.2.0)
 
 ### 1. Сбор данных
 
 ```python
-from backend.datdota_client import collect_all_tier1_matches
+from business.datdota_client import collect_all_tier1_matches
 
 # Собрать все матчи Tier 1 турниров
 matches = collect_all_tier1_matches()
-# -> 1,111 матчей с базовой информацией
+# -> 1,111 матчей в ml_data/full_matches/*.json
 ```
 
-### 2. Обогащение деталями
+### 2. Обогащение деталями (уже сделано в `ml_data/full_matches/`)
 
-```python
-from backend.datdota_client import get_match_details
+`ml_data/imports/2026-07-24-telegram-desktop.json` — манифест импорта
+1111 DatDota full match JSONs (по одному на матч, schema v1).
 
-for match in matches:
-    details = get_match_details(match['matchId'])
-    # Добавить: player stats, hero picks, items, timeline
+### 3. Обучение моделей (CLI)
+
+```bash
+# Defaults: data-dir=ml_data/full_matches, model-dir=ml_data/models, version=1
+python -m business.ml.train
+
+# Явные пути и версия
+python -m business.ml.train \
+    --data-dir ml_data/full_matches \
+    --model-dir ml_data/models \
+    --version 1
+
+# Альтернативный estimator (вместо LogisticRegression)
+python -m business.ml.train --model histgb
 ```
 
-### 3. Обучение моделей
+Что делает команда:
+1. Загружает каждый `ml_data/full_matches/*.json`
+2. Отбрасывает битые/errored и матчи без 5+5 hero picks
+3. Обучает `HeroWinRateEncoder` (per-hero, per-side target encoding со сглаживанием)
+4. Собирает матрицу признаков (N, 13) по `FEATURE_ORDER`
+5. Делит 80/20 (stratified) и обучает `LogisticRegression`
+6. Считает accuracy / log_loss / ROC AUC на hold-out
+7. Сохраняет `ml_data/models/winner_v1/model.joblib` + `metadata.json`
+
+### 4. Предсказание (внутри `business.app`)
 
 ```python
-from backend.ml_trainer import MLTrainer
+from business.ml.engine import make_engine, get_default_engine
 
-trainer = MLTrainer(data_dir="ml_data")
-
-# Загрузить данные
-trainer.load_datdota_data("ml_data/datdota_tier1_matches.json")
-
-# Обучить модели
-trainer.train_winner_model()      # Random Forest Classifier
-trainer.train_duration_model()    # Random Forest Regressor
-trainer.train_kills_model()       # Random Forest Regressor
-
-# Сохранить модели
-trainer.save_models()
+# Прямое использование (без FastAPI)
+engine = make_engine("ml", model_dir=Path("ml_data/models"))
+result = engine.analyze(team_a, team_b, heroes_a, heroes_b)
+# result["winner"] — перезаписан ML-моделью
+# result["winner"]["source"] == "ml:v1"
+# result["kills"], ["towers"], ["duration_min"] и т.д. — от эвристики
 ```
 
-### 4. Предсказание
+Внутри приложения engine выбирается через env:
 
-```python
-# Использовать обученные модели для предсказания
-prediction = trainer.predict(match_features)
+```bash
+PREDICTION_ENGINE=ml   uvicorn business.app:app
+PREDICTION_ENGINE=heuristic   uvicorn business.app:app
+```
+
+`/api/board` теперь возвращает поле `engine` в ответе, чтобы клиент
+видел, какая именно реализация сделала предсказание.
+
+### 5. Замена предсказательной модели (CLI)
+
+```bash
+# 1. Обучить новую версию (v2)
+python -m business.ml.train --version 2
+
+# 2. В .env поменять активную версию (когда добавим pin, в 0.2.x)
+#    Сейчас используется последняя версия по лексикографическому порядку.
+PREDICTION_ENGINE=ml   uvicorn business.app:app
 ```
 
 ## 🎯 Система предсказаний

@@ -1,0 +1,106 @@
+# ============================================================================
+# Dota Analyst — local dev docker compose
+# Three services, two networks. Only `web` is exposed to the host.
+#
+#   ┌──────────┐    ┌──────────┐    ┌──────────┐
+#   │   web    │───▶│ gateway  │───▶│ business │ (private)
+#   │  :80     │    │  :8000   │    │  :8000   │
+#   └──────────┘    └──────────┘    └──────────┘
+#        ▲
+#        │ :80
+#        └─ host browser
+#
+# See ARCHITECTURE.md §2 for the rationale.
+# ============================================================================
+
+version: "3.9"
+
+x-app-common: &app-common
+  restart: unless-stopped
+  env_file:
+    - .env
+
+services:
+  # ------------------------------------------------------------------ web
+  # nginx serving the static frontend. Only public-facing port.
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.web
+    image: dota-analyst-web:0.1.0
+    container_name: dota-web
+    ports:
+      - "80:80"
+    depends_on:
+      - gateway
+    networks:
+      - frontend
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # --------------------------------------------------------------- gateway
+  # Auth, rate limit, correlation IDs, body-size cap, reverse proxy.
+  # Internal-only — only the `web` container (via nginx upstream) talks
+  # to it, and only over the `frontend` network.
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.gateway
+    image: dota-analyst-gateway:0.1.0
+    container_name: dota-gateway
+    environment:
+      - BUSINESS_URL=http://business:8000
+      - DEV_API_KEY=${DEV_API_KEY}
+      - CORS_ORIGINS=http://localhost
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FORMAT=${LOG_FORMAT:-text}
+      - MAX_BODY_BYTES=${MAX_BODY_BYTES:-1048576}
+    depends_on:
+      - business
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # -------------------------------------------------------------- business
+  # Heuristic engine + future ML. Internal-only. Not exposed to host.
+  business:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.business
+    image: dota-analyst-business:0.1.0
+    container_name: dota-business
+    environment:
+      - STEAM_API_KEY=${STEAM_API_KEY:-}
+      - STRAZT_API_KEY=${STRAZT_API_KEY:-}
+      - DATDOTA_API_KEY=${DATDOTA_API_KEY:-}
+      - CORS_ORIGINS=http://gateway:8000
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FORMAT=${LOG_FORMAT:-text}
+      - PREDICTION_ENGINE=${PREDICTION_ENGINE:-heuristic}
+    networks:
+      - backend
+    volumes:
+      # ml_data is large (200+ MB) and gitignored. Mount it from the host
+      # so rebuilds don't redownload and the data survives container death.
+      - ./ml_data:/app/ml_data:rw
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/healthz', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+    # No host exposure — purely internal
+    internal: true

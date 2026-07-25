@@ -1,4 +1,28 @@
-fastapi>=0.110
-uvicorn[standard]>=0.27
-requests>=2.31
-python-dotenv>=1.0
+# Production runtime dependencies.
+#
+# We use `~=` (compatible-release) pinning here rather than `>=` so the
+# build is reproducible within a minor version, but a fresh `pip install`
+# still picks up bug-fix releases (e.g. 0.139.0 → 0.139.5) without
+# requiring a code change.  Upgrading across the minor boundary (0.139 →
+# 0.140) is a deliberate, reviewed bump.
+#
+# Pinned to the versions validated by the test suite as of 0.3.5
+# (the 310-test green run).
+fastapi~=0.139.0
+uvicorn[standard]~=0.51.0
+requests~=2.34.0
+python-dotenv~=1.2.0
+httpx~=0.28.0
+
+# ML engine (0.2.0+). Imported transitively by business.app whenever
+# PREDICTION_ENGINE=ml, so they belong in the main image. joblib is
+# used by business.ml.storage for model serialisation; numpy comes
+# transitively with scikit-learn but is pinned for clarity.
+numpy~=2.5.0
+scikit-learn~=1.9.0
+joblib~=1.5.0
+
+# ML regressors (0.2.1+). XGBoost powers the duration P10 / P90
+# quantile heads. Tweedie / CatBoost upgrades for 0.2.2 will land
+# in the same line.
+xgboost~=3.3.0

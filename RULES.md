@@ -106,11 +106,11 @@
 1. scripts/collect_datdota_targeted.py
 2. datdota_client.get_leagues() → список лиг
 3. datdota_client.get_league_matches(id) → матчи турнира
-4. Save to ml_data/datdota_tier1_matches.json
+4. Save to ml_data/full_matches/{match_id}.json (one file per match)
 5. (Optional) datdota_client.get_match_details(id) → полная статистика
-6. ml_trainer.load_datdota_data() → загрузка
-7. ml_trainer.train_*_model() → обучение
-8. ml_trainer.save_models() → сохранение
+6. `python -m business.ml.train` → fits HeroWinRateEncoder, trains LogReg, saves to ml_data/models/winner_v{N}/
+7. Set `PREDICTION_ENGINE=ml` in `.env` → business.app loads the latest model on startup
+8. To promote a new version: train with `--version N+1`, restart business service
 ```
 
 ### Post-Match Analysis

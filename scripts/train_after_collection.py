@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = ROOT / "ml_data" / "target_tournaments_matches.json"
 PROGRESS_PATH = ROOT / "ml_data" / "target_tournaments_progress.json"
 STATUS_PATH = ROOT / "ml_data" / "post_collection_training_status.json"
-TRAINER = ROOT / "scripts" / "train_temporal_prematch.py"
+TRAINER = ROOT / "scripts" / "train_random_forest_prematch.py"
 POLL_SECONDS = 20
 
 

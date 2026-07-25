@@ -1,0 +1,33 @@
+{
+  "samples": 1646,
+  "holdout_samples": 330,
+  "features": 54,
+  "split": "chronological final 20%",
+  "results": {
+    "logistic_regression": {
+      "accuracy": 0.6273,
+      "roc_auc": 0.6968,
+      "brier": 0.2247
+    },
+    "random_forest": {
+      "accuracy": 0.6424,
+      "roc_auc": 0.6947,
+      "brier": 0.2248
+    },
+    "hist_gradient_boosting": {
+      "accuracy": 0.6121,
+      "roc_auc": 0.6513,
+      "brier": 0.2337
+    },
+    "xgboost_current": {
+      "accuracy": 0.6121,
+      "roc_auc": 0.6795,
+      "brier": 0.2253
+    },
+    "xgboost_regularized": {
+      "accuracy": 0.6485,
+      "roc_auc": 0.6896,
+      "brier": 0.2242
+    }
+  }
+}

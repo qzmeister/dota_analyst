@@ -21,6 +21,8 @@ _model = None
 _feature_names: Optional[List[str]] = None
 _snapshot: Optional[Dict] = None
 _load_attempted = False
+_loaded_marker = None
+_model_source = "temporal_xgboost"
 
 
 def _rate(record: Dict) -> float:
@@ -131,21 +133,37 @@ def draft_context(radiant_hero_ids: List[int], dire_hero_ids: List[int]) -> Dict
 
 def _load() -> bool:
     """Load model artifacts once; return False when optional ML dependencies are absent."""
-    global _feature_names, _load_attempted, _model, _snapshot
-    if _load_attempted:
+    global _feature_names, _load_attempted, _loaded_marker, _model, _model_source, _snapshot
+    metadata_path = MODEL_DIR / "model_metadata_prematch.json"
+    try:
+        marker = metadata_path.stat().st_mtime_ns
+    except OSError:
+        marker = None
+    if _load_attempted and marker == _loaded_marker:
         return _model is not None
     _load_attempted = True
+    _loaded_marker = marker
+    _model = None
     try:
-        from xgboost import XGBClassifier
-
         model_path = MODEL_DIR / "xgb_prematch.json"
         features_path = MODEL_DIR / "feature_cols_prematch.json"
         snapshot_path = MODEL_DIR / "prematch_snapshot.json"
         if not all(path.exists() for path in (model_path, features_path, snapshot_path)):
             return False
-        model = XGBClassifier()
-        model.load_model(str(model_path))
-        _model = model
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8")) if metadata_path.exists() else {}
+        if metadata.get("type") == "prematch_random_forest":
+            import joblib
+            model_path = MODEL_DIR / metadata.get("model_path", "prematch_model.joblib")
+            if not model_path.exists():
+                return False
+            _model = joblib.load(model_path)
+            _model_source = "random_forest"
+        else:
+            from xgboost import XGBClassifier
+            model = XGBClassifier()
+            model.load_model(str(model_path))
+            _model = model
+            _model_source = "temporal_xgboost"
         _feature_names = json.loads(features_path.read_text(encoding="utf-8"))
         _snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
         return True
@@ -199,7 +217,7 @@ def predict_winner(radiant_team: Dict, dire_team: Dict, radiant_hero_ids: List[i
     vector = np.array([[row.get(name, 0.0) for name in _feature_names]], dtype=float)
     radiant_probability = float(_model.predict_proba(vector)[0][1])
     return {
-        "source": "temporal_xgboost",
+        "source": _model_source,
         "prob_radiant": int(round(radiant_probability * 100)),
         "winner": radiant_team.get("name") if radiant_probability >= 0.5 else dire_team.get("name"),
         "probability": int(round(max(radiant_probability, 1.0 - radiant_probability) * 100)),

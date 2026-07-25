@@ -6,6 +6,7 @@ Board assembly: turns DLTV series into Kanban cards
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import time
 from typing import Dict, List, Optional, Set
 
 from .analysis import analyze, analyze_map_with_verdict, analyze_prematch_series, decode_towers
@@ -14,8 +15,30 @@ from .liquipedia_client import is_tier_1_or_2
 from .learning_pipeline import learning_pipeline
 from .ml_predictor import draft_context, predict_prematch_winner, predict_winner, team_form_context
 from .prediction_audit import prediction_audit
+from .series_cache import series_map_cache
 
 BO_LABELS = {1: "BO1", 2: "BO2", 3: "BO3", 5: "BO5"}
+LIVE_GRACE_SECONDS = 45 * 60
+_LIVE_CARD_CACHE: Dict[tuple, tuple[float, Dict]] = {}
+
+
+def _series_key(card: Dict) -> tuple:
+    """Stable fallback identity for cross-source duplicates."""
+    def norm(value: str) -> str:
+        return "".join(char for char in (value or "").lower() if char.isalnum())
+    first = card.get("team_a") or card.get("radiant_team") or {}
+    second = card.get("team_b") or card.get("dire_team") or {}
+    return (norm(card.get("event") or ""), tuple(sorted((norm(first.get("name")), norm(second.get("name"))))))
+
+
+def _team_pair_key(first: Dict, second: Dict) -> tuple:
+    def norm(value: str) -> str:
+        return "".join(char for char in (value or "").lower() if char.isalnum())
+    return tuple(sorted((norm(first.get("name") or first.get("title") or ""), norm(second.get("name") or second.get("title") or ""))))
+
+
+def _remember_live_card(card: Dict) -> None:
+    _LIVE_CARD_CACHE[_series_key(card)] = (time.time(), card)
 
 
 def _series_outlook(map_probability_a: float, bo: Optional[int], score_a: int, score_b: int) -> Dict:
@@ -262,10 +285,11 @@ def _postmatch_card(series: Dict, event_title: str, is_watchlist: bool = False) 
     learning_pipeline.queue_completed_maps(series.get("maps") or [])
     first = client.normalize_team(series.get("first_team"))
     second = client.normalize_team(series.get("second_team"))
+    series_map_cache.clear(event_title, first["name"], second["name"])
     first_id = series.get("first_team_id")
     second_id = series.get("second_team_id")
 
-    played = _played_maps(series)
+    played = series.get("_completed_maps") or _played_maps(series)
     tally = {first_id: 0, second_id: 0}
     game_details = []
     for i, m in enumerate(played, start=1):
@@ -342,6 +366,15 @@ def _postmatch_card(series: Dict, event_title: str, is_watchlist: bool = False) 
         pred_verdict = analyze_map_with_verdict(
             first, second, heroes_a, heroes_b, actual,
         )
+        # Winner accuracy must be assessed against the prediction actually
+        # shown during live, never against a post-match recomputation.
+        recorded = prediction_audit.get(m.get("steam_id"))
+        if recorded:
+            pred_verdict["prediction"]["winner"] = {
+                "team": recorded.get("predicted_team"),
+                "probability": int(round(float(recorded.get("probability", 0)) * 100)),
+            }
+            pred_verdict["verdict"]["winner"] = recorded.get("correct")
 
         games_detailed.append({
             "game": i,
@@ -378,6 +411,7 @@ def _postmatch_card(series: Dict, event_title: str, is_watchlist: bool = False) 
         "winner": winner_name,
         "games": game_details,        # kept for backwards-compat (summary view)
         "games_detailed": games_detailed,
+        "map_ids": [game_map.get("steam_id") for game_map in played if game_map.get("steam_id")],
         "prediction": _postmatch_prediction(series, is_watchlist=is_watchlist),
     }
 
@@ -388,17 +422,19 @@ def _live_card(series: Dict, event_title: str) -> Dict:
     first_id = series.get("first_team_id")
     is_watchlist = bool(series.get("_watchlist"))
 
-    m = _active_map(series) or {}
+    candidate_map = _active_map(series)
+    waiting_for_next_map = not candidate_map or bool(candidate_map.get("winner"))
+    m = {} if waiting_for_next_map else candidate_map
     # figure out which side each team is on this map
-    radiant_is_first = m.get("radiant_team_id") == first_id
+    radiant_is_first = waiting_for_next_map or m.get("radiant_team_id") == first_id
     radiant_team = first if radiant_is_first else second
     dire_team = second if radiant_is_first else first
 
     r_metas, r_cards = _picks_to_heroes(m.get("radiant_picks"), use_steam_id=is_watchlist)
     d_metas, d_cards = _picks_to_heroes(m.get("dire_picks"), use_steam_id=is_watchlist)
 
-    predictions = analyze(radiant_team, dire_team, r_metas, d_metas)
-    ml_prediction = predict_winner(
+    predictions = {} if waiting_for_next_map else analyze(radiant_team, dire_team, r_metas, d_metas)
+    ml_prediction = None if waiting_for_next_map else predict_winner(
         radiant_team,
         dire_team,
         [hero.get("steam_id") for hero in r_metas if hero and hero.get("steam_id") is not None],
@@ -429,7 +465,7 @@ def _live_card(series: Dict, event_title: str) -> Dict:
     })
 
     # current series score so far
-    played = _played_maps(series)
+    played = series.get("_completed_maps") or _played_maps(series)
     if is_watchlist:
         # v1 API doesn't know about this series; use pre-populated scores from db
         score_a = series.get("_series_score_first", 0)
@@ -445,6 +481,22 @@ def _live_card(series: Dict, event_title: str) -> Dict:
         score_a = tally.get(series.get("first_team_id"), 0)
         score_b = tally.get(series.get("second_team_id"), 0)
         game_no = len(played) + 1
+
+    completed_maps = []
+    for index, played_map in enumerate(played, start=1):
+        raw_winner = played_map.get("winner")
+        winner_id = played_map.get("radiant_team_id") if raw_winner == "radiant" else played_map.get("dire_team_id")
+        winner_name = first["name"] if winner_id == first_id else second["name"]
+        duration = played_map.get("duration")
+        completed_maps.append({
+            "game": index,
+            "map_id": played_map.get("steam_id"),
+            "winner": winner_name,
+            "radiant_score": played_map.get("radiant_score") or 0,
+            "dire_score": played_map.get("dire_score") or 0,
+            "duration_sec": duration if isinstance(duration, (int, float)) else None,
+        })
+    completed_maps = series_map_cache.merge(event_title, first["name"], second["name"], completed_maps)
 
     bo = _series_bo_int(series)
     map_probability_first = (predictions.get("winner") or {}).get("prob_radiant", 50) / 100.0
@@ -475,6 +527,8 @@ def _live_card(series: Dict, event_title: str) -> Dict:
             "radiant": m.get("radiant_score") or 0,
             "dire": m.get("dire_score") or 0,
         },
+        "waiting_for_next_map": waiting_for_next_map,
+        "completed_maps": completed_maps,
         "draft": {
             "radiant_picks": r_cards,
             "dire_picks": d_cards,
@@ -515,6 +569,14 @@ def build_board(event_ids: List[int], watch_ids: Optional[List[int]] = None) -> 
         except Exception as exc:
             print(f"[board] auto-active fallback failed: {exc}")
             event_ids = []
+        # Discovery can briefly have no live map between games in a BO series.
+        # Keep leagues marked active by DLTV in scope so their unfinished v1
+        # series remain visible during that gap.
+        if not event_ids:
+            event_ids = [
+                int(event["id"]) for event in raw_events
+                if event.get("id") and event.get("is_active") and int(event["id"]) in allowed_tier_events
+            ]
 
     events = all_events
     allowed_events = set(int(x) for x in (event_ids or []))
@@ -524,6 +586,7 @@ def build_board(event_ids: List[int], watch_ids: Optional[List[int]] = None) -> 
 
     # v1 series_ids we already cover (for dedup + filter fallback)
     v1_series_ids: set = set()
+    v1_completed_by_pair: Dict[tuple, List[Dict]] = {}
 
     # --- 1. v1 API series for user-selected leagues (backward-compat) ---------
     for eid in event_ids:
@@ -533,6 +596,9 @@ def build_board(event_ids: List[int], watch_ids: Optional[List[int]] = None) -> 
             v1_series_ids.add(series.get("id"))
             # stamp event_id on the synthetic series so _live_card/_prematch_card see it
             series["_scraper_event_id"] = series.get("_scraper_event_id") or eid
+            completed = _played_maps(series)
+            if completed:
+                v1_completed_by_pair[_team_pair_key(series.get("first_team") or {}, series.get("second_team") or {})] = completed
             try:
                 if stage == "postmatch":
                     postmatch.append(_postmatch_card(series, title, is_watchlist=False))
@@ -606,10 +672,17 @@ def build_board(event_ids: List[int], watch_ids: Optional[List[int]] = None) -> 
         # None — drop them under filter to avoid mixing unrelated leagues.
         if has_filter and (ws_eid is None or int(ws_eid) not in allowed_events):
             continue
+        historical_maps = v1_completed_by_pair.get(
+            _team_pair_key(ws.get("first_team") or {}, ws.get("second_team") or {})
+        )
+        if historical_maps:
+            ws["_completed_maps"] = historical_maps
         stage = client.classify_stage(ws)
         try:
             if stage == "live":
                 live.append(_live_card(ws, title))
+                if steam_id:
+                    covered_steam.add(steam_id)
             elif stage == "postmatch":
                 postmatch.append(_postmatch_card(ws, title, is_watchlist=bool(ws.get("_watchlist"))))
             else:
@@ -660,6 +733,26 @@ def build_board(event_ids: List[int], watch_ids: Optional[List[int]] = None) -> 
     # sort: prematch by soonest start, postmatch by most recent end
     prematch.sort(key=lambda c: c.get("start_time") or "")
     postmatch.sort(key=lambda c: c.get("ended_at") or "", reverse=True)
+
+    # The static live endpoint can remain stale after the v1 series endpoint
+    # has already provided all completed maps.  A completed series is the
+    # source of truth and must never be shown in both columns.
+    completed_map_ids = {match_id for card in postmatch for match_id in card.get("map_ids", [])}
+    live = [card for card in live if card.get("match_id") not in completed_map_ids]
+
+    # Keep an unfinished BO series visible during short upstream gaps between
+    # maps.  A real post-match card always wins and clears the cached copy.
+    now = time.time()
+    postmatch_keys = {_series_key(card) for card in postmatch}
+    live_keys = {_series_key(card) for card in live}
+    for key, (seen_at, cached_card) in list(_LIVE_CARD_CACHE.items()):
+        if key in postmatch_keys or now - seen_at > LIVE_GRACE_SECONDS:
+            _LIVE_CARD_CACHE.pop(key, None)
+            continue
+        if key not in live_keys:
+            live.append({**cached_card, "waiting_for_next_map": True, "match_id": None})
+    for card in live:
+        _remember_live_card(card)
 
     return {"prematch": prematch, "live": live, "postmatch": postmatch}
 

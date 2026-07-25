@@ -158,6 +158,13 @@ body {
 .live-score .r { color: var(--radiant); }
 .live-score .d { color: var(--dire); }
 .live-score .sep { color: var(--muted); margin: 0 6px; font-size: 14px; }
+.completed-maps { margin: 10px 0 2px; padding: 8px; border: 1px solid rgba(148,163,184,.13); border-radius: 9px; background: rgba(7,11,21,.3); }
+.completed-head { margin-bottom: 5px; color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .07em; }
+.completed-map { display: grid; grid-template-columns: auto 1fr auto; gap: 7px; align-items: center; padding: 4px 0; color: var(--muted); font-size: 10px; }
+.completed-map + .completed-map { border-top: 1px solid rgba(148,163,184,.1); }
+.completed-map b { overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.waiting-card::before { background: var(--live); }
+.waiting-next-map { margin-top: 11px; padding: 9px; color: #ffd58b; text-align: center; font-size: 12px; font-weight: 700; border: 1px dashed rgba(255,174,87,.42); border-radius: 9px; background: rgba(255,174,87,.07); }
 
 /* ---------- Predictions ---------- */
 .pred {
@@ -372,6 +379,7 @@ body.app-shell {
 .cal-row { display: grid; grid-template-columns: 1.25fr .7fr .8fr .8fr; gap: 7px; padding: 5px 10px; font-size: 11px; color: #cbd5e1; }
 .cal-title { color: var(--muted); background: rgba(148,163,184,.06); font-size: 10px; }
 .analytics-empty { grid-column: 1 / -1; padding: 10px 13px; }
+.analytics-warning { grid-column: 1 / -1; padding: 8px 11px; color: #f7c56a; font-size: 11px; border: 1px solid rgba(247,197,106,.22); border-radius: 9px; background: rgba(247,197,106,.07); }
 .data-health { grid-column: 1 / -1; padding: 7px 11px; color: var(--muted); font-size: 10px; }
 @media (max-width: 900px) {
   .analytics-panel { grid-template-columns: 1fr; }
@@ -400,6 +408,8 @@ body.app-shell {
 .col-head.postmatch { border-top: 3px solid var(--postmatch); }
 .count { min-width: 28px; text-align: center; color: #c7d3e5; background: rgba(148,163,184,.12); }
 .col-body { padding: 12px; gap: 10px; min-height: 220px; }
+.col-body { transition: opacity .16s ease; }
+.col-body.is-refreshing { opacity: .72; }
 
 .card {
   position: relative; overflow: hidden; padding: 14px;

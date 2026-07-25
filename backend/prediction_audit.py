@@ -74,6 +74,14 @@ class PredictionAudit:
                 return
             self._write(records)
 
+    def get(self, match_id: int | None) -> Optional[Dict]:
+        """Return the recorded live prediction for a map, if it was shown."""
+        if not match_id:
+            return None
+        with self._lock:
+            records = self._read()
+        return next((record.copy() for record in records if str(record.get("match_id")) == str(match_id)), None)
+
     def summary(self) -> Dict:
         with self._lock:
             records = self._read()

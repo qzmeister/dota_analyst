@@ -11,6 +11,7 @@ let FAVORITE_TEAMS = new Set(JSON.parse(localStorage.getItem(LS_FAVORITES) || "[
 let refreshTimer = null;
 const COLUMN_LIMIT = 10;
 const EXPANDED_COLUMNS = new Set();
+const OPEN_POSTMATCH_DETAILS = new Set();
 const SEEN_LIVE = new Set(JSON.parse(sessionStorage.getItem("dota_analyst_seen_live") || "[]"));
 
 const $ = (id) => document.getElementById(id);
@@ -160,10 +161,12 @@ let _lastFast = false;
 
 function renderColumn(name, items, builder) {
   const col = $("col-" + name);
+  col.classList.add("is-refreshing");
   $("cnt-" + name).textContent = (items || []).length;
   col.innerHTML = "";
   if (!items || items.length === 0) {
     col.innerHTML = `<div class="empty">Нет матчей</div>`;
+    requestAnimationFrame(() => col.classList.remove("is-refreshing"));
     return;
   }
   const expanded = EXPANDED_COLUMNS.has(name);
@@ -181,6 +184,15 @@ function renderColumn(name, items, builder) {
       renderColumn(name, items, builder);
     };
     col.appendChild(toggle);
+  }
+  requestAnimationFrame(() => col.classList.remove("is-refreshing"));
+}
+
+function togglePostmatchDetails(element) {
+  const key = element.dataset.detailKey;
+  const opened = element.classList.toggle("open");
+  if (key) {
+    opened ? OPEN_POSTMATCH_DETAILS.add(key) : OPEN_POSTMATCH_DETAILS.delete(key);
   }
 }
 
@@ -238,6 +250,9 @@ async function loadAnalytics() {
     }
     const accuracy = (audit.accuracy * 100).toFixed(1) + "%";
     const brier = audit.brier_score.toFixed(3);
+    const sampleWarning = audit.settled < 30
+      ? '<div class="analytics-warning">Недостаточно данных для оценки: нужно минимум 30 завершённых live-карт.</div>'
+      : "";
     const rows = (audit.calibration || []).map((bucket) =>
       '<div class="cal-row"><span>' + bucket.range + '</span><span>' + bucket.samples + '</span><span>' +
       (bucket.predicted * 100).toFixed(0) + '%</span><span>' + (bucket.actual * 100).toFixed(0) + '%</span></div>'
@@ -245,7 +260,7 @@ async function loadAnalytics() {
     panel.innerHTML =
       '<div class="analytics-head"><span>Качество live-прогнозов</span><span>' + audit.settled + ' завершено / ' + audit.shown + ' показано</span></div>' +
       '<div class="analytics-metrics"><div><small>Accuracy</small><b>' + accuracy + '</b></div><div><small>Brier score</small><b>' + brier + '</b></div></div>' +
-      (rows ? '<div class="calibration"><div class="cal-row cal-title"><span>Прогноз</span><span>Карт</span><span>Модель</span><span>Факт</span></div>' + rows + '</div>' : "");
+      (rows ? '<div class="calibration"><div class="cal-row cal-title"><span>Прогноз</span><span>Карт</span><span>Модель</span><span>Факт</span></div>' + rows + '</div>' : "") + sampleWarning;
   } catch (_) {
     panel.innerHTML = "";
   }
@@ -330,6 +345,8 @@ function postmatchCard(c) {
   // Collapsible per-game detailed blocks
   const gamesHtml = detailed.map((g) => gameDetailedHtml(g, c)).join("");
   const hasDetailed = detailed.length > 0;
+  const detailKey = String(c.series_id || [c.event, c.team_a?.name, c.team_b?.name, c.ended_at].join("|"));
+  const isOpen = OPEN_POSTMATCH_DETAILS.has(detailKey);
 
   return el(`
     <div class="card postmatch-card card--postmatch">
@@ -340,8 +357,8 @@ function postmatchCard(c) {
         ${teamBlock(c.team_b, "right")}
       </div>
       ${hasDetailed ? `
-        <div class="pm-games">
-          <div class="pm-games-toggle" onclick="this.parentNode.classList.toggle('open')">
+        <div class="pm-games ${isOpen ? "open" : ""}" data-detail-key="${detailKey}">
+          <div class="pm-games-toggle" onclick="togglePostmatchDetails(this.parentNode)">
             <span>📋 Детали по ${detailed.length} ${detailed.length === 1 ? 'карте' : 'картам'}</span>
             <span class="pm-arrow">▾</span>
           </div>
@@ -458,6 +475,30 @@ function liveCard(c) {
   const w = p.winner || {};
   const pr = w.prob_radiant ?? 50;
   const draft = c.draft || {};
+  const completedMaps = c.completed_maps || [];
+  const completedHtml = completedMaps.length ? `
+    <div class="completed-maps">
+      <div class="completed-head">Сыгранные карты</div>
+      ${completedMaps.map((game) => `
+        <div class="completed-map">
+          <span>Карта ${game.game}</span>
+          <b>${game.winner}</b>
+          <span>${game.radiant_score} : ${game.dire_score} · ${_fmtDur(game.duration_sec)}</span>
+        </div>`).join("")}
+    </div>` : "";
+  if (c.waiting_for_next_map) {
+    return el(`
+      <div class="card card--live waiting-card">
+        <div class="event"><span>${c.event} · Серия продолжается</span><span class="bo-tag">${c.bo}</span></div>
+        <div class="teams-row">
+          ${teamBlock(c.radiant_team, "")}
+          <span class="vs">${c.series_score_a}–${c.series_score_b}</span>
+          ${teamBlock(c.dire_team, "right")}
+        </div>
+        <div class="waiting-next-map">Ожидание следующей карты</div>
+        ${completedHtml}
+      </div>`);
+  }
   const series = c.series_outlook || {};
   const draftContext = c.draft_context || {};
   const signalNames = { skip: "Пропустить", watch: "Наблюдать", strong: "Сильный сигнал" };
@@ -476,6 +517,7 @@ function liveCard(c) {
         ${teamBlock(c.dire_team, "right")}
       </div>
       <div class="live-score"><span class="r">${c.live_score.radiant}</span><span class="sep">kills</span><span class="d">${c.live_score.dire}</span></div>
+      ${completedHtml}
 
       <div class="draft">
         <div class="side-label radiant">☀ ${c.radiant_team.name}</div>

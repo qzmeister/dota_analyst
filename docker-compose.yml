@@ -86,6 +86,9 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_FORMAT=${LOG_FORMAT:-text}
       - PREDICTION_ENGINE=${PREDICTION_ENGINE:-heuristic}
+      # v0.3.15+: scraper is on by default.  Set to 0 in low-bandwidth
+      # environments where dltv.org shouldn't be polled.
+      - DLTV_SCRAPER_ENABLED=${DLTV_SCRAPER_ENABLED:-1}
     networks:
       - backend
       - external

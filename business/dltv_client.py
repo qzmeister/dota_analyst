@@ -161,7 +161,11 @@ class DLTVClient:
         cached = self._cache.get(key)
         if cached is not None:
             return cached
-        d = _http_json(f"{BASE}/events/{event_id}/series") or {}
+        # v0.3.15+: bound the per-league fetch at 6s.  Cold cache
+        # with 12 leagues × 5 workers would otherwise be 12s+6×0s
+        # ~ 14s of in-flight work plus the queue, and we want the
+        # board to finish under nginx's 30s proxy_read_timeout.
+        d = _http_json(f"{BASE}/events/{event_id}/series", timeout=6.0) or {}
         series = d.get("series", []) if isinstance(d, dict) else []
         self._cache.set(key, series, self.series_ttl)
         return series

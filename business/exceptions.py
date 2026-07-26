@@ -164,6 +164,10 @@ class GatewayError(InfraError):
     """The gateway's reverse-proxy dispatch failed (target unreachable, bad upstream response)."""
 
 
+class AccuracyError(DotaAnalystError):
+    """Live accuracy tracking subsystem failed (bad prediction log, missing id, IO error)."""
+
+
 __all__ = [
     "DotaAnalystError",
     "MLError",
@@ -181,4 +185,5 @@ __all__ = [
     "HTTPClientError",
     "StreamError",
     "GatewayError",
+    "AccuracyError",
 ]

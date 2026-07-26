@@ -232,6 +232,12 @@ def _parse_one_match(
     if not series_id:
         return None
 
+    # Capture the card's URL — we may need it later for the
+    # Playwright-based player.win_rate enrichment (which requires
+    # a slug, e.g. /matches/427455/direb-vs-nexa-lunar-horse-8).
+    url_m = _MATCH_URL.search(body)
+    url_path = url_m.group(1) if url_m else None
+
     event_m = _EVENT_NAME.search(body)
     bo_m = _BO_FORMAT.search(body)
     stage_m = _FORMAT_STAGE.search(body)
@@ -316,6 +322,7 @@ def _parse_one_match(
         "live_score": live_score,
         "game_no": game_no,
         "game_time": game_time,
+        "url": url_path,
     }
 
 
@@ -408,7 +415,10 @@ def scrape_dltv_matches() -> List[Dict]:
 # Steam GetLiveLeagueGames (optional — requires STEAM_API_KEY env var)
 # --------------------------------------------------------------------------- #
 
-import os
+# `os` is already imported at the top of this module (line 21) for
+# `os.environ` reads.  This section just documents the Steam key
+# loader.  The actual `import os` was here in 0.3.14 and earlier;
+# we removed the duplicate in 0.3.15 — see v0.3.15 commit message.
 
 # --------------------------------------------------------------------------- #
 # Steam Web API key (GetLiveLeagueGames requires it)
@@ -454,8 +464,13 @@ def fetch_steam_live() -> List[Dict]:
         f"https://api.steampowered.com/IDOTA2Match_570/GetLiveLeagueGames/v1/"
         f"?key={STEAM_API_KEY}&format=json"
     )
+    # v0.3.15: bound the Steam call to a short timeout.  The discovery
+    # tracker calls us on every refresh, and the urllib transport
+    # (used inside `_http_json`) can otherwise block up to the default
+    # 12s per attempt when Steam is slow — and that cascades into
+    # `build_board()` being slow and `/api/board` returning 504.
     try:
-        data = _http_json(url, timeout=HTTP_TIMEOUT) or {}
+        data = _http_json(url, timeout=min(HTTP_TIMEOUT, 4.0)) or {}
     except (SteamAPIError, SteamFetchError, HTTPClientError, UpstreamError) as exc:
         log.warning("steam fetch failed: %s", exc, exc_info=True)
         return []
@@ -529,30 +544,59 @@ class _DiscoveryTracker:
     # ---- refresh loops ---- #
 
     def refresh(self) -> None:
-        """Scrape DLTV matches + (optional) Steam live games; keep state fresh."""
+        """Pull DLTV matches via scraper + (optional) Steam live games.
+
+        v0.3.15: DLTV's `/matches` HTML scraper has been unreliable for
+        live cards (returns rows with `series_id=None, event=None, match=None`
+        — the live block layout is different from prematch).  Steam API
+        gives us live games reliably and at ~500ms.  So we now prefer
+        Steam for live, and only fall back to scraper for the live
+        section if Steam is unavailable.
+        """
         now = time.time()
-        if now - self._last_scrape >= SCRAPE_TTL:
-            self._last_scrape = now
-            scraped = scrape_dltv_matches()
-            with self._lock:
-                self._merge_scraped(scraped)
         if STEAM_API_KEY and now - self._last_steam >= STEAM_TTL:
             self._last_steam = now
             steam = fetch_steam_live()
             with self._lock:
                 self._merge_steam(steam)
+        # Scraper is on by default — the parser handles prematch rows
+        # well, and `_merge_scraped` below filters the broken live
+        # rows (no steam_id) so they don't reach the board.  Set
+        # `DLTV_SCRAPER_ENABLED=0` to disable for low-bandwidth envs.
+        scraper_enabled = os.environ.get("DLTV_SCRAPER_ENABLED", "1") != "0"
+        if scraper_enabled and now - self._last_scrape >= SCRAPE_TTL:
+            self._last_scrape = now
+            try:
+                scraped = scrape_dltv_matches()
+                with self._lock:
+                    self._merge_scraped(scraped)
+            except Exception as exc:
+                log.warning("scraper refresh failed: %s", exc, exc_info=False)
 
     def _merge_scraped(self, scraped: List[Dict]) -> None:
+        """Merge the scraper's rows into `_by_series`.
+
+        v0.3.15+ rationale: live rows from the scraper are accepted
+        even without a `steam_id` — DLTV's page often renders the live
+        card before `data-match` is populated, and we don't want to
+        drop the only live source for minor-league matches that Steam
+        either doesn't know about or knows with empty team names.
+        The card will still render the team names + event from the
+        scraper; the `get_live_json` enrichment later fills in picks
+        if/when the steam_id becomes available.
+        """
         seen_series: Set[int] = set()
         for m in scraped:
             sid = m.get("series_id")
-            if sid:
-                seen_series.add(sid)
-                prev = self._by_series.get(sid)
-                # preserve any steam_id we already learned
-                if prev and prev.get("steam_id") and not m.get("steam_id"):
-                    m["steam_id"] = prev["steam_id"]
-                self._by_series[sid] = m
+            if not sid:
+                continue
+            seen_series.add(sid)
+            prev = self._by_series.get(sid)
+            # preserve any steam_id we already learned from a prior
+            # tick (or from Steam cross-ref).
+            if prev and prev.get("steam_id") and not m.get("steam_id"):
+                m["steam_id"] = prev["steam_id"]
+            self._by_series[sid] = m
         # prune series no longer on the page (likely finished >24h ago)
         for sid in list(self._by_series.keys()):
             if sid not in seen_series:
@@ -726,6 +770,32 @@ class _DiscoveryTracker:
                     "team_b": m.get("team_b"),
                     "start_time": m.get("start_time"),
                 })
+                continue
+
+            # Live row without a steam_id: we can't pull picks from
+            # /live/{id}.json, but we still want the card in the
+            # board so the user sees who is playing right now.
+            # Synthesize a minimal v1-shaped series with empty maps.
+            if stage == "live":
+                title = m.get("event") or "Live match"
+                series = {
+                    "id": sid,
+                    "event_id": scraper_event_id,
+                    "first_team": m.get("team_a") or {"name": "TBD"},
+                    "second_team": m.get("team_b") or {"name": "TBD"},
+                    "first_team_id": m.get("team_a", {}).get("id") if isinstance(m.get("team_a"), dict) else None,
+                    "second_team_id": m.get("team_b", {}).get("id") if isinstance(m.get("team_b"), dict) else None,
+                    "type": 3,  # best-of-3 default
+                    "maps": [],  # no draft yet
+                    "started_at": m.get("start_time"),
+                    "live_score": m.get("live_score"),
+                    "_scraper_event": title,
+                    "_scraper_bo": m.get("bo"),
+                    "_scraper_event_id": scraper_event_id,
+                    "_live_no_steam_id": True,
+                }
+                live.append(series)
+                continue
 
         # sort prematch by start_time asc
         prematch.sort(key=lambda c: c.get("start_time") or "9999")

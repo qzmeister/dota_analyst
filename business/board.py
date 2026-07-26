@@ -9,14 +9,30 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Set
 
 from ._logging import get_logger
+from .accuracy import record_prediction
 from .analysis import analyze, analyze_map_with_verdict, decode_towers
 from .dltv_client import client, _parse_dt
-from .exceptions import DotaAnalystError, MLError
+from .exceptions import AccuracyError, DotaAnalystError, MLError
 from .ml.engine import get_default_engine
 
 log = get_logger(__name__)
 
 BO_LABELS = {1: "BO1", 2: "BO2", 3: "BO3", 5: "BO5"}
+
+# Build tunables (v0.3.15+).
+#
+# On a cold DLTV cache each `client.get_series(eid)` call walks a
+# ~8 MB JSON response with a 12 s upstream timeout.  With 30+ active
+# leagues that's a 6-minute serial walk — `/api/board` would
+# time out under the nginx 30 s proxy_read_timeout.  Two guards:
+#
+#   MAX_LEAGUES_PER_BOARD — pick the top-N most recently active leagues
+#                            from `leagues_with_status()` to bound the
+#                            cold-cache walk.
+#   SERIES_FETCH_WORKERS  — fetch the per-league series payloads in
+#                            parallel via a thread pool.
+MAX_LEAGUES_PER_BOARD = 12
+SERIES_FETCH_WORKERS = 5
 
 
 def classify_event_status(event_id: int) -> str:
@@ -382,6 +398,46 @@ def _live_card(series: Dict, event_title: str) -> Dict:
     d_metas, d_cards = _picks_to_heroes(m.get("dire_picks"), use_steam_id=is_watchlist)
 
     predictions = get_default_engine().analyze(radiant_team, dire_team, r_metas, d_metas)
+    engine_name = get_default_engine().name
+
+    # ------------------------------------------------------------------ #
+    # Live accuracy tracking (v0.3.15+)
+    # ------------------------------------------------------------------ #
+    # We record exactly one prediction per (match_id, game_no).  The
+    # board is rebuilt every 5 seconds; without dedup we'd log 12
+    # identical rows per minute per live match.
+    try:
+        winner_info = predictions.get("winner") or {}
+        prob_radiant = winner_info.get("prob_radiant")
+        if prob_radiant is not None:
+            # ML engine emits `team` as a team NAME; we store a SIDE
+            # label so `_compare` in accuracy.py can match it to the
+            # actual series winner (a team_id).  prob_radiant is the
+            # model's confidence in the RADIANT side, so the probability
+            # of our predicted side is just max(p, 1-p).
+            predicted_side = (
+                "team_a" if (prob_radiant > 0.5) == radiant_is_first
+                else "team_b"
+            )
+            record_prediction(
+                match_id=m.get("steam_id"),
+                series_id=series.get("id"),
+                predicted_winner=predicted_side,
+                predicted_probability=max(prob_radiant, 1.0 - prob_radiant),
+                engine=engine_name,
+                extra={
+                    "team_a_id": first_id,
+                    "team_a_name": first.get("name"),
+                    "team_b_id": series.get("second_team_id"),
+                    "team_b_name": second.get("name"),
+                    "game_no": game_no,
+                    "radiant_is_first": radiant_is_first,
+                },
+            )
+    except AccuracyError as exc:
+        # Tracking is best-effort — a missing log dir or write race
+        # must not break board rendering.
+        log.debug("accuracy: record_prediction failed: %s", exc)
 
     # current series score so far
     played = _played_maps(series)
@@ -433,6 +489,14 @@ def build_board(event_ids: List[int], watch_ids: Optional[List[int]] = None) -> 
     client.get_heroes()
     all_events = {e["id"]: e.get("title", f"Event {e['id']}") for e in client.get_events()}
 
+    # Remember the user's explicit filter (may be empty for an
+    # unfiltered board).  We use this to decide whether to apply the
+    # `allowed_events` filter to discovery cards — the auto-populated
+    # league list (below) shouldn't tighten the filter, otherwise
+    # the user's unfiltered "show me everything" board hides matches
+    # from any league that didn't make our top-N cold-cache cap.
+    user_has_filter = bool(event_ids)
+
     # When no filter is provided, auto-include all currently-active leagues so
     # that the unfiltered board still surfaces post-match cards (v1 API path)
     # and live/prematch discovery data for every league the user can pick.
@@ -447,9 +511,24 @@ def build_board(event_ids: List[int], watch_ids: Optional[List[int]] = None) -> 
             log.warning("auto-active fallback failed: %s", exc, exc_info=True)
             event_ids = []
 
+    # v0.3.15+: cap the league list so a cold DLTV cache doesn't stall
+    # `build_board` for >30s (which would 504 the request).  The
+    # publisher rebuilds every 5s, so even a narrow pick surfaces
+    # the rest of the world within a minute or two.
+    if len(event_ids) > MAX_LEAGUES_PER_BOARD:
+        log.info(
+            "build_board: capping %d leagues to top %d for cold-cache latency",
+            len(event_ids), MAX_LEAGUES_PER_BOARD,
+        )
+        event_ids = event_ids[:MAX_LEAGUES_PER_BOARD]
+
     events = all_events
     allowed_events = set(int(x) for x in (event_ids or []))
-    has_filter = bool(allowed_events)
+    # Only treat the user-supplied selection as a filter; the
+    # auto-populated cap list must NOT be used to drop discovery
+    # cards or the unfiltered board will hide minor-league live
+    # matches that didn't make the top-N cut.
+    has_filter = user_has_filter
 
     prematch, live, postmatch = [], [], []
 
@@ -457,9 +536,28 @@ def build_board(event_ids: List[int], watch_ids: Optional[List[int]] = None) -> 
     v1_series_ids: set = set()
 
     # --- 1. v1 API series for user-selected leagues (backward-compat) ---------
-    for eid in event_ids:
+    # v0.3.15+: fetch per-league series in parallel so a 12-league board
+    # doesn't take 12 × 12s = 144s on cold cache. 5 workers is enough
+    # to bound a 12-league walk under ~30s without saturating the
+    # DLTV origin (we cap at 5 concurrent HTTPs).
+    def _fetch_one(eid: int) -> List[Dict]:
+        try:
+            return list(client.get_series(eid) or [])
+        except DotaAnalystError as exc:
+            log.warning("get_series(%s) failed: %s", eid, exc, exc_info=False)
+            return []
+
+    from concurrent.futures import ThreadPoolExecutor
+    if event_ids:
+        with ThreadPoolExecutor(max_workers=SERIES_FETCH_WORKERS,
+                                thread_name_prefix="series-fetcher") as pool:
+            series_lists = list(pool.map(_fetch_one, event_ids))
+    else:
+        series_lists = []
+
+    for eid, series_list in zip(event_ids, series_lists):
         title = events.get(eid, f"Event {eid}")
-        for series in client.get_series(eid):
+        for series in series_list:
             stage = client.classify_stage(series)
             v1_series_ids.add(series.get("id"))
             # stamp event_id on the synthetic series so _live_card/_prematch_card see it
@@ -495,11 +593,13 @@ def build_board(event_ids: List[int], watch_ids: Optional[List[int]] = None) -> 
         key = (m.get("start_time"), (m.get("team_a") or {}).get("name"))
         if key in v1_prematch_keys:
             continue
-        # Filter: if user selected leagues, only keep cards matching one of them.
-        # Cards without event_id belong to leagues outside /api/v1/events and
-        # cannot be mapped — drop them under filter to avoid noise.
+        # Filter: only drop scraper cards whose league is known to be
+        # *outside* the user's selected set.  Cards with an unknown
+        # event_id (leagues not covered by /api/v1/events — minor
+        # tournaments, qualifiers) pass through; the user can always
+        # pin them via the watchlist if needed.
         m_eid = m.get("event_id")
-        if has_filter and (m_eid is None or int(m_eid) not in allowed_events):
+        if has_filter and m_eid is not None and int(m_eid) not in allowed_events:
             continue
         try:
             prematch.append(_prematch_card_from_scraper(m))
@@ -532,10 +632,10 @@ def build_board(event_ids: List[int], watch_ids: Optional[List[int]] = None) -> 
         if not title and ws.get("_steam_league_id"):
             title = f"Steam league {ws['_steam_league_id']}"
         title = title or "Live match"
-        # Filter live cards by selected leagues. For Steam-only matches whose
-        # steam_league_id hasn't been cross-referenced with DLTV, event_id stays
-        # None — drop them under filter to avoid mixing unrelated leagues.
-        if has_filter and (ws_eid is None or int(ws_eid) not in allowed_events):
+        # Filter live cards by selected leagues.  Cards with an unknown
+        # event_id (leagues not covered by /api/v1/events) pass through —
+        # the watchlist and the DLTV live card UI still handle them.
+        if has_filter and ws_eid is not None and int(ws_eid) not in allowed_events:
             continue
         stage = client.classify_stage(ws)
         try:

@@ -226,6 +226,14 @@ async def board_publisher_loop(
                 # startup (uvicorn never reaches "Application startup
                 # complete").  We run it in a worker thread.
                 board = await asyncio.to_thread(build_board, [], [])
+                # Stamp the engine name on the publisher's payload so
+                # requests that hit the publisher's cache (rather than
+                # a fresh build in /api/board) still report which
+                # engine produced the predictions.  Without this, the
+                # field shows up as `null` on the auto-board cache.
+                if "engine" not in board:
+                    from .ml.engine import get_default_engine
+                    board["engine"] = get_default_engine().name
                 # Expose the latest auto-board to /api/board so a fresh
                 # browser request returns instantly instead of triggering
                 # a parallel build (which would race with this one).

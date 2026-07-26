@@ -26,9 +26,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from ._logging import get_logger, setup_logging
+from .accuracy import accuracy_summary
 from .board import build_board, leagues_with_status
 from .dltv_client import client
-from .exceptions import DLTVError, HTTPClientError, UpstreamError
+from .exceptions import (
+    BoardBuildError,
+    DiscoveryError,
+    DLTVError,
+    HTTPClientError,
+    InfraError,
+    MLError,
+    UpstreamError,
+)
 from .ml.engine import get_default_engine, reset_default_engine
 from .stream import board_publisher_loop, event_stream, get_stream
 
@@ -60,6 +69,76 @@ _board_cache: dict = {}    # cache_key -> (board, ts) — see /api/board
 _latest_auto_board: dict = {}   # board produced by SSE publisher (events=[], watch=[])
 _latest_auto_board_ts: float = 0.0
 
+# Single-flight for /api/board: when several requests miss the cache at
+# once, we want them to share one build_board() call rather than stampede
+# the upstream APIs.  We key the in-flight set on cache_key; the Future
+# stores the eventual result dict.
+#
+# Why a dict of Futures and not a lock?  Because the value the requester
+# is waiting on is *the board itself* — not just "I may go now".  Using
+# a Future means each waiting request gets the SAME dict and only
+# `build_board` is called once.
+#
+# We deliberately cap the in-flight set: a long-stuck build (e.g.
+# upstream is hard-down) would otherwise leak a Future forever.
+_inflight: dict = {}        # cache_key -> asyncio.Future
+
+
+async def _build_board_singletrip(
+    cache_key: tuple,
+    events: List[int],
+    watch_ids: List[int],
+) -> Dict:
+    """Run `build_board` exactly once for `cache_key`, even under
+    concurrent misses.
+
+    Returns the freshly built board dict.  Any other request waiting
+    on the same key gets the same value.
+    """
+    import asyncio as _aio
+    existing = _inflight.get(cache_key)
+    if existing is not None and not existing.done():
+        return await existing
+    fut: _aio.Future = _aio.get_event_loop().create_future()
+    _inflight[cache_key] = fut
+    try:
+        # build_board is synchronous and walks many upstream HTTP calls.
+        # We run it in a thread so the event loop stays free for other
+        # endpoints (and for the SSE keepalive).  A second request that
+        # arrives while this thread is busy awaits the same Future.
+        board = await _aio.to_thread(build_board, events, watch_ids)
+        fut.set_result(board)
+        return board
+    except (BoardBuildError, MLError, DiscoveryError, UpstreamError, InfraError) as exc:
+        fut.set_exception(exc)
+        raise
+    finally:
+        # Give other waiters a chance to grab the result before we
+        # remove the entry.  `fut.done()` is True here, so any future
+        # caller will rebuild — but the cache is hot by then.
+        _inflight.pop(cache_key, None)
+
+
+async def _accuracy_loop(score_fn, interval_sec: float = 60.0) -> None:
+    """Background loop: re-score un-scored predictions on a timer.
+
+    Runs the synchronous `score_pending` in a worker thread so a slow
+    DLTV lookup doesn't stall the event loop.  We deliberately don't
+    fan out to multiple workers — the JSONL log is the source of truth
+    and a single writer is the simplest invariant.
+    """
+    import asyncio as _aio
+    try:
+        while True:
+            try:
+                await _aio.to_thread(score_fn)
+            except (BoardBuildError, MLError, DiscoveryError, UpstreamError, InfraError) as exc:
+                log.warning("accuracy tick failed: %s", exc, exc_info=False)
+            await _aio.sleep(interval_sec)
+    except _aio.CancelledError:
+        log.info("accuracy loop cancelled")
+        raise
+
 
 # --------------------------------------------------------------------------- #
 # Lifespan: start the SSE publisher poller alongside the FastAPI app
@@ -81,18 +160,30 @@ async def _lifespan(app: FastAPI):
     )
     log.info("sse publisher task scheduled")
 
+    # 3. Accuracy scorer — re-scores un-scored predictions every
+    #    60 seconds.  Lives in its own task so a slow DLTV lookup
+    #    (cold cache, 12s timeout) doesn't starve the SSE poller.
+    from .accuracy import score_pending  # local import to avoid cycles
+    accuracy_task = asyncio.create_task(
+        _accuracy_loop(score_pending, interval_sec=60.0),
+        name="accuracy-scorer",
+    )
+    log.info("accuracy scorer task scheduled")
+
     try:
         yield
     finally:
         publisher.cancel()
-        try:
-            await publisher
-        except asyncio.CancelledError:
-            pass
-        log.info("sse publisher task stopped")
+        accuracy_task.cancel()
+        for t in (publisher, accuracy_task):
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
+        log.info("sse publisher + accuracy scorer stopped")
 
 
-app = FastAPI(title="Dota Analyst — business", version="0.3.14", lifespan=_lifespan)
+app = FastAPI(title="Dota Analyst — business", version="0.3.16", lifespan=_lifespan)
 
 # CORS: read allowed origins from env. Default to the gateway only.
 # The gateway terminates browser-facing CORS; this is just for direct
@@ -128,10 +219,18 @@ def get_leagues():
 
 
 @app.get("/api/board")
-def get_board(
+async def get_board(
     events: List[str] = Query([], description="event ids (repeated or comma-separated)"),
     watch: List[str] = Query([], description="steam match ids (repeated or comma-separated; watchlist, bypasses v1 API)"),
 ):
+    """Return the Kanban board for selected events / watchlist.
+
+    v0.3.15 rewrite: the handler is `async` and the synchronous
+    `build_board()` runs in a worker thread.  We also add a single-flight
+    Future so concurrent misses share one upstream call.  And we
+    always serve the publisher's `auto-board` for unfiltered requests,
+    even if it's slightly stale — better stale data than a 504.
+    """
     global _latest_auto_board, _latest_auto_board_ts
     ids: List[int] = []
     for group in events:
@@ -157,38 +256,65 @@ def get_board(
                 seen_w.add(int(part))
                 watch_ids.append(int(part))
 
-    # Stale-while-revalidate cache: serialise (ids, watch_ids) as the key.
     cache_key = (tuple(ids), tuple(watch_ids))
     now = time.monotonic()
+
+    # 1. Hot cache — return instantly.
     cached = _board_cache.get(cache_key)
     if cached and (now - cached[1]) < _BOARD_CACHE_TTL:
         return JSONResponse(cached[0])
 
-    # If the SSE publisher has a fresh auto-board (events=[]) and
-    # this is a "show everything" request, reuse it to avoid a
-    # potentially 1-3 minute cold-cache rebuild.
+    # 2. Unfiltered request — always serve the publisher's auto-board
+    #    if we have one, even if it's slightly older than _BOARD_CACHE_TTL.
+    #    Stale data is better than a 504; the next publisher tick will
+    #    refresh it within 5 seconds.
     if not ids and not watch_ids and _latest_auto_board:
-        age = now - _latest_auto_board_ts
-        if age < _BOARD_CACHE_TTL:
-            return JSONResponse(_latest_auto_board)
+        return JSONResponse(_latest_auto_board)
 
-    # Stale or missing — compute a fresh board.  The SSE publisher
-    # updates _latest_auto_board every 5s; an unfiltered request that
-    # finds that cache fresh returns immediately (see above).  If we
-    # reach this branch it's a filtered request (specific events or
-    # watchlist) that the auto-board doesn't cover; build it inline.
-    # If that turns out to be slow, future work would dispatch to
-    # `asyncio.to_thread` here too.
-    engine = get_default_engine()
-    board = build_board(ids, watch_ids=watch_ids)
+    # 3. Cold path — single-flight build in a thread.
+    try:
+        board = await asyncio.wait_for(
+            _build_board_singletrip(cache_key, ids, watch_ids),
+            timeout=25.0,  # under the nginx 30s proxy_read_timeout
+        )
+    except asyncio.TimeoutError:
+        # Build hung — fall back to whatever we have.  For an
+        # unfiltered request without any auto-board yet, return an
+        # empty board so the UI renders "no matches" instead of
+        # nginx returning 504.
+        log.warning("/api/board build timed out (key=%s)", cache_key)
+        if not ids and not watch_ids and _latest_auto_board:
+            return JSONResponse(_latest_auto_board)
+        return JSONResponse(
+            {
+                "prematch": [], "live": [], "postmatch": [],
+                "selected": ids, "watch": watch_ids,
+                "engine": get_default_engine().name,
+                "stale": True,
+            },
+            status_code=200,
+        )
+    except (BoardBuildError, MLError, DiscoveryError, UpstreamError, InfraError) as exc:
+        log.warning("/api/board build failed: %s", exc, exc_info=True)
+        # Last-resort fallback: empty board so the UI shows "no matches"
+        # rather than a 500.
+        if not ids and not watch_ids and _latest_auto_board:
+            return JSONResponse(_latest_auto_board)
+        return JSONResponse(
+            {
+                "prematch": [], "live": [], "postmatch": [],
+                "selected": ids, "watch": watch_ids,
+                "engine": get_default_engine().name,
+                "error": str(exc),
+            },
+            status_code=200,
+        )
+
     board["selected"] = ids
     board["watch"] = watch_ids
-    # Surface which engine produced the predictions — useful for debugging
-    # the ml vs heuristic switch from the browser / curl.
-    board["engine"] = engine.name
+    board["engine"] = get_default_engine().name
     _board_cache[cache_key] = (board, now)
     if not ids and not watch_ids:
-        # Update the auto-board so other in-flight requests can reuse it.
         _latest_auto_board = board
         _latest_auto_board_ts = now
     return JSONResponse(board)
@@ -252,3 +378,24 @@ def readyz():
         # path should crash the process so the orchestrator restarts it.
         log.warning("readiness check failed: %s", exc, exc_info=True)
         return JSONResponse({"status": "not-ready", "error": str(exc)}, status_code=503)
+
+
+# ---------------------------------------------------------------------------- #
+# Accuracy tracking (v0.3.15+) — see business/accuracy.py for the model.
+# ---------------------------------------------------------------------------- #
+
+@app.get("/api/accuracy")
+def get_accuracy():
+    """Return live accuracy stats.
+
+    Reads the JSONL log, scores any un-scored predictions that have
+    since completed, and returns aggregate stats.  The response is
+    small (a few hundred bytes), so we don't bother caching.
+    """
+    try:
+        return JSONResponse(accuracy_summary())
+    except (DLTVError, HTTPClientError, UpstreamError) as exc:
+        # The accuracy log is best-effort — even a partial read is
+        # better than a 500.
+        log.warning("accuracy summary failed: %s", exc, exc_info=True)
+        return JSONResponse({"error": str(exc), "scored": 0, "accuracy": None}, status_code=200)

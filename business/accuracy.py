@@ -88,7 +88,13 @@ def _ensure_dedup_loaded() -> None:
         # from the engine's "current game of the series" counter; for
         # series that aren't best-of-N it's just 1.
         extra = r.get("extra") or {}
-        key = (r.get("match_id"), extra.get("game_no"))
+        # Prefer the numeric match_id; fall back to the synthetic
+        # string ("steam-..." / "watch-...") so Steam-only matches
+        # don't all dedup-collide to the (None, game_no) bucket.
+        match_id_val = r.get("match_id")
+        if match_id_val is None:
+            match_id_val = r.get("synthetic_match_id")
+        key = (match_id_val, extra.get("game_no"))
         if key != (None, None):
             _dedup_seen.add(key)
     _dedup_loaded = True
@@ -138,17 +144,43 @@ def record_prediction(
     """
     if not match_id and not series_id:
         raise AccuracyError("record_prediction needs at least one of match_id/series_id")
+    # v0.3.17+: series_id may be a synthetic string like
+    # "steam-8914601438" or "watch-8914601438" when the live match
+    # didn't come through the DLTV v1 series list (e.g. Steam-only
+    # match or watchlist pin).  We can't look those up later, but
+    # the row is still useful for stats; just stash the synthetic
+    # id as a string and skip the int conversion.  Scoring code
+    # treats non-int series_id as "never scoreable" (it will mark
+    # the row `no_series` and move on).
+    try:
+        series_id_int = int(series_id) if series_id is not None else None
+    except (TypeError, ValueError):
+        series_id_int = None
+    try:
+        match_id_int = int(match_id) if match_id is not None else None
+    except (TypeError, ValueError):
+        match_id_int = None
+    # We accept non-numeric ids — they just become un-scoreable
+    # rows in the log.  The "at least one provided" check above is
+    # the only mandatory guard.
     _ensure_dedup_loaded()
     game_no = (extra or {}).get("game_no") if extra else None
-    dedup_key = (int(match_id) if match_id else None, game_no)
+    # v0.3.17+: use the raw match_id string for dedup when the
+    # int form is missing.  Steam-only / watchlist rows would
+    # otherwise all collapse to the (None, game_no) key and the
+    # second synthetic match would silently overwrite the first.
+    dedup_match_key = match_id_int if match_id_int is not None else (
+        str(match_id) if match_id is not None else None
+    )
+    dedup_key = (dedup_match_key, game_no)
     if dedup_key in _dedup_seen:
         # Already recorded for this (match, game).  Skip — the board
         # rebuilds every 5s and would otherwise log 12 rows/min/match.
         return {"_skipped": "already_recorded", "match_id": match_id, "game_no": game_no}
     rec = {
         "ts": datetime.now(timezone.utc).isoformat(),
-        "match_id": int(match_id) if match_id else None,
-        "series_id": int(series_id) if series_id else None,
+        "match_id": match_id_int,
+        "series_id": series_id_int,
         "predicted_winner": predicted_winner,
         "predicted_probability": predicted_probability,
         "engine": engine,
@@ -158,6 +190,12 @@ def record_prediction(
     }
     if extra:
         rec.update(extra)
+    # v0.3.17+: stash the raw synthetic id so the row is still
+    # traceable when series_id is non-numeric.
+    if series_id is not None and series_id_int is None:
+        rec["synthetic_id"] = str(series_id)
+    if match_id is not None and match_id_int is None:
+        rec["synthetic_match_id"] = str(match_id)
     _append_jsonl(PREDICTIONS_FILE, rec)
     _dedup_seen.add(dedup_key)
     return rec

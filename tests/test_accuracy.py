@@ -87,6 +87,34 @@ class TestRecordPrediction:
                               predicted_winner="team_a", predicted_probability=0.5,
                               engine="ml")
 
+    def test_accepts_synthetic_string_ids(self, tmp_ml_data):
+        """Steam-only / watchlist rows carry synthetic IDs like
+        'steam-8914601438' — not parseable as int.  These can't be
+        looked up for scoring, but the row should still be written."""
+        from business.accuracy import record_prediction
+        r = record_prediction(
+            match_id="steam-8914601438", series_id="steam-8914601438",
+            predicted_winner="team_a", predicted_probability=0.6,
+            engine="ml", extra={"game_no": 1},
+        )
+        assert r["synthetic_id"] == "steam-8914601438"
+        assert r["synthetic_match_id"] == "steam-8914601438"
+        assert r["match_id"] is None   # int parse failed
+        assert r["series_id"] is None
+
+    def test_synthetic_ids_dedup_per_match(self, tmp_ml_data):
+        """Two different synthetic IDs each get their own row — they
+        must NOT collide on the (None, game_no) bucket."""
+        from business.accuracy import record_prediction
+        r1 = record_prediction(match_id="steam-111", series_id="steam-111",
+                               predicted_winner="team_a", predicted_probability=0.6,
+                               engine="ml", extra={"game_no": 1})
+        r2 = record_prediction(match_id="steam-222", series_id="steam-222",
+                               predicted_winner="team_b", predicted_probability=0.4,
+                               engine="ml", extra={"game_no": 1})
+        assert "_skipped" not in r1
+        assert "_skipped" not in r2
+
 
 class TestComputeStats:
     def test_empty_log_returns_zeros(self, tmp_ml_data):

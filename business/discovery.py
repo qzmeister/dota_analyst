@@ -55,7 +55,15 @@ log = get_logger(__name__)
 SCRAPE_URL = f"{SITE}/matches"
 SCRAPE_TTL = 90.0          # seconds between re-scrapes
 ENRICH_WINDOW_H = 2.0      # hours before start to begin probing /live
-ENRICH_TTL = 120.0         # seconds between /live/{id}.json probes per match (v0.3.14: was 15s, too aggressive for cold cache)
+# Per-match TTL for the `/live/{id}.json` enrichment.  Two cases:
+#   - live matches: short — picks/score change every few seconds in
+#     a real game.  Without a tight TTL the board shows stale
+#     data and the UI drift (e.g. 1-0 while DLTV is at 6-3) hits.
+#   - postmatch / completed: longer — the JSON is frozen once the
+#     game ends, so a few minutes is fine.
+ENRICH_TTL_LIVE = 5.0
+ENRICH_TTL_OTHER = 120.0
+ENRICH_TTL = ENRICH_TTL_LIVE  # backward-compat for any external import
 STEAM_TTL = 30.0           # seconds between GetLiveLeagueGames calls
 HTTP_TIMEOUT = 12.0
 
@@ -723,7 +731,14 @@ class _DiscoveryTracker:
                 # enrich via /live/{id}.json (cached)
                 cache_key = sid or mid
                 cached = self._series_cache.get(cache_key)
-                if cached and (now - self._cache_ts.get(cache_key, 0)) < ENRICH_TTL:
+                # v0.3.19+: live matches get a 5s TTL — picks/score
+                # change every few seconds in a real game and the
+                # UI drift (e.g. 1-0 on our side, 6-3 on DLTV's
+                # side) was the most visible bug.  Postmatch and
+                # prematch stay at 120s because the JSON is
+                # effectively frozen.
+                cache_age = now - self._cache_ts.get(cache_key, 0)
+                if cached and cache_age < ENRICH_TTL_LIVE:
                     # still overlay event_id (cached series may lack it)
                     cached["_scraper_event_id"] = cached.get("_scraper_event_id") or scraper_event_id
                     live.append(cached)

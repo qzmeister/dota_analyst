@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dota-analyst"
-version = "0.3.18"
+version = "0.3.19"
 description = "Professional Dota 2 draft analysis and outcome prediction system"
 # readme intentionally omitted — we don't ship a README file in the image.
 # `pip install .` would otherwise warn about a missing README.md.

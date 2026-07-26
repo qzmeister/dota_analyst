@@ -400,6 +400,26 @@ def _live_card(series: Dict, event_title: str) -> Dict:
     predictions = get_default_engine().analyze(radiant_team, dire_team, r_metas, d_metas)
     engine_name = get_default_engine().name
 
+    # current series score so far — must be computed BEFORE we record
+    # the prediction (the dedup key uses game_no, and the verdict
+    # logic later reads score_a / score_b from the card).
+    played = _played_maps(series)
+    if is_watchlist:
+        # v1 API doesn't know about this series; use pre-populated scores from db
+        score_a = series.get("_series_score_first", 0)
+        score_b = series.get("_series_score_second", 0)
+        # infer current game number from games already decided
+        game_no = (score_a or 0) + (score_b or 0) + 1
+    else:
+        tally = {series.get("first_team_id"): 0, series.get("second_team_id"): 0}
+        for pm in played:
+            wid = pm.get("radiant_team_id") if pm.get("winner") == "radiant" else pm.get("dire_team_id")
+            if wid in tally:
+                tally[wid] += 1
+        score_a = tally.get(series.get("first_team_id"), 0)
+        score_b = tally.get(series.get("second_team_id"), 0)
+        game_no = len(played) + 1
+
     # ------------------------------------------------------------------ #
     # Live accuracy tracking (v0.3.15+)
     # ------------------------------------------------------------------ #
@@ -438,24 +458,6 @@ def _live_card(series: Dict, event_title: str) -> Dict:
         # Tracking is best-effort — a missing log dir or write race
         # must not break board rendering.
         log.debug("accuracy: record_prediction failed: %s", exc)
-
-    # current series score so far
-    played = _played_maps(series)
-    if is_watchlist:
-        # v1 API doesn't know about this series; use pre-populated scores from db
-        score_a = series.get("_series_score_first", 0)
-        score_b = series.get("_series_score_second", 0)
-        # infer current game number from games already decided
-        game_no = (score_a or 0) + (score_b or 0) + 1
-    else:
-        tally = {series.get("first_team_id"): 0, series.get("second_team_id"): 0}
-        for pm in played:
-            wid = pm.get("radiant_team_id") if pm.get("winner") == "radiant" else pm.get("dire_team_id")
-            if wid in tally:
-                tally[wid] += 1
-        score_a = tally.get(series.get("first_team_id"), 0)
-        score_b = tally.get(series.get("second_team_id"), 0)
-        game_no = len(played) + 1
 
     return {
         "stage": "live",

@@ -138,34 +138,67 @@ def _hero_card(hero: Optional[Dict], hero_id: Optional[int]) -> Dict:
 
 
 def _names_to_cards(entries: List[Dict]) -> List[Dict]:
-    """Resolve a list of {name, hero_id?} into hero cards.
+    """Resolve a list of {name, hero_id?, steam_id?} into hero cards.
 
-    Used by the v0.3.20+ match-state overlay path.  If the
-    `dltv_browser` module gave us a `hero_id` we use it directly;
-    otherwise we try to look the hero up by its display name in
-    DLTV's hero index.  A miss falls back to a placeholder card
-    so the user still sees the name in the UI.
+    Used by the v0.3.20+ match-state overlay path.  Resolution
+    priority (v0.3.22+, when `dltv_browser` was upgraded to
+    return both DLTV and steam ids):
+      1. `steam_id` (Valve) — preferred, downstream engine uses
+         this namespace.
+      2. `hero_id` (DLTV internal) — looked up via
+         `client.hero_by_dltv_id`, then by steam as a fallback.
+      3. `name` (display title) — looked up in the hero index.
+      4. None of the above — placeholder card with just the name.
+
+    Each returned card carries:
+      - `id`:       the steam id (Valve namespace) when known
+      - `name`:     display name
+      - `_dltv_id`: the DLTV internal id (set whenever the
+                    caller passed one in), so downstream
+                    consumers can re-construct the pick dict
+                    in the right format for `_picks_to_heroes`.
     """
     out: List[Dict] = []
     for e in entries or []:
         if not isinstance(e, dict):
             continue
         name = e.get("name") or ""
+        steam_id = e.get("steam_id")
         hero_id = e.get("hero_id")
+        dltv_id = hero_id  # original DLTV internal id
+        if steam_id:
+            try:
+                meta = client.hero_by_steam_id(int(steam_id))
+                if meta:
+                    card = _hero_card(meta, int(steam_id))
+                    if dltv_id is not None:
+                        card["_dltv_id"] = int(dltv_id)
+                    out.append(card)
+                    continue
+            except Exception:
+                pass
         if hero_id:
             meta = client.hero_by_dltv_id(int(hero_id)) or client.hero_by_steam_id(int(hero_id))
-            out.append(_hero_card(meta, int(hero_id)))
+            card = _hero_card(meta, int(hero_id))
+            card["_dltv_id"] = int(hero_id)
+            out.append(card)
         elif name:
             # Look up by name (DLTV's `title`).
             try:
                 for h in client.get_heroes() or []:
                     if (h.get("title") or "").strip().lower() == name.strip().lower():
-                        out.append(_hero_card(h, h.get("id")))
+                        card = _hero_card(h, h.get("id"))
+                        # We didn't get a dltv id from the input; keep
+                        # the looked-up hero's id as a best effort.
+                        card["_dltv_id"] = h.get("id")
+                        out.append(card)
                         break
                 else:
-                    out.append({"id": None, "name": name, "image": None, "win_rate": None})
+                    out.append({"id": None, "name": name, "image": None, "win_rate": None, "_dltv_id": None})
             except Exception:
-                out.append({"id": None, "name": name, "image": None, "win_rate": None})
+                out.append({"id": None, "name": name, "image": None, "win_rate": None, "_dltv_id": None})
+        else:
+            out.append({"id": None, "name": "", "image": None, "win_rate": None, "_dltv_id": None})
     return out
 
 
@@ -451,19 +484,24 @@ def _live_card(series: Dict, event_title: str) -> Dict:
             if r_pick_cards or d_pick_cards:
                 # Build a synthetic map so the rest of the
                 # function uses the picked heroes directly.
+                # v0.3.22: pass through the original DLTV id
+                # (in `hero_id`) AND the steam id (in `_steam_id`).
+                # `_picks_to_heroes` chooses which to use based on
+                # `is_watchlist`.  Previously both fields were
+                # populated from the same dltv id, which silently
+                # broke the non-watchlist path (hero_by_dltv_id
+                # was called with a steam id).
+                def _entry(c: Dict, i: int) -> Dict:
+                    return {
+                        "hero_id": c.get("_dltv_id") or c.get("id"),
+                        "order": i,
+                        "_steam_id": c.get("id"),
+                    }
                 m = {
-                    "radiant_picks": [{"hero_id": c.get("id"), "order": i,
-                                        "_steam_id": c.get("id")}
-                                       for i, c in enumerate(r_pick_cards)],
-                    "dire_picks":    [{"hero_id": c.get("id"), "order": i,
-                                        "_steam_id": c.get("id")}
-                                       for i, c in enumerate(d_pick_cards)],
-                    "radiant_bans":  [{"hero_id": c.get("id"), "order": i,
-                                        "_steam_id": c.get("id")}
-                                       for i, c in enumerate(r_ban_cards)],
-                    "dire_bans":     [{"hero_id": c.get("id"), "order": i,
-                                        "_steam_id": c.get("id")}
-                                       for i, c in enumerate(d_ban_cards)],
+                    "radiant_picks": [_entry(c, i) for i, c in enumerate(r_pick_cards)],
+                    "dire_picks":    [_entry(c, i) for i, c in enumerate(d_pick_cards)],
+                    "radiant_bans":  [_entry(c, i) for i, c in enumerate(r_ban_cards)],
+                    "dire_bans":     [_entry(c, i) for i, c in enumerate(d_ban_cards)],
                 }
                 # If we have a real score, overlay it too.
                 if "radiant_score" in cached_state:

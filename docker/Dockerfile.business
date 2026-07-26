@@ -32,7 +32,17 @@ RUN pip install --upgrade pip && \
     pip install . && \
     pip install --force-reinstall --no-deps "xgboost>=3.0" && \
     pip install "playwright>=1.40" && \
-    playwright install chromium --with-deps
+    playwright install chromium --with-deps && \
+    # Playwright's `install` writes to $HOME/.cache/ms-playwright as
+    # root; the runtime runs as `app` with HOME=/app.  The env
+    # var PLAYWRIGHT_BROWSERS_PATH is supposed to override the
+    # default, but in practice 1.61 still resolves to
+    # $HOME/.cache/... first.  The safest fix is to put the
+    # browsers exactly where Playwright looks: under the app
+    # user's $HOME/.cache/.
+    mkdir -p /app/.cache && \
+    cp -r /root/.cache/ms-playwright /app/.cache/ && \
+    chown -R app:app /app/.cache/ms-playwright
 
 # Mount the ml_data/ directory at runtime; the image stays clean.
 RUN mkdir -p /app/ml_data && chown -R app:app /app

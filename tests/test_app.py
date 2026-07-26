@@ -122,19 +122,28 @@ class TestHealth:
 # --------------------------------------------------------------------------- #
 
 class TestLeagues:
-    def test_leagues_returns_list(self, client, monkeypatch):
-        from business import board as board_module
-        # `leagues_with_status` is called via `app.py`.  Stub it
-        # directly so we don't drag the DLTV client in.
-        monkeypatch.setattr(
-            "business.app.leagues_with_status",
-            lambda: [{"id": 42, "title": "DreamLeague", "is_active": True, "status": "live"}],
-        )
+    def test_leagues_returns_list(self, client, mock_collaborators):
+        # v0.3.21+: /api/leagues reads the v1 events list
+        # directly (we don't go through leagues_with_status()
+        # any more — that was too slow under cold cache).
+        # mock_collaborators is the fixture that already stubs
+        # business.app.client; we just add get_events().
+        from business import app as app_module
+        app_module.client.get_events.return_value = [
+            {"id": 42, "title": "DreamLeague", "is_active": 1},
+            {"id": 43, "title": "ESL One", "is_active": 1},
+        ]
         r = client.get("/api/leagues")
         assert r.status_code == 200
         body = r.json()
         assert "leagues" in body
-        assert body["leagues"][0]["id"] == 42
+        # Sorted by match_count desc, then title asc.  Both have
+        # count=0 (empty auto-board), so we sort alphabetically.
+        ids = [L["id"] for L in body["leagues"]]
+        assert ids == [42, 43]
+        for L in body["leagues"]:
+            assert L["match_count"] == 0
+            assert "status" not in L  # the legacy status field is gone
 
 
 class TestBoard:

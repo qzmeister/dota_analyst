@@ -793,6 +793,14 @@ class _DiscoveryTracker:
             # Synthesize a minimal v1-shaped series with empty maps.
             if stage == "live":
                 title = m.get("event") or "Live match"
+                # v0.3.22: if the scraper didn't see a `start_time`
+                # (the live card on dltv.org renders before the
+                # timestamp is populated), fall back to "now" so
+                # `classify_stage` returns "live" instead of
+                # "prematch" — otherwise the row goes to the
+                # prematch section and never gets the `_live_card`
+                # match-state overlay.
+                synthesized_started_at = m.get("start_time") or datetime.now(timezone.utc).isoformat()
                 series = {
                     "id": sid,
                     "event_id": scraper_event_id,
@@ -802,7 +810,8 @@ class _DiscoveryTracker:
                     "second_team_id": m.get("team_b", {}).get("id") if isinstance(m.get("team_b"), dict) else None,
                     "type": 3,  # best-of-3 default
                     "maps": [],  # no draft yet
-                    "started_at": m.get("start_time"),
+                    "started_at": synthesized_started_at,
+                    "status": 1,  # in progress — bypass classify_stage guess
                     "live_score": m.get("live_score"),
                     "_scraper_event": title,
                     "_scraper_bo": m.get("bo"),

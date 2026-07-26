@@ -86,6 +86,54 @@ body {
   font-size: 16px; line-height: 1; padding: 0 6px;
 }
 .btn-ghost:hover { color: var(--dire); }
+
+/* v0.3.21: league filter affordances.  Chips give one-tap
+   toggles for the top-5 busiest leagues; the picker gets a
+   match_count badge per row and an action bar with "Все" /
+   "Очистить" shortcuts. */
+.chips {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 8px 22px; background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 67px; z-index: 40;
+}
+.chip {
+  background: var(--panel-2); color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 4px 10px; border-radius: 16px;
+  font-size: 12px; cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.chip:hover { border-color: var(--accent); color: var(--text); }
+.chip.chip-on {
+  background: var(--accent); color: #0d1117;
+  border-color: var(--accent); font-weight: 600;
+}
+.chip.chip-all { border-style: dashed; }
+.chip.chip-on.chip-all { border-style: solid; }
+
+.league-actions {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 4px; font-size: 11px; color: var(--muted);
+  border-bottom: 1px solid var(--border); margin-bottom: 4px;
+}
+.league-actions .league-summary { margin-left: auto; }
+.league-actions button {
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 3px 10px; font-size: 11px; cursor: pointer;
+}
+.league-actions button:hover { border-color: var(--accent); }
+
+.league-item {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border-radius: 8px; cursor: pointer; font-size: 13px;
+}
+.league-item .league-count {
+  margin-left: auto; font-size: 11px; color: var(--muted);
+  background: var(--bg); padding: 1px 8px; border-radius: 10px;
+  min-width: 24px; text-align: center;
+}
 .watch-hint { padding: 8px 10px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); }
 .watch-picker > button { border-color: var(--live); color: var(--live); }
 

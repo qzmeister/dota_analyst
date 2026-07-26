@@ -67,8 +67,15 @@ ML_DATA_DIR = Path(os.environ.get("ML_DATA_DIR", "ml_data"))
 PLAYER_WR_CACHE_FILE = ML_DATA_DIR / "player_wr_cache.json"
 PLAYER_WR_TTL_SEC = 5 * 60.0   # 5 minutes
 MATCH_STATE_TTL_SEC = 5.0      # 5 seconds — live changes every tick
-PLAYER_WR_FETCH_TIMEOUT_MS = 8000  # playwright goto timeout
-PLAYER_WR_PAGE_LOAD_WAIT_MS = 2500  # let React render
+# v0.3.21: dltv.org cold load is slow when the chromium
+# binary has to JIT its V8 on a small container.  8s was
+# too tight — the first goto of a brand-new live match
+# timed out before React could render the picks.  Bump to
+# 20s (the publisher will skip the round entirely if the
+# network is fully down) and let the page settle for an
+# extra second after DOMContentLoaded.
+PLAYER_WR_FETCH_TIMEOUT_MS = 20000
+PLAYER_WR_PAGE_LOAD_WAIT_MS = 3500
 
 
 # Lazy playwright import.  We don't want a hard dependency at
@@ -328,67 +335,225 @@ def update_player_wr_cache(series_id: int, url: str) -> Optional[Dict[str, float
 # a `match_state` entry into the same cache file.  Readers pick
 # whichever they need.
 
-def _extract_picks_from_dom(page) -> Dict[str, Any]:
-    """Return {picks: {radiant: [...], dire: [...]}, ...} from the DOM.
+def _read_heroes_from_window(page) -> Dict[str, Dict[str, Any]]:
+    """Read `window.__heroes` and return a hash -> hero dict.
 
-    The data lives in elements like `<div class="...">Hero Name
-    1|0%</div>` per the DLTV markup at the time of writing.
+    DLTV's live page embeds all 127 heroes as a single JS object
+    `window.__heroes = { "<dltv_id>": {id, steam_id, title, slug,
+    image, ...} }`.  The hero cards reference the hero image by
+    URL hash like `/uploads/heroes/pethqKDQjJLPolvncSyuAOsDwWZUuUe8.png`
+    — the only way to recover the dltv_id/steam_id/title from a
+    rendered pick is to look it up in this table.
+
+    Returns {} if the JS object isn't present (e.g. very early
+    before hydration, or the page changed shape).
     """
-    out: Dict[str, Any] = {"picks": {"radiant": [], "dire": []}, "bans": {"radiant": [], "dire": []}}
     try:
-        # Look for player rows in the radiant and dire sections.
-        # DLTV uses .match__team.match__team--radiant and
-        # .match__team--dire, with .player inside.  Each player
-        # has .player__hero + .player__name.  We can't be 100%
-        # sure of the selectors so try a few.
-        for sel in [
-            ".match__team--radiant .player",
-            ".team--radiant .player",
-            "[data-side='radiant'] .player",
-        ]:
-            try:
-                count = page.locator(sel).count()
-            except Exception:
-                continue
-            if count >= 1:
-                for i in range(count):
-                    try:
-                        el = page.locator(sel).nth(i)
-                        name = el.locator(".player__name, .player__hero, [data-name]").first.inner_text(timeout=1000)
-                        out["picks"]["radiant"].append({"name": name.strip()})
-                    except Exception:
-                        pass
-                break
-        for sel in [
-            ".match__team--dire .player",
-            ".team--dire .player",
-            "[data-side='dire'] .player",
-        ]:
-            try:
-                count = page.locator(sel).count()
-            except Exception:
-                continue
-            if count >= 1:
-                for i in range(count):
-                    try:
-                        el = page.locator(sel).nth(i)
-                        name = el.locator(".player__name, .player__hero, [data-name]").first.inner_text(timeout=1000)
-                        out["picks"]["dire"].append({"name": name.strip()})
-                    except Exception:
-                        pass
-                break
-    except Exception as exc:
-        log.debug("dltv_browser: picks DOM extract failed: %s", exc)
+        raw = page.evaluate("() => window.__heroes ? JSON.stringify(window.__heroes) : null")
+    except Exception:
+        return {}
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for h in parsed.values():
+        if not isinstance(h, dict):
+            continue
+        image = h.get("image") or ""
+        # image is like "/uploads/heroes/XXXX.png" — split to hash
+        if "/" in image:
+            hash_part = image.rsplit("/", 1)[-1].split(".", 1)[0]
+        else:
+            hash_part = image
+        if hash_part:
+            out[hash_part] = h
     return out
 
 
-def _extract_score_from_text(page) -> Dict[str, Any]:
-    """Try the body-text scan for "<left> <right>" + game time.
+def _read_map_block_from_dom(page) -> Dict[str, Any]:
+    """Read picks, bans, scores, time, teams from `.map__finished-v2`.
 
-    The DLTV page header has the live score in big numbers and a
-    game time like "12:35" nearby.  We scan the rendered body
-    text for these patterns.  Less reliable than DOM selectors
-    but works as a fallback.
+    DLTV's current live page renders the in-progress game inside
+    a `.map__finished-v2` block (the class name is a legacy from
+    when DLTV only showed finished maps; they kept the class when
+    they added the live version).  Inside it:
+
+      .team (2 of them) → .team__title-name (name + side)
+                        → .team__scores-kills (per-game kills)
+      .duration b       → game time "MM:SS"
+      .pick (5+5=10)    → real picks, .pick__image is the hero
+      .pick-sm          → secondary (smaller) picks, NOT used
+      .ban (5+5=10, sometimes 12-14) → bans, .ban__image is the hero
+
+    The hero is identified by the image URL hash; the lookup
+    table comes from `window.__heroes` (see _read_heroes_from_window).
+
+    Picks come out in DOM order: first the team rendered first in
+    the header (left side in DLTV's UI), then the other team.
+    The team order is captured in `team_order` (e.g. ["dire",
+    "radiant"]) so the caller can split picks correctly.
+    """
+    out: Dict[str, Any] = {
+        "picks": {"radiant": [], "dire": []},
+        "bans": {"radiant": [], "dire": []},
+        "team_order": [],
+    }
+    try:
+        data = page.evaluate(
+            """() => {
+                const map = document.querySelector('.map__finished-v2');
+                if (!map) return null;
+                const heroUrls = (els) => {
+                    const out = [];
+                    els.forEach(el => {
+                        const img = el.querySelector('.pick__image, .ban__image');
+                        if (!img) return;
+                        const style = img.getAttribute('style') || '';
+                        const m = style.match(/url\\(['"]?([^'")]+)['"]?\\)/);
+                        if (m) out.push(m[1]);
+                    });
+                    return out;
+                };
+                const pickEls = map.querySelectorAll('.pick:not(.pick-sm)');
+                const banEls = map.querySelectorAll('.ban');
+                const scores = Array.from(map.querySelectorAll('.team__scores-kills')).map(el => (el.textContent || '').trim());
+                const dur = map.querySelector('.duration b');
+                const time = dur ? (dur.textContent || '').trim() : '';
+                const teamEls = Array.from(map.querySelectorAll('.team__title'));
+                const teams = teamEls.slice(0, 2).map(t => {
+                    const name = t.querySelector('.name');
+                    const side = t.querySelector('.side');
+                    return {
+                        name: name ? (name.textContent || '').trim() : '',
+                        side: side ? (side.textContent || '').trim() : '',
+                    };
+                });
+                return {
+                    picks: heroUrls(pickEls),
+                    bans: heroUrls(banEls),
+                    scores: scores,
+                    time: time,
+                    teams: teams,
+                };
+            }"""
+        )
+    except Exception as exc:
+        log.debug("dltv_browser: _read_map_block_from_dom failed: %s", exc)
+        return out
+    if not isinstance(data, dict):
+        return out
+
+    # Resolve the team order: 'dire' if side text is the dark/dire word,
+    # 'radiant' for the light/radiant word.  Russian and English both
+    # handled (DLTV's server picks the locale; we don't).
+    DIRE_WORDS = ("dire", "тьмы", "dark", "тeмные", "тёмные")
+    RADIANT_WORDS = ("radiant", "света", "light", "сияющие")
+    team_order: list = []
+    for t in data.get("teams") or []:
+        side_text = (t.get("side") or "").lower().strip()
+        if any(w in side_text for w in DIRE_WORDS):
+            team_order.append("dire")
+        elif any(w in side_text for w in RADIANT_WORDS):
+            team_order.append("radiant")
+        else:
+            # Unknown side — leave it as a placeholder; the caller
+            # will fall back to the default radiant-first order.
+            team_order.append("unknown")
+    out["team_order"] = team_order[:2]
+
+    # Read the hero hash → hero lookup once
+    heroes = _read_heroes_from_window(page)
+
+    def _hero_for_url(u: str) -> Dict[str, Any]:
+        if not u:
+            return {}
+        hash_part = u.rsplit("/", 1)[-1].split(".", 1)[0]
+        return heroes.get(hash_part) or {}
+
+    def _entry_for_url(u: str) -> Dict[str, Any]:
+        h = _hero_for_url(u)
+        if not h:
+            # Fall back to just the URL so the caller can debug
+            return {"image": u}
+        return {
+            "hero_id": h.get("id"),         # DLTV internal
+            "steam_id": h.get("steam_id"),  # Valve id
+            "name": h.get("title"),
+            "slug": h.get("slug"),
+        }
+
+    pick_urls = data.get("picks") or []
+    n_picks = len(pick_urls)
+    if n_picks >= 2:
+        split = n_picks // 2
+        first_side = out["team_order"][0] if out["team_order"] and out["team_order"][0] != "unknown" else "radiant"
+        second_side = out["team_order"][1] if len(out["team_order"]) > 1 and out["team_order"][1] != "unknown" else "dire"
+        # Convention: first team in DOM = the team the layout starts with
+        # (DLTV puts the dire side first, but we don't want to bake
+        # that in — use the team_order we just computed).
+        for i, u in enumerate(pick_urls):
+            side = first_side if i < split else second_side
+            out["picks"][side].append(_entry_for_url(u))
+
+    ban_urls = data.get("bans") or []
+    n_bans = len(ban_urls)
+    if n_bans >= 2:
+        split_b = n_bans // 2
+        first_side = out["team_order"][0] if out["team_order"] and out["team_order"][0] != "unknown" else "radiant"
+        second_side = out["team_order"][1] if len(out["team_order"]) > 1 and out["team_order"][1] != "unknown" else "dire"
+        for i, u in enumerate(ban_urls):
+            side = first_side if i < split_b else second_side
+            out["bans"][side].append(_entry_for_url(u))
+
+    scores = data.get("scores") or []
+    if len(scores) >= 2:
+        try:
+            a, b = int(scores[0]), int(scores[1])
+            # The scores come from the team order in the DOM, which
+            # we captured as team_order.  Map them to radiant/dire
+            # correctly.
+            sides = (out["team_order"] + ["radiant", "dire"])[:2]
+            if sides[0] == "dire":
+                # DOM order is [dire, radiant] → scores[0]=dire, scores[1]=radiant
+                out["dire_score"] = a
+                out["radiant_score"] = b
+            else:
+                out["radiant_score"] = a
+                out["dire_score"] = b
+        except (ValueError, TypeError):
+            pass
+
+    if data.get("time"):
+        out["game_time"] = data["time"]
+
+    return out
+
+
+def _extract_picks_from_dom(page) -> Dict[str, Any]:
+    """Return {picks: {radiant: [...], dire: [...]}, bans: ...} from the DOM.
+
+    v0.3.22: DLTV's live page no longer tags picks/bans with
+    `data-hero-id` — heroes are referenced by image URL hash
+    instead.  The hash → hero mapping is sourced from the
+    embedded `window.__heroes` JS object.  See `_read_map_block_from_dom`
+    for the full structure of the new markup.
+    """
+    return _read_map_block_from_dom(page)
+
+
+def _extract_score_from_text(page) -> Dict[str, Any]:
+    """Legacy body-text scan for "<left> <right>" + game time.
+
+    v0.3.22: prefer `_read_map_block_from_dom` for the score
+    (it uses the real `.team__scores-kills` numbers and
+    `.duration b` time).  This function is kept as a safety
+    net for the rare case where the `.map__finished-v2` block
+    is missing but the body still has the header numbers.
     """
     out: Dict[str, Any] = {}
     try:
@@ -418,16 +583,14 @@ def fetch_match_state(url: str) -> Dict[str, Any]:
 
     The returned dict has these keys (any may be missing if the
     page didn't render the corresponding block):
-      - picks.radiant:   list of {name, hero_id?}
+      - picks.radiant:   list of {hero_id, steam_id, name}
       - picks.dire:      same
-      - bans.radiant:    list of {name, hero_id?}
+      - bans.radiant:    list of {hero_id, steam_id, name}
       - bans.dire:       same
       - radiant_score:   int
       - dire_score:      int
       - game_time:       "MM:SS" string
-      - radiant_gold:    float
-      - dire_gold:       float
-      - is_picks_ended:  bool
+      - team_order:      ["dire", "radiant"] (or whatever the DOM shows)
 
     Raises DiscoveryError on hard failures (Playwright missing,
     chromium binary missing, network unreachable).
@@ -451,31 +614,14 @@ def fetch_match_state(url: str) -> Dict[str, Any]:
             except PWTimeout:
                 raise DiscoveryError(f"goto timeout: {url}")
             page.wait_for_timeout(PLAYER_WR_PAGE_LOAD_WAIT_MS)
-            # v0.3.20: __NEXT_DATA__ / __INITIAL_STATE__ hold the
-            # authoritative React state.  If we can pull it, the
-            # whole page is one JSON blob — no fragile DOM walks.
-            for win_token in ("__NEXT_DATA__", "__INITIAL_STATE__", "__NUXT__"):
-                try:
-                    raw = page.evaluate(
-                        f"() => window.{win_token} ? JSON.stringify(window.{win_token}) : null"
-                    )
-                except Exception:
-                    raw = None
-                if not raw:
-                    continue
-                try:
-                    parsed = json.loads(raw)
-                except Exception:
-                    continue
-                # Walk the blob looking for picks/score/time.  We
-                # don't know the exact schema; the heuristic is
-                # "any key called 'picks' / 'score' / 'duration'".
-                state = _state_from_initial(parsed)
-                if state:
-                    break
-            # Fall back to DOM scans if the React payload didn't help.
-            if not state.get("picks"):
-                state.update(_extract_picks_from_dom(page))
+            # v0.3.22: the new DLTV layout puts the entire live
+            # state inside `.map__finished-v2` with image-hash
+            # hero references resolved via `window.__heroes`.
+            # Skip the React-payload walk (no longer works) and
+            # go straight to the DOM read.
+            state = _read_map_block_from_dom(page)
+            # Last-resort fallback: body-text scan if scores/time
+            # are still missing (older page versions, pre-hydration).
             if state.get("radiant_score") is None or state.get("game_time") is None:
                 state.update(_extract_score_from_text(page))
         finally:

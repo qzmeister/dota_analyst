@@ -16,7 +16,18 @@ async function loadLeagues() {
     const r = await fetch(`${API}/api/leagues`);
     const d = await r.json();
     LEAGUES = d.leagues || [];
+    // v0.3.21: first-load UX.  An empty SELECTED set used to leave
+    // the user staring at an empty board even though every league
+    // has cards.  Auto-pick everything so the first /api/board
+    // comes back populated.  We still persist the choice, so
+    // a returning user with a saved selection keeps their
+    // custom filter.
+    if (SELECTED.size === 0 && LEAGUES.length > 0) {
+      for (const l of LEAGUES) SELECTED.add(l.id);
+      persist();
+    }
     renderLeagueList();
+    renderLeagueChips();
     updateLeagueCount();
   } catch (e) {
     setStatus("Не удалось загрузить список лиг: " + e.message);
@@ -31,9 +42,12 @@ function renderLeagueList(filter = "") {
   const f = filter.toLowerCase();
   list.innerHTML = "";
 
-  // Backend now returns ONLY active leagues (those with upcoming or live matches),
-  // so we render a single flat list without status groups.
-  const items = LEAGUES.filter((l) => l.title.toLowerCase().includes(f));
+  // Sort by match_count desc, then by title.  This puts the
+  // busy leagues at the top of the picker.
+  const items = LEAGUES
+    .filter((l) => l.title.toLowerCase().includes(f))
+    .sort((a, b) => (b.match_count || 0) - (a.match_count || 0)
+                    || (a.title || "").localeCompare(b.title || ""));
 
   if (items.length === 0) {
     const empty = document.createElement("div");
@@ -42,6 +56,26 @@ function renderLeagueList(filter = "") {
     list.appendChild(empty);
     return;
   }
+
+  // Action bar — "All" / "None" / count
+  const actions = document.createElement("div");
+  actions.className = "league-actions";
+  const btnAll = document.createElement("button");
+  btnAll.className = "btn-ghost";
+  btnAll.textContent = "Все";
+  btnAll.onclick = (e) => { e.preventDefault(); selectAllLeagues(); };
+  const btnNone = document.createElement("button");
+  btnNone.className = "btn-ghost";
+  btnNone.textContent = "Очистить";
+  btnNone.onclick = (e) => { e.preventDefault(); clearAllLeagues(); };
+  const summary = document.createElement("span");
+  summary.className = "league-summary";
+  const totalMatches = items.reduce((s, l) => s + (l.match_count || 0), 0);
+  summary.textContent = `Выбрано ${SELECTED.size}/${items.length} · матчей: ${totalMatches}`;
+  actions.appendChild(btnAll);
+  actions.appendChild(btnNone);
+  actions.appendChild(summary);
+  list.appendChild(actions);
 
   const header = document.createElement("div");
   header.className = "league-group-header league-group-live";
@@ -58,13 +92,75 @@ function renderLeagueList(filter = "") {
       cb.checked ? SELECTED.add(l.id) : SELECTED.delete(l.id);
       persist();
       updateLeagueCount();
+      renderLeagueChips();
       refresh();
     };
     const span = document.createElement("span");
     span.textContent = l.title;
+    const count = document.createElement("span");
+    count.className = "league-count";
+    count.textContent = (l.match_count != null) ? `${l.match_count}` : "—";
     item.appendChild(cb);
     item.appendChild(span);
+    item.appendChild(count);
     list.appendChild(item);
+  });
+}
+
+function selectAllLeagues() {
+  SELECTED = new Set(LEAGUES.map((l) => l.id));
+  persist();
+  renderLeagueList($("leagueSearch")?.value || "");
+  renderLeagueChips();
+  updateLeagueCount();
+  refresh();
+}
+function clearAllLeagues() {
+  SELECTED = new Set();
+  persist();
+  renderLeagueList($("leagueSearch")?.value || "");
+  renderLeagueChips();
+  updateLeagueCount();
+  refresh();
+}
+
+function renderLeagueChips() {
+  // v0.3.21: a single-row strip of the top-5 leagues so the
+  // most relevant filter chips are always one click away,
+  // without opening the picker.  Clicking a chip toggles that
+  // league.  Clicking the "all" chip selects everything.
+  const host = $("leagueChips");
+  if (!host) return;
+  host.innerHTML = "";
+  // Top 5 by match_count
+  const top = LEAGUES
+    .filter((l) => (l.match_count || 0) > 0)
+    .sort((a, b) => (b.match_count || 0) - (a.match_count || 0))
+    .slice(0, 5);
+  if (top.length === 0) return;
+  // "All" chip
+  const all = document.createElement("button");
+  all.className = "chip chip-all " + (SELECTED.size === LEAGUES.length ? "chip-on" : "");
+  all.textContent = "Все лиги";
+  all.title = "Включить все лиги";
+  all.onclick = () => selectAllLeagues();
+  host.appendChild(all);
+  top.forEach((l) => {
+    const btn = document.createElement("button");
+    const on = SELECTED.has(l.id);
+    btn.className = "chip " + (on ? "chip-on" : "");
+    btn.textContent = `${l.title} · ${l.match_count || 0}`;
+    btn.title = on ? `Скрыть ${l.title}` : `Показать только ${l.title}`;
+    btn.onclick = () => {
+      if (SELECTED.has(l.id)) SELECTED.delete(l.id);
+      else SELECTED.add(l.id);
+      persist();
+      renderLeagueChips();
+      renderLeagueList($("leagueSearch")?.value || "");
+      updateLeagueCount();
+      refresh();
+    };
+    host.appendChild(btn);
   });
 }
 

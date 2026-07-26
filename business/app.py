@@ -225,8 +225,52 @@ app.add_middleware(
 
 @app.get("/api/leagues")
 def get_leagues():
-    """Return leagues with a status tag (live | upcoming | finished)."""
-    return {"leagues": leagues_with_status()}
+    """Return leagues with a `match_count` per league.
+
+    v0.3.21+: this endpoint used to call `leagues_with_status()`,
+    which itself walks the discovery tracker (Steam + scraper +
+    DLTV events).  On a cold cache that took >25s and the request
+    504'd.  Now we return whatever the publisher already has:
+      - the league list from `client.get_events()` (one cached
+        DLTV call, fast),
+      - match counts derived from `_latest_auto_board` (no extra
+        upstream work — the publisher did it for us).
+
+    Leagues that have zero live/prematch/postmatch cards in the
+    current auto-board still appear in the response with
+    `match_count: 0` — the UI greys them out so the user knows
+    they exist but have nothing to show right now.
+    """
+    # Pull the static league list from DLTV's cached v1 events.
+    try:
+        events = client.get_events() or []
+    except (DLTVError, HTTPClientError, UpstreamError):
+        events = []
+
+    # Per-league match count from the publisher's last board.
+    counts: Dict[int, int] = {}
+    board = _latest_auto_board if _latest_auto_board else {}
+    for col in ("live", "prematch", "postmatch"):
+        for card in board.get(col) or []:
+            eid = card.get("event_id")
+            if eid is None:
+                continue
+            counts[int(eid)] = counts.get(int(eid), 0) + 1
+
+    leagues = [
+        {
+            "id": e.get("id"),
+            "title": e.get("title"),
+            "is_active": bool(e.get("is_active")),
+            "match_count": counts.get(int(e["id"]), 0) if e.get("id") else 0,
+        }
+        for e in events
+        if e.get("id")
+    ]
+    # Sort by activity (descending) so the most relevant leagues
+    # appear at the top of the picker.
+    leagues.sort(key=lambda L: (-L["match_count"], (L["title"] or "").lower()))
+    return {"leagues": leagues}
 
 
 @app.get("/api/board")

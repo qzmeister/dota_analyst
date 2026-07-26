@@ -303,6 +303,17 @@ class ModelStorage:
             meta = ModelMetadata.from_dict(json.load(fh))
         encoder = HeroWinRateEncoder.from_dict(meta.encoder)
 
+        # 0.3.15+: optional PlayerWinRateEncoder is stored alongside in
+        # `player_encoder.json`.  Attach it to the hero encoder so
+        # `_features_player` can use it.  Missing file is fine — older
+        # models (v1..v13) just have `encoder.player_encoder = None`.
+        pe_path = self._version_dir(name, version) / "player_encoder.json"
+        if pe_path.is_file():
+            with open(pe_path, encoding="utf-8") as fh:
+                pe_dict = json.load(fh)
+            from .features import PlayerWinRateEncoder  # local: avoid cycle
+            encoder.player_encoder = PlayerWinRateEncoder.from_dict(pe_dict)
+
         # Sanity check: every feature name must still resolve to a
         # known group.  Subset is fine (0.3.9 baseline = hero only;
         # 0.3.10 experiments = hero+team / hero+lane / all).

@@ -161,6 +161,100 @@ class TeamWinRateEncoder:
         return enc
 
 
+class PlayerWinRateEncoder:
+    """Per-player target encoding with smoothing back to the global rate (0.3.15).
+
+    fit(matches) walks every match and, for each `player.steam32` (DLTV
+    namespace) that appears, increments the (steam32) -> {wins, total}
+    counter.  encode(steam32) returns the smoothed WR or global_rate.
+
+    Used by `_features_player` to feed `r_player_wr_avg/max` and
+    `d_player_wr_avg/max` into winner_v15+.  When the encoder is fit
+    on a small corpus the global_rate fallback keeps the model from
+    blowing up on unseen players; in production we still pass
+    DLTV's `map_results[].player.win_rate` directly when available
+    (see `business/board.py` and the backtest scripts).
+
+    Stored alongside the trained model in `player_encoder.json`, NOT
+    inside `HeroWinRateEncoder.to_dict()` — the hero encoder is
+    shared across multiple heads, the player encoder is per-corpus.
+    """
+
+    def __init__(self, smoothing: float = 5.0, min_samples: int = 3) -> None:
+        self.smoothing = float(smoothing)
+        self.min_samples = int(min_samples)
+        self._wins: Dict[int, int] = {}
+        self._total: Dict[int, int] = {}
+        self._global_rate: float = 0.5
+
+    @property
+    def global_rate(self) -> float:
+        return self._global_rate
+
+    def fit(self, matches) -> "PlayerWinRateEncoder":
+        wins: Dict[int, int] = {}
+        total: Dict[int, int] = {}
+        global_wins = 0
+        global_total = 0
+        for m in matches:
+            t = m.get("radiant_victory")
+            if t is None: continue
+            target = 1 if t else 0
+            for side_key in ("radiant", "dire"):
+                side = m.get(side_key) or {}
+                for p in (side.get("player_performances") or []):
+                    pl = p.get("player") or {}
+                    sid = pl.get("steam32")
+                    if not isinstance(sid, int): continue
+                    wins[sid] = wins.get(sid, 0) + (target if side_key == "radiant" else 1 - target)
+                    total[sid] = total.get(sid, 0) + 1
+                    global_wins += (target if side_key == "radiant" else 1 - target)
+                    global_total += 1
+        self._wins = wins
+        self._total = total
+        self._global_rate = global_wins / max(1, global_total)
+        return self
+
+    def encode(self, steam32) -> float:
+        if steam32 is None:
+            return self._global_rate
+        n = self._total.get(int(steam32), 0)
+        if n < self.min_samples:
+            return self._global_rate
+        w = self._wins.get(int(steam32), 0)
+        return (w + self.smoothing * self._global_rate) / (n + self.smoothing)
+
+    def to_dict(self) -> Dict:
+        return {
+            "smoothing": self.smoothing, "min_samples": self.min_samples,
+            "global_rate": float(self._global_rate),
+            "wins": {str(k): int(v) for k, v in self._wins.items()},
+            "total": {str(k): int(v) for k, v in self._total.items()},
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> "PlayerWinRateEncoder":
+        enc = cls(smoothing=d.get("smoothing", 5.0), min_samples=d.get("min_samples", 3))
+        enc._global_rate = float(d.get("global_rate", 0.5))
+        enc._wins = {int(k): int(v) for k, v in d.get("wins", {}).items()}
+        enc._total = {int(k): int(v) for k, v in d.get("total", {}).items()}
+        return enc
+
+
+def players_from_match(match: Dict) -> Dict[str, List[int]]:
+    """Pull per-side `player.steam32` lists (used by `PlayerWinRateEncoder.fit`)."""
+    out = {"radiant": [], "dire": []}
+    if not match: return out
+    for side_key in ("radiant", "dire"):
+        side = match.get(side_key) or {}
+        for p in (side.get("player_performances") or []):
+            pl = p.get("player") or {}
+            sid = pl.get("steam32")
+            if isinstance(sid, int):
+                out[side_key].append(sid)
+    return out
+
+
 class HeroPairWinRateEncoder:
     """Per-side, per-hero-pair target encoding (0.3.9 — synergy).
 
@@ -356,6 +450,12 @@ class HeroWinRateEncoder:
         # aggregation-level signal so the default full-corpus fit
         # is fine (patches are not per-instance).
         self.patch_encoder = PatchWinRateEncoder()
+        # 0.3.15: per-player encoder.  Constructed but not fit here —
+        # `_features_player` will use it if present, and the trainer
+        # can attach one with `encoder.player_encoder = PlayerWinRateEncoder()`
+        # before training/predicting.  Stays None for v1..v13 models
+        # that don't consume the player group.
+        self.player_encoder = None
 
     @property
     def global_rate(self) -> float:
@@ -546,6 +646,18 @@ FEATURE_GROUPS: Dict[str, Tuple[str, ...]] = {
         "patch_wr_dire",
         "patch_wr_diff",
     ),
+    # 0.3.15: per-player features.  These come from `PlayerWinRateEncoder`
+    # (target encoding on full_matches) at training time, and from DLTV's
+    # `map_results[].player.win_rate` at predict time when the match is
+    # already in DLTV.  The four aggregates (avg/max per side) are
+    # deliberately coarse — they generalise across the "who's on this
+    # roster?" noise that per-slot features suffer from in 5-stack drafts.
+    "player": (
+        "r_player_wr_avg",   # mean(DLTV.player.win_rate) over radiant 5
+        "d_player_wr_avg",   # mean over dire 5
+        "r_player_wr_max",   # max (carry skill ceiling)
+        "d_player_wr_max",   # max
+    ),
 }
 FEATURE_ORDER: Tuple[str, ...] = sum(FEATURE_GROUPS.values(), ())  # type: ignore[arg-type,operator]
 N_FEATURES = len(FEATURE_ORDER)
@@ -687,6 +799,44 @@ def _features_patch(
     return [wr_r, 1.0 - wr_r, wr_r - 0.5]
 
 
+def _features_player(
+    match: Optional[Dict],
+    encoder: "HeroWinRateEncoder",
+) -> List[float]:
+    """4 per-player WR aggregate features (0.3.15).
+
+    Layout (4 features):
+      - r_player_wr_avg  mean(player.win_rate) over radiant 5
+      - d_player_wr_avg  mean over dire 5
+      - r_player_wr_max  max (carry skill ceiling)
+      - d_player_wr_max  max
+
+    Player WR comes from full_matches.steam32 (training) or DLTV's
+    `map_results[].player.win_rate` (predict) — both encoded through
+    `PlayerWinRateEncoder`.  The encoder lives on `encoder.player_encoder`
+    if present (a `PlayerWinRateEncoder` instance); otherwise we fall
+    back to a fresh encoder fit on the same match list.
+    """
+    p_enc = getattr(encoder, "player_encoder", None)
+    if p_enc is None:
+        # No player encoder attached — return global_rate for all 4 features
+        # so the model still runs (won't be useful, but won't crash either).
+        gr = 0.5
+        return [gr, gr, gr, gr]
+    ps = players_from_match(match) if match is not None else {"radiant": [], "dire": []}
+    r_wrs = [p_enc.encode(s) for s in ps["radiant"]]
+    d_wrs = [p_enc.encode(s) for s in ps["dire"]]
+    if not r_wrs: r_wrs = [p_enc.global_rate] * 5
+    if not d_wrs: d_wrs = [p_enc.global_rate] * 5
+    import numpy as _np
+    return [
+        float(_np.mean(r_wrs)),
+        float(_np.mean(d_wrs)),
+        float(max(r_wrs)),
+        float(max(d_wrs)),
+    ]
+
+
 def extract_features(
     radiant_hero_ids: List[int],
     dire_hero_ids: List[int],
@@ -697,7 +847,7 @@ def extract_features(
     match: Optional[Dict] = None,
     radiant_lane: Optional[Dict[str, Optional[int]]] = None,
     dire_lane: Optional[Dict[str, Optional[int]]] = None,
-    groups: Tuple[str, ...] = ("hero", "team", "lane", "matchup", "patch"),
+    groups: Tuple[str, ...] = ("hero", "team", "lane", "matchup", "patch", "player"),
 ) -> List[float]:
     """Build the feature vector for a single match prediction.
 
@@ -735,12 +885,14 @@ def extract_features(
             feats.extend(_features_matchup(match, radiant_lane, dire_lane, encoder))
         elif g == "patch":
             feats.extend(_features_patch(match, encoder))
+        elif g == "player":
+            feats.extend(_features_player(match, encoder))
         else:
             raise ValueError(f"unknown feature group: {g!r}")
     return feats
 
 
-def feature_names(groups: Tuple[str, ...] = ("hero", "team", "lane", "matchup", "patch")) -> List[str]:
+def feature_names(groups: Tuple[str, ...] = ("hero", "team", "lane", "matchup", "patch", "player")) -> List[str]:
     """Return the feature names for a given group tuple (in order)."""
     out: List[str] = []
     for g in groups:

@@ -158,12 +158,14 @@ class TestHeroWinRateEncoder:
 
 class TestFeatureConstants:
     def test_n_features_matches_order(self):
-        # 0.3.13: FEATURE_ORDER is the concatenation of five
+        # 0.3.15: FEATURE_ORDER is the concatenation of six
         # feature groups: hero (13) + team (4) + lane (7) +
-        # matchup (3) + patch (3) = 30.  Trainers can pick a
-        # subset via `groups=("hero",)` etc.
-        assert N_FEATURES == 30
-        assert len(FEATURE_ORDER) == 30
+        # matchup (3) + patch (3) + player (4) = 34.  Trainers can
+        # pick a subset via `groups=("hero",)` etc.  Player is new
+        # in 0.3.15 — see `winner_v15` for the first shipped model
+        # that consumes it.
+        assert N_FEATURES == 34
+        assert len(FEATURE_ORDER) == 34
         from business.ml.features import FEATURE_GROUPS
         assert N_FEATURES == sum(len(g) for g in FEATURE_GROUPS.values())
 

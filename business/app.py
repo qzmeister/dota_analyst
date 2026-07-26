@@ -170,20 +170,31 @@ async def _lifespan(app: FastAPI):
     )
     log.info("accuracy scorer task scheduled")
 
+    # 4. Player.win_rate browser loop — polls dltv.org live match
+    #    pages via Playwright (Phase 3) and writes the result to a
+    #    JSON cache the predict path can read.
+    from .stream import player_wr_browser_loop
+    browser_task = asyncio.create_task(
+        player_wr_browser_loop(),
+        name="player-wr-browser",
+    )
+    log.info("player_wr browser task scheduled")
+
     try:
         yield
     finally:
         publisher.cancel()
         accuracy_task.cancel()
-        for t in (publisher, accuracy_task):
+        browser_task.cancel()
+        for t in (publisher, accuracy_task, browser_task):
             try:
                 await t
             except asyncio.CancelledError:
                 pass
-        log.info("sse publisher + accuracy scorer stopped")
+        log.info("sse publisher + accuracy scorer + player_wr browser stopped")
 
 
-app = FastAPI(title="Dota Analyst — business", version="0.3.16", lifespan=_lifespan)
+app = FastAPI(title="Dota Analyst — business", version="0.3.17", lifespan=_lifespan)
 
 # CORS: read allowed origins from env. Default to the gateway only.
 # The gateway terminates browser-facing CORS; this is just for direct

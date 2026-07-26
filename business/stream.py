@@ -256,6 +256,68 @@ async def board_publisher_loop(
         raise
 
 
+# --------------------------------------------------------------------------- #
+# Player.win_rate refresh — Playwright-driven, 30 s cadence
+# --------------------------------------------------------------------------- #
+#
+# Phase 3: the DLTV v1 API doesn't ship live player.win_rate; only the
+# rendered HTML at /matches/{series_id}/{slug} does.  We poll the
+# Playwright-based scraper every 30 s and write the result to a JSON
+# cache so the next predict call (which doesn't have time to spin
+# up chromium) can read it.  Caching is essential because chromium
+# launch is ~2 s — the board's 5 s publisher cycle would never
+# fit if we did this inline.
+
+PLAYER_WR_POLL_INTERVAL_SEC = 30.0
+
+
+async def player_wr_browser_loop(interval_sec: float = PLAYER_WR_POLL_INTERVAL_SEC) -> None:
+    """Refresh the player.win_rate cache for every live match we know about.
+
+    Runs alongside the SSE publisher; uses `asyncio.to_thread` so a
+    slow dltv.org page doesn't stall the event loop.  We deliberately
+    run fetches serially — chromium has its own event loop and a
+    single page per match is the simplest invariant.
+    """
+    import asyncio as _aio
+    from . import dltv_browser
+    from .discovery import tracker as _tracker
+    log.info("player_wr browser loop started; interval=%.1fs", interval_sec)
+    try:
+        while True:
+            try:
+                # Snapshot the live series with a URL — these are the
+                # ones the scraper found on /matches.  We only need
+                # the (series_id, url) pair; the rest of the live
+                # card lives in `_by_series`.
+                with _tracker._lock:
+                    targets = [
+                        (sid, m.get("url"))
+                        for sid, m in _tracker._by_series.items()
+                        if m.get("stage") == "live" and m.get("url")
+                    ]
+                for sid, url in targets:
+                    # Per-tick: at most 1 fetch per series; the
+                    # cache inside `update_player_wr_cache` enforces
+                    # the TTL itself, so a quick re-poll just
+                    # returns the cached result.
+                    if dltv_browser.get_cached_player_winrates(int(sid)) is not None:
+                        continue
+                    await _aio.to_thread(dltv_browser.update_player_wr_cache,
+                                         int(sid), url)
+            except (BoardBuildError, MLError, DiscoveryError, UpstreamError, InfraError) as exc:
+                log.warning("player_wr loop tick failed: %s", exc, exc_info=False)
+            except Exception as exc:
+                # Anything else (e.g. dltv_browser not imported
+                # because the worker thread is the wrong one) — log
+                # and keep going.  This is a "best effort" task.
+                log.warning("player_wr loop unexpected: %s", exc, exc_info=False)
+            await _aio.sleep(interval_sec)
+    except _aio.CancelledError:
+        log.info("player_wr browser loop cancelled")
+        raise
+
+
 async def event_stream(
     stream: MatchStream,
     keepalive_sec: float = 30.0,

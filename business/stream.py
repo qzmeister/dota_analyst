@@ -272,7 +272,14 @@ PLAYER_WR_POLL_INTERVAL_SEC = 30.0
 
 
 async def player_wr_browser_loop(interval_sec: float = PLAYER_WR_POLL_INTERVAL_SEC) -> None:
-    """Refresh the player.win_rate cache for every live match we know about.
+    """Refresh the player.win_rate + live match-state cache.
+
+    v0.3.20+: in addition to the career-win_rate scrape, this loop
+    also pulls the live picks/score/time for every live match with
+    a URL.  DLTV's v1 API hides in-progress series, so the only
+    source for picks during a best-of-N is the rendered HTML
+    page — and that's the same Playwright fetch we already do
+    for win rates, so we reuse the connection.
 
     Runs alongside the SSE publisher; uses `asyncio.to_thread` so a
     slow dltv.org page doesn't stall the event loop.  We deliberately
@@ -297,14 +304,18 @@ async def player_wr_browser_loop(interval_sec: float = PLAYER_WR_POLL_INTERVAL_S
                         if m.get("stage") == "live" and m.get("url")
                     ]
                 for sid, url in targets:
-                    # Per-tick: at most 1 fetch per series; the
-                    # cache inside `update_player_wr_cache` enforces
-                    # the TTL itself, so a quick re-poll just
-                    # returns the cached result.
-                    if dltv_browser.get_cached_player_winrates(int(sid)) is not None:
-                        continue
-                    await _aio.to_thread(dltv_browser.update_player_wr_cache,
-                                         int(sid), url)
+                    sid_int = int(sid)
+                    # v0.3.20: match state is the more important
+                    # thing — without it the live card shows empty
+                    # picks.  Try it first; the WR fetch piggybacks
+                    # on the same page load (separate call to the
+                    # module, but the cache write is shared).
+                    if dltv_browser.get_cached_match_state(sid_int) is None:
+                        await _aio.to_thread(dltv_browser.update_match_state_cache,
+                                             sid_int, url)
+                    if dltv_browser.get_cached_player_winrates(sid_int) is None:
+                        await _aio.to_thread(dltv_browser.update_player_wr_cache,
+                                             sid_int, url)
             except (BoardBuildError, MLError, DiscoveryError, UpstreamError, InfraError) as exc:
                 log.warning("player_wr loop tick failed: %s", exc, exc_info=False)
             except Exception as exc:

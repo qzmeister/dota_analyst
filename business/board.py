@@ -137,6 +137,38 @@ def _hero_card(hero: Optional[Dict], hero_id: Optional[int]) -> Dict:
     return {"id": hero_id, "name": f"#{hero_id}", "image": None, "win_rate": None}
 
 
+def _names_to_cards(entries: List[Dict]) -> List[Dict]:
+    """Resolve a list of {name, hero_id?} into hero cards.
+
+    Used by the v0.3.20+ match-state overlay path.  If the
+    `dltv_browser` module gave us a `hero_id` we use it directly;
+    otherwise we try to look the hero up by its display name in
+    DLTV's hero index.  A miss falls back to a placeholder card
+    so the user still sees the name in the UI.
+    """
+    out: List[Dict] = []
+    for e in entries or []:
+        if not isinstance(e, dict):
+            continue
+        name = e.get("name") or ""
+        hero_id = e.get("hero_id")
+        if hero_id:
+            meta = client.hero_by_dltv_id(int(hero_id)) or client.hero_by_steam_id(int(hero_id))
+            out.append(_hero_card(meta, int(hero_id)))
+        elif name:
+            # Look up by name (DLTV's `title`).
+            try:
+                for h in client.get_heroes() or []:
+                    if (h.get("title") or "").strip().lower() == name.strip().lower():
+                        out.append(_hero_card(h, h.get("id")))
+                        break
+                else:
+                    out.append({"id": None, "name": name, "image": None, "win_rate": None})
+            except Exception:
+                out.append({"id": None, "name": name, "image": None, "win_rate": None})
+    return out
+
+
 
 def _picks_to_heroes(picks: Optional[List[Dict]], use_steam_id: bool = False):
     """Return (hero_meta_list, hero_card_list) from a maps[].*_picks list.
@@ -389,6 +421,58 @@ def _live_card(series: Dict, event_title: str) -> Dict:
     is_watchlist = bool(series.get("_watchlist"))
 
     m = _active_map(series) or {}
+
+    # v0.3.20+: when the v1 API hides the in-progress series
+    # (which it does for any live match) we don't have a real
+    # `m["radiant_picks"]` to work with.  The Playwright-backed
+    # `dltv_browser` writes a `match_state` entry to the cache
+    # every 5s for every live row with a URL — overlay it on
+    # top of the empty `m` so the card shows real picks and
+    # score.  Falls back silently if the cache is empty (e.g.
+    # chromium binary missing in the container) — the card then
+    # just shows teams + event as before.
+    series_id = series.get("id")
+    if isinstance(series_id, int) and not (m.get("radiant_picks") or m.get("dire_picks")):
+        try:
+            from .dltv_browser import get_cached_match_state
+            cached_state = get_cached_match_state(series_id) or {}
+            ms_picks = cached_state.get("picks") or {}
+            ms_bans = cached_state.get("bans") or {}
+            # We don't have hero_ids from the DOM extraction, only
+            # names.  _picks_to_heroes needs an int hero_id to
+            # resolve via hero_by_dltv_id.  Try a name->hero_id
+            # lookup; if that fails the card still shows the
+            # names with a generic placeholder, which is strictly
+            # better than an empty draft.
+            r_pick_cards = _names_to_cards(ms_picks.get("radiant", []))
+            d_pick_cards = _names_to_cards(ms_picks.get("dire", []))
+            r_ban_cards = _names_to_cards(ms_bans.get("radiant", []))
+            d_ban_cards = _names_to_cards(ms_bans.get("dire", []))
+            if r_pick_cards or d_pick_cards:
+                # Build a synthetic map so the rest of the
+                # function uses the picked heroes directly.
+                m = {
+                    "radiant_picks": [{"hero_id": c.get("id"), "order": i,
+                                        "_steam_id": c.get("id")}
+                                       for i, c in enumerate(r_pick_cards)],
+                    "dire_picks":    [{"hero_id": c.get("id"), "order": i,
+                                        "_steam_id": c.get("id")}
+                                       for i, c in enumerate(d_pick_cards)],
+                    "radiant_bans":  [{"hero_id": c.get("id"), "order": i,
+                                        "_steam_id": c.get("id")}
+                                       for i, c in enumerate(r_ban_cards)],
+                    "dire_bans":     [{"hero_id": c.get("id"), "order": i,
+                                        "_steam_id": c.get("id")}
+                                       for i, c in enumerate(d_ban_cards)],
+                }
+                # If we have a real score, overlay it too.
+                if "radiant_score" in cached_state:
+                    m["radiant_score"] = cached_state["radiant_score"]
+                if "dire_score" in cached_state:
+                    m["dire_score"] = cached_state["dire_score"]
+        except Exception as exc:
+            log.debug("match-state overlay failed for %s: %s", series_id, exc)
+
     # figure out which side each team is on this map
     radiant_is_first = m.get("radiant_team_id") == first_id
     radiant_team = first if radiant_is_first else second

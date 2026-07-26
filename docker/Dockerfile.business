@@ -17,16 +17,22 @@ COPY pyproject.toml ./
 # makes setuptools scan all of them at build time.
 COPY gateway/ ./gateway/
 COPY business/ ./business/
-# `--no-deps` for our own wheel keeps xgboost from pulling the 303 MB
-# nvidia-nccl-cu12 GPU-only library (we run CPU-only).  Same `--no-deps`
-# for xgboost itself, since its declared deps include nvidia-nccl-cu12
-# for GPU support that we don't need.  We install the CPU runtime
-# deps (numpy/scipy) explicitly, then xgboost+sklearn+joblib skip
-# their GPU transitive deps.
+# Install in two stages to avoid the 303 MB nvidia-nccl-cu12 GPU
+# library that xgboost declares as a dependency.  We use --no-deps
+# for xgboost on the second pass; the first pass has already
+# pulled in numpy/scipy/etc., so the runtime is complete.
+#
+# v0.3.20: install Playwright + chromium for the live match-state
+# scraper.  DLTV's v1 API doesn't return in-progress series; the
+# only source for live picks/score is the rendered HTML page at
+# /matches/{series_id}/{slug}, which we fetch via Playwright.  The
+# chromium binary is 200 MB; it's the price of having real picks
+# on the board during a live game.
 RUN pip install --upgrade pip && \
-    pip install --no-deps . && \
-    pip install "scipy>=1.10" "numpy>=1.24" && \
-    pip install --no-deps "xgboost>=3.0" "scikit-learn>=1.3" "joblib>=1.3"
+    pip install . && \
+    pip install --force-reinstall --no-deps "xgboost>=3.0" && \
+    pip install "playwright>=1.40" && \
+    playwright install chromium --with-deps
 
 # Mount the ml_data/ directory at runtime; the image stays clean.
 RUN mkdir -p /app/ml_data && chown -R app:app /app

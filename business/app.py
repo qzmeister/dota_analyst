@@ -19,7 +19,7 @@ import asyncio
 import os
 import time
 from contextlib import asynccontextmanager
-from typing import List
+from typing import Any, Dict, List
 
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -46,28 +46,47 @@ setup_logging()
 log = get_logger(__name__)
 
 # --------------------------------------------------------------------------- #
-# Board cache (v0.3.14+)
+# Board cache (v0.3.14+, v0.3.22 cont 4: filter-on-auto-board)
 # --------------------------------------------------------------------------- #
 # `build_board()` walks DLTV events + the discovery scraper + Steam live
 # feed, which on cold cache can take 1-3 minutes (many sequential HTTP
 # calls each bounded by a 12s timeout).  We don't want a browser
 # request to wait that long.
 #
-# Strategy: SSE publisher calls `build_board()` every 5s and writes the
-# result here.  `/api/board` reads from this cache — if it's fresh, the
-# response is instant.  If it's stale (publisher loop is mid-build or
-# the process just started), we still trigger a fresh build but the
-# browser waits.  Subsequent requests always get the cached version.
+# Strategy:
+#   1. SSE publisher calls `build_board()` every 5s with NO filter
+#      (auto-includes all active leagues) and writes the result to
+#      `_latest_auto_board`.  The board is per-tick; if the publisher
+#      is stuck (e.g. upstream dltv.org is slow), the timestamp stops
+#      updating.
+#   2. `/api/board` reads from `_latest_auto_board` and FILTERS it
+#      server-side based on the `events=` query param.  No rebuild is
+#      triggered for filtered requests — the response is instant.
+#   3. Only if the auto-board is missing or too stale do we fall back
+#      to a single-flight `build_board()` (cold-start case).
 #
-# The publisher is the single owner of the cache; multiple workers
-# would race.  We use a simple dict + monotonic timestamp; a lock is
-# not needed because the writes happen from one coroutine and the
-# reads are tolerant of a 1-tick stale value.
+# v0.3.22 cont 4 motivation: earlier we triggered a fresh build for
+# every distinct `?events=...` selection.  When the publisher loop is
+# slow (chromium greenlet + dltv.org latency), this meant filtered
+# requests timed out at 25s and the user saw an empty board even
+# though the auto-board was full of relevant cards.  Filtering on
+# the already-built auto-board fixes that without changing the data
+# path.
 # --------------------------------------------------------------------------- #
 _BOARD_CACHE_TTL = 30.0   # if a board is older than this, refetch
 _board_cache: dict = {}    # cache_key -> (board, ts) — see /api/board
 _latest_auto_board: dict = {}   # board produced by SSE publisher (events=[], watch=[])
 _latest_auto_board_ts: float = 0.0
+# How long we consider the auto-board "fresh enough" to filter on.  If
+# the publisher loop is mid-build, the auto-board is still the LAST
+# successful build — usually 5-30s old, but can stretch to 60-120s
+# when dltv.org is slow (v0.3.22 cont 4: observed 60-90s per build
+# when DLTV's HTML scraper hangs at 12s × 30 leagues).  We accept up
+# to 5 minutes; beyond that, we'd rather try a fresh build than
+# serve cards that no longer match reality (a finished game is
+# still a finished game, but a 5-minute-stale live score is
+# actively misleading).
+_AUTO_BOARD_FILTER_MAX_AGE_SEC = 300.0
 
 # Single-flight for /api/board: when several requests miss the cache at
 # once, we want them to share one build_board() call rather than stampede
@@ -285,6 +304,16 @@ async def get_board(
     Future so concurrent misses share one upstream call.  And we
     always serve the publisher's `auto-board` for unfiltered requests,
     even if it's slightly stale — better stale data than a 504.
+
+    v0.3.22 cont 4: also serve the auto-board for FILTERED requests
+    by filtering it server-side.  The publisher's auto-board is built
+    without a filter (it includes every active league), so applying
+    the user's `events=` selection to it is a simple in-memory
+    `card.event_id in allowed_set` check per card.  This eliminates
+    the 25s "build timed out, empty board" failure mode when the
+    publisher is slow (chromium greenlet / dltv.org latency) — the
+    user still sees their selected leagues' cards, just from a
+    slightly older auto-board snapshot.
     """
     global _latest_auto_board, _latest_auto_board_ts
     ids: List[int] = []
@@ -319,24 +348,31 @@ async def get_board(
     if cached and (now - cached[1]) < _BOARD_CACHE_TTL:
         return JSONResponse(cached[0])
 
-    # 2. Unfiltered request — always serve the publisher's auto-board
-    #    if we have one, even if it's slightly older than _BOARD_CACHE_TTL.
-    #    Stale data is better than a 504; the next publisher tick will
-    #    refresh it within 5 seconds.
-    if not ids and not watch_ids and _latest_auto_board:
-        return JSONResponse(_latest_auto_board)
+    # 2. Auto-board path — instant for both filtered and unfiltered
+    #    requests.  The publisher's auto-board is built without a
+    #    filter; we apply the user's selection server-side.
+    auto = _latest_auto_board
+    if auto and (now - _latest_auto_board_ts) < _AUTO_BOARD_FILTER_MAX_AGE_SEC:
+        filtered = _filter_auto_board(auto, ids, watch_ids)
+        filtered["selected"] = ids
+        filtered["watch"] = watch_ids
+        # Cache the filtered result so the next request (within TTL)
+        # is a pure dict lookup.
+        _board_cache[cache_key] = (filtered, now)
+        return JSONResponse(filtered)
 
-    # 3. Cold path — single-flight build in a thread.
+    # 3. No auto-board (cold start) or auto-board is too stale — fall
+    #    through to a single-flight build.  This is the path that
+    #    used to handle ALL filtered requests and that's where the
+    #    25s timeouts came from.  We now hit this path only on the
+    #    very first request after process start, or when the
+    #    publisher loop is wedged.
     try:
         board = await asyncio.wait_for(
             _build_board_singletrip(cache_key, ids, watch_ids),
             timeout=25.0,  # under the nginx 30s proxy_read_timeout
         )
     except asyncio.TimeoutError:
-        # Build hung — fall back to whatever we have.  For an
-        # unfiltered request without any auto-board yet, return an
-        # empty board so the UI renders "no matches" instead of
-        # nginx returning 504.
         log.warning("/api/board build timed out (key=%s)", cache_key)
         if not ids and not watch_ids and _latest_auto_board:
             return JSONResponse(_latest_auto_board)
@@ -351,8 +387,6 @@ async def get_board(
         )
     except (BoardBuildError, MLError, DiscoveryError, UpstreamError, InfraError) as exc:
         log.warning("/api/board build failed: %s", exc, exc_info=True)
-        # Last-resort fallback: empty board so the UI shows "no matches"
-        # rather than a 500.
         if not ids and not watch_ids and _latest_auto_board:
             return JSONResponse(_latest_auto_board)
         return JSONResponse(
@@ -373,6 +407,57 @@ async def get_board(
         _latest_auto_board = board
         _latest_auto_board_ts = now
     return JSONResponse(board)
+
+
+def _filter_auto_board(
+    auto: Dict[str, Any],
+    event_ids: List[int],
+    watch_ids: List[int],
+) -> Dict[str, Any]:
+    """Apply the user's `events=` / `watch=` filter to the auto-board.
+
+    Mirrors the strict filter in `build_board()`:
+      - cards with `event_id` in `event_ids` always pass;
+      - cards with `event_id is None` (e.g. "Steam league 19479" with
+        no DLTV mapping) are dropped when the user has narrowed the
+        board to a specific set of leagues; they pass when the
+        request is unfiltered (no `event_ids`, no `watch_ids`);
+      - watchlist cards (matched by `match_id`) are kept
+        regardless of `event_id` — the user explicitly pinned them.
+
+    v0.3.22 cont 4: the entire filter is in-memory; no upstream calls
+    are made.  The auto-board is rebuilt every 5s by the publisher
+    loop, so the filter result is at most ~5s old.
+    """
+    allowed = set(int(x) for x in (event_ids or []))
+    watch_set = set(int(x) for x in (watch_ids or []))
+    has_filter = bool(allowed) or bool(watch_set)
+    # If the user has no filter at all, return the auto-board as-is
+    # (already a public-shaped dict).
+    if not has_filter:
+        return dict(auto)
+
+    def _keep(card: Dict[str, Any]) -> bool:
+        mid = card.get("match_id")
+        eid = card.get("event_id")
+        # Watchlist pins: always keep — user explicitly requested.
+        if mid is not None and int(mid) in watch_set:
+            return True
+        # No event_id (steam-only / unmapped scraper card): drop when
+        # the user has narrowed the board.  This matches the strict
+        # live filter in build_board() so server-side filtering and
+        # a fresh build behave identically.
+        if eid is None:
+            return False
+        return int(eid) in allowed
+
+    return {
+        "prematch": [c for c in (auto.get("prematch") or []) if _keep(c)],
+        "live":     [c for c in (auto.get("live") or [])     if _keep(c)],
+        "postmatch":[c for c in (auto.get("postmatch") or [])if _keep(c)],
+        "engine":   auto.get("engine"),
+        "filtered_from_auto": True,
+    }
 
 
 # ---------------------------------------------------------------------------- #

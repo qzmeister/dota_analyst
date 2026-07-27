@@ -585,6 +585,18 @@ function init() {
   $("refreshBtn").onclick = refresh;
   $("autoRefresh").onchange = () => { setupAutoRefresh(); if ($("autoRefresh").checked) startSSE(); else stopSSE(); };
 
+  // v0.3.22 cont 4: when the user comes back to a background tab,
+  // the page may have missed several auto-refresh ticks (browsers
+  // throttle setInterval in inactive tabs).  A visibilitychange
+  // → visible event forces an immediate refresh so the user
+  // doesn't stare at a stale "Обновлено 11:24" status for 30+
+  // minutes after switching back.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && $("autoRefresh").checked) {
+      refresh();
+    }
+  });
+
   renderWatchList();
   loadLeagues().then(refresh);
   setupAutoRefresh();

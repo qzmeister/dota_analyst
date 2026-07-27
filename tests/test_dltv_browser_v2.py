@@ -377,6 +377,24 @@ class TestFetchMatchStateIntegration:
         from business import dltv_browser
         page = _make_page(team_order_dire_first=True)
 
+        class _MockExecutor:
+            """Single-worker executor that runs synchronously (no thread)."""
+            def submit(self, fn, *args, **kwargs):
+                fut = _MockFut()
+                try:
+                    fut._result = fn(*args, **kwargs)
+                except Exception as e:
+                    fut._exc = e
+                return fut
+
+        class _MockFut:
+            _result = None
+            _exc = None
+            def result(self, timeout=None):
+                if self._exc is not None:
+                    raise self._exc
+                return self._result
+
         class _MockPW:
             def start(self):
                 TestFetchMatchStateIntegration._start_calls += 1
@@ -403,6 +421,10 @@ class TestFetchMatchStateIntegration:
                 return self._page
             def close(self):
                 pass
+            @property
+            def contexts(self):
+                # `_is_browser_alive()` probes this — must not raise.
+                return [self]
 
         class _Context:
             def new_page(self):
@@ -416,6 +438,7 @@ class TestFetchMatchStateIntegration:
         monkeypatch.setattr(dltv_browser, "PLAYER_WR_FETCH_TIMEOUT_MS", 5000)
         monkeypatch.setattr(dltv_browser, "_browser", None)
         monkeypatch.setattr(dltv_browser, "_playwright", None)
+        monkeypatch.setattr(dltv_browser, "_browser_executor", _MockExecutor())
         _Chromium._launch_calls = 0
 
         # Three sequential fetches should share the same browser.
@@ -437,6 +460,23 @@ class TestFetchMatchStateIntegration:
         # (we keep it alive for the whole process instead of using
         # the `with` context manager).  The mock needs to expose
         # `.start()` returning a manager-like object with `chromium`.
+        class _MockExecutor:
+            def submit(self, fn, *args, **kwargs):
+                fut = _MockFut()
+                try:
+                    fut._result = fn(*args, **kwargs)
+                except Exception as e:
+                    fut._exc = e
+                return fut
+
+        class _MockFut:
+            _result = None
+            _exc = None
+            def result(self, timeout=None):
+                if self._exc is not None:
+                    raise self._exc
+                return self._result
+
         class _MockPW:
             def start(self):
                 return self
@@ -459,6 +499,10 @@ class TestFetchMatchStateIntegration:
                 return self._page
             def close(self):
                 pass
+            @property
+            def contexts(self):
+                # `_is_browser_alive()` probes this — must not raise.
+                return [self]
 
         class _Context:
             def new_page(self):
@@ -476,6 +520,7 @@ class TestFetchMatchStateIntegration:
         # new shared-browser path each test.
         monkeypatch.setattr(dltv_browser, "_browser", None)
         monkeypatch.setattr(dltv_browser, "_playwright", None)
+        monkeypatch.setattr(dltv_browser, "_browser_executor", _MockExecutor())
 
         result = dltv_browser.fetch_match_state("https://dltv.org/matches/427526/example")
         # The result should have 5+5 picks

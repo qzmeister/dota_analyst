@@ -756,11 +756,19 @@ def build_board(event_ids: List[int], watch_ids: Optional[List[int]] = None) -> 
         if not title and ws.get("_steam_league_id"):
             title = f"Steam league {ws['_steam_league_id']}"
         title = title or "Live match"
-        # Filter live cards by selected leagues.  Cards with an unknown
-        # event_id (leagues not covered by /api/v1/events) pass through —
-        # the watchlist and the DLTV live card UI still handle them.
-        if has_filter and ws_eid is not None and int(ws_eid) not in allowed_events:
-            continue
+        # Filter live cards by selected leagues.  When the user has
+        # narrowed the board to a specific set of leagues, we apply
+        # the filter strictly — including matches with no resolvable
+        # event_id (steam-only / minor tournaments).  Earlier we let
+        # those pass through "in case they're a minor league the
+        # user cares about", but in practice that just leaks the
+        # user's selected set: a Russian Esports live match would
+        # show up next to the EPL matches the user actually asked
+        # for.  Watchlist cards are unaffected — they have their own
+        # filter logic that uses `allowed_events` symmetrically.
+        if has_filter:
+            if ws_eid is None or int(ws_eid) not in allowed_events:
+                continue
         stage = client.classify_stage(ws)
         try:
             if stage == "live":

@@ -91,9 +91,25 @@ PLAYER_WR_PAGE_LOAD_WAIT_MS = 3500
 # accumulating in the container and WSL ballooned to 16GB while
 # `docker stats` still showed 540MB (cgroup memory hides orphaned
 # subprocesses).  Sharing the browser fixes that.
+#
+# IMPORTANT: `sync_playwright` uses greenlet-based coroutines that
+# are bound to the thread that called `.start()`.  If a different
+# thread (e.g. another `asyncio.to_thread` worker) tries to use the
+# shared browser, it fails with `greenlet.error: Cannot switch to
+# a different thread` — even with a lock, because Playwright's
+# internal callbacks (e.g. response handlers) can fire on a
+# different thread than the one that called the API.
+#
+# Solution: every browser call goes through `_browser_executor` —
+# a single-worker ThreadPoolExecutor.  That guarantees the call
+# (and all of Playwright's internal callbacks) runs in the same
+# thread that started playwright.
+from concurrent.futures import ThreadPoolExecutor
 _playwright = None
 _browser = None
-_browser_lock = threading.Lock()
+_browser_lock = threading.Lock()       # protects browser creation
+_browser_executor: ThreadPoolExecutor = None  # single-worker executor
+_browser_executor_lock = threading.Lock()
 _browser_lock_pid = None  # last pid that touched the lock; for diagnostics
 
 
@@ -105,40 +121,81 @@ def _get_playwright():
     create per-fetch; the heavy bit (the chromium process tree)
     lives for the lifetime of the Python process and is closed at
     interpreter shutdown.
+
+    IMPORTANT: sync_playwright creates a greenlet bound to the
+    thread that called `.start()`.  We must initialize it on
+    the dedicated executor's worker thread so that all subsequent
+    `executor.submit(...)` calls run in the SAME thread.  If we
+    initialized on the calling thread, the worker thread would be
+    different and every call would fail with
+    "Cannot switch to a different thread".
     """
-    global _playwright, _browser, _browser_lock_pid
-    if _browser is not None and _playwright is not None:
+    global _playwright, _browser, _browser_lock_pid, _browser_executor
+    if _browser is not None and _playwright is not None and _browser_executor is not None and _is_browser_alive():
         return _playwright, _browser
     with _browser_lock:
-        if _browser is not None and _playwright is not None:
+        if _browser is not None and _playwright is not None and _browser_executor is not None and _is_browser_alive():
             return _playwright, _browser
-        _browser_lock_pid = os.getpid()
+        # 1. Create the executor FIRST (so its worker thread exists).
+        with _browser_executor_lock:
+            if _browser_executor is None:
+                _browser_executor = ThreadPoolExecutor(
+                    max_workers=1,
+                    thread_name_prefix="dltv_browser-fetch",
+                )
+        # 2. Run the actual init on the executor's worker thread —
+        #    this is what binds the greenlet to the right thread.
         try:
-            from playwright.sync_api import sync_playwright
-        except ImportError:
-            log.warning("dltv_browser: playwright not installed — live player.win_rate disabled")
-            return None
-        try:
-            _playwright = sync_playwright().start()
-            _browser = _playwright.chromium.launch(headless=True)
-            log.info("dltv_browser: shared chromium launched (pid=%s)", os.getpid())
-            # Kick off the zombie reaper — the chromium helper
-            # subprocesses can outlive the browser and become
-            # zombies of PID 1 (us in the container namespace).
-            _ensure_zombie_reaper()
-            return _playwright, _browser
+            init_fut = _browser_executor.submit(_init_playwright_on_worker)
+            _playwright, _browser = init_fut.result(timeout=30.0)
         except Exception as exc:
             log.warning("dltv_browser: chromium launch failed: %s", exc)
-            # If we got the playwright manager but launch failed,
-            # stop it so we don't leak the driver process.
-            if _playwright is not None:
-                try:
-                    _playwright.stop()
-                except Exception:
-                    pass
-                _playwright = None
-            _browser = None
             return None
+        log.info("dltv_browser: shared chromium launched (single-process, on executor)")
+        _ensure_zombie_reaper()
+        return _playwright, _browser
+
+
+def _init_playwright_on_worker():
+    """Initialize playwright + chromium on the executor's worker thread.
+
+    Runs INSIDE the single-worker ThreadPoolExecutor, so the
+    greenlet that sync_playwright.start() creates is bound to
+    that worker thread.  Every later `executor.submit(...)` then
+    runs on the same thread, which is what makes the greenlet
+    "thread affinity" work.
+
+    `--single-process` was tempting (no subprocess leak) but
+    proved unstable: a single render error kills the whole
+    chromium.  We use the normal multi-process model + the
+    per-fetch `browser.new_context()` boundary for the leak fix
+    (see context.close() notes) and a defensive relaunch in
+    `_get_playwright()` if the browser died.
+    """
+    global _playwright, _browser
+    from playwright.sync_api import sync_playwright
+    _playwright = sync_playwright().start()
+    _browser = _playwright.chromium.launch(
+        headless=True,
+        args=["--no-sandbox", "--disable-dev-shm-usage"],
+    )
+    return _playwright, _browser
+
+
+def _is_browser_alive() -> bool:
+    """Return True if the cached browser is still usable.
+
+    Chromium in single-process mode dies on the first tab error;
+    even multi-process chromium can crash if a renderer segfaults.
+    Cheap probe: ask for `contexts` (raises on closed browser).
+    """
+    if _browser is None:
+        return False
+    try:
+        _ = _browser.contexts
+        return True
+    except Exception:
+        return False
 
 
 def _shutdown_playwright() -> None:
@@ -329,6 +386,23 @@ def fetch_player_winrates(url: str) -> Dict[str, float]:
         from playwright.sync_api import TimeoutError as PWTimeout
     except ImportError as exc:
         raise DiscoveryError(f"playwright not installed: {exc}")
+
+    # Run the whole fetch in the dedicated single-worker executor
+    # so playwright's internal callbacks all run on the same
+    # thread that started the browser.  Without this, asyncio's
+    # default ThreadPoolExecutor can pick a different worker per
+    # call and we hit "Cannot switch to a different thread".
+    if _browser_executor is None:
+        raise DiscoveryError("browser executor not initialized")
+    fut = _browser_executor.submit(
+        _fetch_player_winrates_inner, browser, url
+    )
+    return fut.result(timeout=PLAYER_WR_FETCH_TIMEOUT_MS / 1000.0 + 30.0)
+
+
+def _fetch_player_winrates_inner(browser, url: str) -> Dict[str, float]:
+    """Inner fetch — runs on the dedicated playwright thread."""
+    from playwright.sync_api import TimeoutError as PWTimeout
 
     rates: Dict[str, float] = {}
     context = None
@@ -777,10 +851,17 @@ def fetch_match_state(url: str) -> Dict[str, Any]:
     if pw is None:
         raise DiscoveryError("playwright not available")
     _playwright_ctx, browser = pw
-    try:
-        from playwright.sync_api import TimeoutError as PWTimeout
-    except ImportError as exc:
-        raise DiscoveryError(f"playwright not installed: {exc}")
+    if _browser_executor is None:
+        raise DiscoveryError("browser executor not initialized")
+    fut = _browser_executor.submit(
+        _fetch_match_state_inner, browser, url
+    )
+    return fut.result(timeout=PLAYER_WR_FETCH_TIMEOUT_MS / 1000.0 + 30.0)
+
+
+def _fetch_match_state_inner(browser, url: str) -> Dict[str, Any]:
+    """Inner fetch — runs on the dedicated playwright thread."""
+    from playwright.sync_api import TimeoutError as PWTimeout
 
     state: Dict[str, Any] = {}
     context = None

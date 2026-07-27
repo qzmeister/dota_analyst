@@ -180,20 +180,44 @@ class TestBoard:
         assert body["engine"] in ("heuristic", "ml")
 
     def test_board_event_ids_dedup_and_parse(self, client, monkeypatch):
-        captured: Dict[str, Any] = {}
+        # v0.3.22 cont 4: filtered requests are served from the
+        # auto-board (filtered server-side), so build_board is NOT
+        # called for them.  We seed the auto-board with a known
+        # shape and assert the dedup + parse logic happens on the
+        # `events=` query string.
+        from business import app as _app
+        _app._latest_auto_board = {
+            "prematch": [
+                {"event_id": 1, "event": "A", "team_a": {"name": "a"}, "team_b": {"name": "b"}},
+                {"event_id": 2, "event": "B", "team_a": {"name": "a"}, "team_b": {"name": "b"}},
+                {"event_id": 3, "event": "C", "team_a": {"name": "a"}, "team_b": {"name": "b"}},
+                # duplicate of eid=1 (should pass filter; not in user filter though)
+                {"event_id": 1, "event": "A", "team_a": {"name": "a"}, "team_b": {"name": "b"}},
+                # unmapped (eid=None) — should be dropped when there's a filter
+                {"event_id": None, "event": "Steam league 99", "team_a": {"name": "a"}, "team_b": {"name": "b"}},
+            ],
+            "live": [],
+            "postmatch": [],
+            "engine": "ml",
+        }
+        import time as _t
+        _app._latest_auto_board_ts = _t.monotonic()
 
-        def _stub(ids, watch_ids=None, **kwargs):
-            captured["event_ids"] = ids
-            captured["watch_ids"] = watch_ids
-            return {"prematch": [], "live": [], "postmatch": []}
-
-        monkeypatch.setattr("business.app.build_board", _stub)
-        # Pass `events=1,2,2,3` and `watch=4,4,5`; both should
-        # dedup and parse to ints.
         r = client.get("/api/board?events=1,2,2,3&watch=4,4,5")
         assert r.status_code == 200
-        assert captured["event_ids"] == [1, 2, 3]
-        assert captured["watch_ids"] == [4, 5]
+        body = r.json()
+        # The user's `events=1,2,2,3` is deduped to [1, 2, 3] and
+        # reflected in `selected`.  Each requested event_id is
+        # present at least once in the cards (the auto-board
+        # itself has 4 in-set cards + 1 unmapped).
+        eids = [c["event_id"] for c in body["prematch"]]
+        for want in (1, 2, 3):
+            assert want in eids, f"missing eid={want}: {eids}"
+        # Unmapped cards (eid=None) are dropped when the user has
+        # narrowed the board — that's the strict live filter.
+        assert None not in eids
+        assert body["selected"] == [1, 2, 3]
+        assert body["watch"] == [4, 5]
 
 
 # --------------------------------------------------------------------------- #

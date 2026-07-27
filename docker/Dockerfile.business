@@ -32,6 +32,10 @@ RUN pip install --upgrade pip && \
     pip install . && \
     pip install --force-reinstall --no-deps "xgboost>=3.0" && \
     pip install "playwright>=1.40" && \
+    # v0.3.23: use the npmmirror.com Playwright mirror to avoid
+    # the storage.googleapis.com timeout (5 attempts, 30s each =
+    # ~150s wasted).  The mirror serves the same binaries.
+    PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright \
     playwright install chromium --with-deps && \
     # Playwright's `install` writes to $HOME/.cache/ms-playwright as
     # root; the runtime runs as `app` with HOME=/app.  The env

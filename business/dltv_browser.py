@@ -616,23 +616,145 @@ def _read_heroes_from_window(page) -> Dict[str, Dict[str, Any]]:
     return out
 
 
+def _read_live_state_from_scoreboard(page) -> Dict[str, Any]:
+    """Read picks, bans, scores, time, teams from the live scoreboard
+    and the page's own `radiant_picks` / `dire_picks` JS state.
+
+    v0.3.23: DLTV redesigned the match page for the third time.  The
+    `.map__finished-v2` block is gone — DLTV now renders the in-progress
+    game inside `#live_scoreboard` and updates the picks/score via a
+    socket.io connection (`__nd2_match_{steam_id}` channel) which
+    populates the page's `radiant_picks` / `dire_picks` global arrays
+    on every tick.  This extractor reads BOTH sources:
+
+      1. **`radiant_picks` / `dire_picks` page globals** (real-time):
+         - populated by DLTV's own `handleGame(result)` callback
+         - updated on every socket.io event (real-time, no API lag)
+         - each pick is `{id, steam_id, title, slug, image, ...}`
+
+      2. **`#live_scoreboard` DOM** (locale-independent CSS classes):
+         - team names / sides from `.team__title-name` (the `.side` element
+           has CSS class `radiant` or `dire` — text content is translated
+           but the classes are not)
+         - kills from `.team__scores-kills` (one per team)
+         - game time from `.info__duration[data-game-time]` (in seconds)
+
+    The function is called via `page.evaluate()` and returns a plain
+    JSON-serialisable dict, so we get the data at the same speed the
+    page is rendering it.
+    """
+    out: Dict[str, Any] = {
+        "picks": {"radiant": [], "dire": []},
+        "bans": {"radiant": [], "dire": []},
+        "team_order": [],
+        "radiant_score": None,
+        "dire_score": None,
+        "game_time": None,
+    }
+    try:
+        data = page.evaluate(
+            """() => {
+                const out = {
+                    picks: { radiant: [], dire: [] },
+                    bans: { radiant: [], dire: [] },
+                    team_order: [],
+                    radiant_score: null,
+                    dire_score: null,
+                    game_time: null,
+                    teams: [],
+                };
+                const sb = document.getElementById('live_scoreboard');
+                if (!sb) return null;
+                // Teams: pull from the .team divs (in DOM order —
+                // DLTV puts the left-side team first).
+                const teamEls = Array.from(sb.querySelectorAll('.team')).slice(0, 2);
+                const teams = teamEls.map((t) => {
+                    const nameEl = t.querySelector('.team__title-name .name');
+                    const sideEl = t.querySelector('.team__title-name .side');
+                    const killsEl = t.querySelector('.team__scores-kills');
+                    // The .side element has CSS classes 'side radiant'
+                    // or 'side dire' — locale-independent.
+                    let sideKind = 'unknown';
+                    if (sideEl) {
+                        if (sideEl.classList.contains('radiant')) sideKind = 'radiant';
+                        else if (sideEl.classList.contains('dire')) sideKind = 'dire';
+                    }
+                    return {
+                        name: nameEl ? (nameEl.textContent || '').trim() : '',
+                        side_kind: sideKind,
+                        kills: killsEl ? parseInt((killsEl.textContent || '0').trim(), 10) || 0 : null,
+                    };
+                });
+                out.teams = teams;
+                out.team_order = teams.map((t) => t.side_kind);
+                if (teams.length >= 1) out.radiant_score = teams[0].kills;
+                if (teams.length >= 2) out.dire_score = teams[1].kills;
+                // Game time in seconds (data-game-time is a stable
+                // int on the .info__duration element).
+                const durEl = sb.querySelector('.info__duration');
+                if (durEl) {
+                    const t = durEl.getAttribute('data-game-time');
+                    if (t) out.game_time = parseInt(t, 10) || null;
+                }
+                // Picks: read from the page's own globals
+                // (`radiant_picks` / `dire_picks` are populated by
+                // the socket.io `__nd2_match_*` handler).  We also
+                // fall back to `get_picks_from_live_map` for older
+                // page versions.
+                const sideMap = (s) => {
+                    if (!s) return 'unknown';
+                    const x = String(s).toLowerCase();
+                    if (x === 'radiant' || x === '1') return 'radiant';
+                    if (x === 'dire' || x === '0' || x === '2') return 'dire';
+                    return 'unknown';
+                };
+                if (typeof radiant_picks !== 'undefined' && Array.isArray(radiant_picks)) {
+                    const rSide = teamEls.length > 0 ? sideMap(teamEls[0].querySelector('.team__title-name .side')?.classList.contains('radiant') ? 'radiant' : 'dire') : 'radiant';
+                    out.picks[rSide] = radiant_picks.map((p) => ({
+                        hero_id: p.id, steam_id: p.steam_id,
+                        name: p.title, slug: p.slug, image: p.image,
+                    }));
+                }
+                if (typeof dire_picks !== 'undefined' && Array.isArray(dire_picks)) {
+                    const dSide = teamEls.length > 1 ? sideMap(teamEls[1].querySelector('.team__title-name .side')?.classList.contains('radiant') ? 'radiant' : 'dire') : 'dire';
+                    out.picks[dSide] = dire_picks.map((p) => ({
+                        hero_id: p.id, steam_id: p.steam_id,
+                        name: p.title, slug: p.slug, image: p.image,
+                    }));
+                }
+                return out;
+            }"""
+        )
+    except Exception as exc:
+        log.debug("dltv_browser: _read_live_state_from_scoreboard failed: %s", exc)
+        return out
+    if not isinstance(data, dict):
+        return out
+    out["picks"] = data.get("picks") or {"radiant": [], "dire": []}
+    out["bans"] = data.get("bans") or {"radiant": [], "dire": []}
+    out["team_order"] = data.get("team_order") or []
+    out["radiant_score"] = data.get("radiant_score")
+    out["dire_score"] = data.get("dire_score")
+    out["game_time"] = data.get("game_time")
+    teams = data.get("teams") or []
+    out["team_names"] = [(t.get("name") or "") for t in teams]
+    out["team_sides"] = [t.get("side_kind") or "unknown" for t in teams]
+    return out
+
+
 def _read_map_block_from_dom(page) -> Dict[str, Any]:
-    """Read picks, bans, scores, time, teams from `.map__finished-v2`.
+    """LEGACY: read picks, bans, scores, time, teams from `.map__finished-v2`.
 
-    DLTV's current live page renders the in-progress game inside
-    a `.map__finished-v2` block (the class name is a legacy from
-    when DLTV only showed finished maps; they kept the class when
-    they added the live version).  Inside it:
+    v0.3.22 wrote this for an older DLTV layout where the in-progress
+    game was rendered inside a `.map__finished-v2` block.  v0.3.23
+    replaced this with `_read_live_state_from_scoreboard` (which reads
+    from `#live_scoreboard` and the page's own `live_map` JS state).
+    This function is kept as a fallback for older DLTV versions or
+    non-hydrated pages where the new selectors haven't been populated
+    yet.
 
-      .team (2 of them) → .team__title-name (name + side)
-                        → .team__scores-kills (per-game kills)
-      .duration b       → game time "MM:SS"
-      .pick (5+5=10)    → real picks, .pick__image is the hero
-      .pick-sm          → secondary (smaller) picks, NOT used
-      .ban (5+5=10, sometimes 12-14) → bans, .ban__image is the hero
-
-    The hero is identified by the image URL hash; the lookup
-    table comes from `window.__heroes` (see _read_heroes_from_window).
+    Hero identification uses the image URL hash; the lookup table
+    comes from `window.__heroes` (see _read_heroes_from_window).
 
     Picks come out in DOM order: first the team rendered first in
     the header (left side in DLTV's UI), then the other team.
@@ -668,11 +790,6 @@ def _read_map_block_from_dom(page) -> Dict[str, Any]:
                 const teamEls = Array.from(map.querySelectorAll('.team__title'));
                 const teams = teamEls.slice(0, 2).map(t => {
                     const name = t.querySelector('.name');
-                    // Pull the side from the .side element's classList
-                    // — class names are locale-independent ('side dire'
-                    // / 'side radiant'), unlike the text content which
-                    // gets translated into the user's locale (Russian,
-                    // German, Chinese, ...).
                     const side = t.querySelector('.side');
                     let side_kind = 'unknown';
                     if (side) {
@@ -875,12 +992,23 @@ def _fetch_match_state_inner(browser, url: str) -> Dict[str, Any]:
         except PWTimeout:
             raise DiscoveryError(f"goto timeout: {url}")
         page.wait_for_timeout(PLAYER_WR_PAGE_LOAD_WAIT_MS)
-        # v0.3.22: the new DLTV layout puts the entire live
-        # state inside `.map__finished-v2` with image-hash
-        # hero references resolved via `window.__heroes`.
-        # Skip the React-payload walk (no longer works) and
-        # go straight to the DOM read.
-        state = _read_map_block_from_dom(page)
+        # v0.3.23: DLTV redesigned the live page for the third time
+        # in 24h.  The new layout puts the in-progress game inside
+        # `#live_scoreboard` and computes picks/bans via JS, exposing
+        # the result through the page's own `get_picks_from_live_map`
+        # function.  This is the primary extractor — it gives us
+        # real-time data at the same speed the page renders it,
+        # without the API delay.
+        state = _read_live_state_from_scoreboard(page)
+        # Fallback: v0.3.22's `.map__finished-v2` extractor still
+        # works on older page versions or pages that haven't fully
+        # hydrated.  Use it when the new extractor returns empty.
+        if (not state.get("picks", {}).get("radiant")
+                and not state.get("picks", {}).get("dire")
+                and state.get("radiant_score") is None):
+            legacy = _read_map_block_from_dom(page)
+            if legacy:
+                state.update({k: v for k, v in legacy.items() if v})
         # Last-resort fallback: body-text scan if scores/time
         # are still missing (older page versions, pre-hydration).
         if state.get("radiant_score") is None or state.get("game_time") is None:

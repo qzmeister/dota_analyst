@@ -106,16 +106,16 @@ def _make_page(*, team_order_dire_first: bool, scores=("6", "35"), time_str="36:
     returned by the JS evaluation in the same shape the real
     `evaluate()` block in `_read_map_block_from_dom` produces.
     """
-    # Build the team list with side text
+    # Build the team list with side_kind (locale-independent).
     if team_order_dire_first:
         teams = [
-            {"name": "Team Jenz", "side": "Силы тьмы"},
-            {"name": "Team Syntax", "side": "Силы Света"},
+            {"name": "Team Jenz", "side_kind": "dire"},
+            {"name": "Team Syntax", "side_kind": "radiant"},
         ]
     else:
         teams = [
-            {"name": "Team Syntax", "side": "Силы Света"},
-            {"name": "Team Jenz", "side": "Силы тьмы"},
+            {"name": "Team Syntax", "side_kind": "radiant"},
+            {"name": "Team Jenz", "side_kind": "dire"},
         ]
 
     page_data = {
@@ -161,8 +161,11 @@ def _make_page(*, team_order_dire_first: bool, scores=("6", "35"), time_str="36:
 
 
 class TestReadHeroesFromWindow:
-    def test_parses_heroes(self):
-        from business import dltv_browser
+    def test_parses_heroes(self, monkeypatch):
+        from business import dltv_client, dltv_browser
+        # Stub the project-local hero index so the fallback path is
+        # empty (we test the window.__heroes path in isolation).
+        monkeypatch.setattr(dltv_client.client, "get_heroes", lambda: [])
         page = _MockPage(
             {"window.__heroes": json.dumps(HEROES)},
             {},
@@ -176,13 +179,37 @@ class TestReadHeroesFromWindow:
         assert "ANTIMAGE_HASH" in result
         assert result["ANTIMAGE_HASH"]["steam_id"] == 1
 
-    def test_returns_empty_when_no_heroes(self):
-        from business import dltv_browser
+    def test_falls_back_to_client_get_heroes(self, monkeypatch):
+        """If `window.__heroes` is not embedded, the local DLTVClient
+        hero index is used as a fallback.  Both share the same image
+        URL, so the hash -> hero lookup works identically.
+        """
+        from business import dltv_client, dltv_browser
+        monkeypatch.setattr(
+            dltv_client.client, "get_heroes",
+            lambda: [
+                {"id": 45, "steam_id": 46, "title": "Templar Assassin",
+                 "image": "/uploads/heroes/TA_HASH.png"},
+                {"id": 1, "steam_id": 1, "title": "Anti-Mage",
+                 "image": "/uploads/heroes/ANTIMAGE_HASH.png"},
+            ],
+        )
+        page = _MockPage({"window.__heroes": None}, {})
+        result = dltv_browser._read_heroes_from_window(page)
+        assert "TA_HASH" in result
+        assert result["TA_HASH"]["title"] == "Templar Assassin"
+        assert "ANTIMAGE_HASH" in result
+
+    def test_returns_empty_when_no_heroes(self, monkeypatch):
+        from business import dltv_client, dltv_browser
+        # Both paths empty
+        monkeypatch.setattr(dltv_client.client, "get_heroes", lambda: [])
         page = _MockPage({"window.__heroes": None}, {})
         assert dltv_browser._read_heroes_from_window(page) == {}
 
-    def test_returns_empty_on_garbage(self):
-        from business import dltv_browser
+    def test_returns_empty_on_garbage(self, monkeypatch):
+        from business import dltv_client, dltv_browser
+        monkeypatch.setattr(dltv_client.client, "get_heroes", lambda: [])
         page = _MockPage({"window.__heroes": "not json"}, {})
         assert dltv_browser._read_heroes_from_window(page) == {}
 
@@ -243,8 +270,8 @@ class TestReadMapBlockFromDom:
             "scores": ["1", "2"],
             "time": "10:00",
             "teams": [
-                {"name": "Alpha", "side": "???"},
-                {"name": "Beta", "side": "???"},
+                {"name": "Alpha", "side_kind": "unknown"},
+                {"name": "Beta", "side_kind": "unknown"},
             ],
         }
         page = _MockPage(
@@ -283,24 +310,138 @@ class TestReadMapBlockFromDom:
         result = dltv_browser._read_map_block_from_dom(page)
         assert result["picks"] == {"radiant": [], "dire": []}
 
+    def test_locale_independent_side_detection(self):
+        """The extractor must work even when DLTV shows a non-English
+        locale for the side text (e.g. German 'Dunkelheit'/'Strahlend'
+        instead of Russian 'Силы тьмы'/'Силы Света').  Side detection
+        relies on the .side classList ('side dire' / 'side radiant'),
+        not on the text content.
+        """
+        from business import dltv_browser
+        # The data is identical to the dire-first test, except the
+        # JS now returns side_kind directly (which the page extracts
+        # from .side.classList before sending back).
+        page_data = {
+            "picks": [
+                "/uploads/heroes/TA_HASH.png",   # dire
+                "/uploads/heroes/SNAP_HASH.png",
+                "/uploads/heroes/ANTIMAGE_HASH.png",
+                "/uploads/heroes/RUBICK_HASH.png",
+                "/uploads/heroes/CLOCK_HASH.png",
+                "/uploads/heroes/BANE_HASH.png",  # radiant
+                "/uploads/heroes/AXE_HASH.png",
+                "/uploads/heroes/ANTIMAGE_HASH.png",
+                "/uploads/heroes/SNAP_HASH.png",
+                "/uploads/heroes/TA_HASH.png",
+            ],
+            "bans": ["/uploads/heroes/AXE_HASH.png"] * 10,
+            "scores": ["12", "34"],
+            "time": "20:00",
+            "teams": [
+                # No text — purely class-based
+                {"name": "Dunkelheit-Team", "side_kind": "dire"},
+                {"name": "Strahlend-Team", "side_kind": "radiant"},
+            ],
+        }
+        page = _MockPage(
+            {"window.__heroes": json.dumps(HEROES), ".map__finished-v2": page_data},
+            {},
+        )
+        result = dltv_browser._read_map_block_from_dom(page)
+        assert result["team_order"] == ["dire", "radiant"]
+        # Score: scores[0]=12 (DOM team 1 = dire), scores[1]=34 (DOM team 2 = radiant)
+        assert result["dire_score"] == 12
+        assert result["radiant_score"] == 34
+        # 5 picks each side
+        assert len(result["picks"]["dire"]) == 5
+        assert len(result["picks"]["radiant"]) == 5
+        # First dire pick is TA, first radiant pick is Bane
+        assert result["picks"]["dire"][0]["name"] == "Templar Assassin"
+        assert result["picks"]["radiant"][0]["name"] == "Bane"
+
 
 class TestFetchMatchStateIntegration:
     """End-to-end: spin up a mocked `sync_playwright` and verify the
     `fetch_match_state` glue.  The actual `page.goto` is intercepted
     via the same `_MockPage` mechanism."""
 
+    def test_reuses_shared_browser_across_fetches(self, monkeypatch):
+        """v0.3.22: the playwright context + chromium are created
+        once and reused.  Earlier code spun up a new chromium for
+        every call — which leaked ~20 subprocesses per fetch and
+        ballooned WSL memory to 16GB after a few hours.
+
+        Verify the launcher is called at most once even when we
+        fetch multiple times in a row.
+        """
+        from business import dltv_browser
+        page = _make_page(team_order_dire_first=True)
+
+        class _MockPW:
+            def start(self):
+                TestFetchMatchStateIntegration._start_calls += 1
+                return self
+            def stop(self):
+                pass
+            @property
+            def chromium(self):
+                return _Chromium()
+        TestFetchMatchStateIntegration._start_calls = 0
+
+        class _Chromium:
+            _launch_calls = 0
+            def launch(self, **kw):
+                _Chromium._launch_calls += 1
+                return _Browser(page)
+
+        class _Browser:
+            def __init__(self, page):
+                self._page = page
+            def new_context(self):
+                return _Context()
+            def new_page(self):
+                return self._page
+            def close(self):
+                pass
+
+        class _Context:
+            def new_page(self):
+                return page
+            def close(self):
+                pass
+
+        import playwright.sync_api as psa
+        monkeypatch.setattr(psa, "sync_playwright", _MockPW)
+        monkeypatch.setattr(dltv_browser, "PLAYER_WR_PAGE_LOAD_WAIT_MS", 0)
+        monkeypatch.setattr(dltv_browser, "PLAYER_WR_FETCH_TIMEOUT_MS", 5000)
+        monkeypatch.setattr(dltv_browser, "_browser", None)
+        monkeypatch.setattr(dltv_browser, "_playwright", None)
+        _Chromium._launch_calls = 0
+
+        # Three sequential fetches should share the same browser.
+        for i in range(3):
+            dltv_browser.fetch_match_state(f"https://dltv.org/matches/{i}/x")
+        assert TestFetchMatchStateIntegration._start_calls == 1, (
+            f"playwright.start() was called {TestFetchMatchStateIntegration._start_calls} times, expected 1"
+        )
+        assert _Chromium._launch_calls == 1, (
+            f"chromium.launch() was called {_Chromium._launch_calls} times, expected 1"
+        )
+
     def test_fetch_returns_extracted_state(self, monkeypatch):
         from business import dltv_browser
         page = _make_page(team_order_dire_first=True)
 
-        # Build a mock sync_playwright that yields our `_MockPage`
+        # Build a mock sync_playwright that yields our `_MockPage`.
+        # v0.3.22: the playwright context is now started via `.start()`
+        # (we keep it alive for the whole process instead of using
+        # the `with` context manager).  The mock needs to expose
+        # `.start()` returning a manager-like object with `chromium`.
         class _MockPW:
-            def __init__(self):
-                pass
-            def __enter__(self):
+            def start(self):
                 return self
-            def __exit__(self, *a):
-                return False
+            def stop(self):
+                pass
             @property
             def chromium(self):
                 return _Chromium()
@@ -312,8 +453,16 @@ class TestFetchMatchStateIntegration:
         class _Browser:
             def __init__(self, page):
                 self._page = page
+            def new_context(self):
+                return _Context()
             def new_page(self):
                 return self._page
+            def close(self):
+                pass
+
+        class _Context:
+            def new_page(self):
+                return page
             def close(self):
                 pass
 
@@ -323,6 +472,10 @@ class TestFetchMatchStateIntegration:
         monkeypatch.setattr(dltv_browser, "PLAYER_WR_PAGE_LOAD_WAIT_MS", 0)
         # Don't actually wait
         monkeypatch.setattr(dltv_browser, "PLAYER_WR_FETCH_TIMEOUT_MS", 5000)
+        # Reset the module-level browser cache so we go through the
+        # new shared-browser path each test.
+        monkeypatch.setattr(dltv_browser, "_browser", None)
+        monkeypatch.setattr(dltv_browser, "_playwright", None)
 
         result = dltv_browser.fetch_match_state("https://dltv.org/matches/427526/example")
         # The result should have 5+5 picks

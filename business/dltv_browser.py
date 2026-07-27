@@ -50,6 +50,7 @@ back to whatever DLTV v1 / Steam supplied.
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import re
@@ -81,34 +82,145 @@ PLAYER_WR_PAGE_LOAD_WAIT_MS = 3500
 # Lazy playwright import.  We don't want a hard dependency at
 # business.app import time — only when /api/board or the publisher
 # actually needs player.win_rate from a live page.
+#
+# v0.3.22: we keep a single long-lived Playwright context + browser
+# instance for the whole process.  Earlier code created a new
+# `sync_playwright()` context (and a fresh chromium with ~20 helper
+# processes) for every fetch — the publisher loop runs every 30s,
+# so after a few hours we had 2-3k `chrome-headless` PIDs
+# accumulating in the container and WSL ballooned to 16GB while
+# `docker stats` still showed 540MB (cgroup memory hides orphaned
+# subprocesses).  Sharing the browser fixes that.
 _playwright = None
-_playwright_lock = threading.Lock()
 _browser = None
 _browser_lock = threading.Lock()
+_browser_lock_pid = None  # last pid that touched the lock; for diagnostics
 
 
-def _get_browser():
-    """Return a process-wide Playwright browser, or None if unavailable.
+def _get_playwright():
+    """Return a process-wide Playwright + Chromium, or None if unavailable.
 
-    We hold a single browser instance and create per-call pages from
-    it.  Closing the browser kills all pages, so we let the GC handle
-    it on process exit.
+    The first caller pays the launch cost (~3s for cold chromium);
+    subsequent callers reuse the same browser.  Pages are cheap to
+    create per-fetch; the heavy bit (the chromium process tree)
+    lives for the lifetime of the Python process and is closed at
+    interpreter shutdown.
     """
-    global _browser
-    if _browser is not None:
-        return _browser
+    global _playwright, _browser, _browser_lock_pid
+    if _browser is not None and _playwright is not None:
+        return _playwright, _browser
     with _browser_lock:
-        if _browser is not None:
-            return _browser
+        if _browser is not None and _playwright is not None:
+            return _playwright, _browser
+        _browser_lock_pid = os.getpid()
         try:
-            from playwright.sync_api import sync_playwright  # noqa: F401
+            from playwright.sync_api import sync_playwright
         except ImportError:
             log.warning("dltv_browser: playwright not installed — live player.win_rate disabled")
             return None
-        # We can't keep a sync_playwright context open across calls
-        # because it's not thread-safe; the caller is expected to be
-        # the single thread that polls the cache.
-        return None  # caller opens its own context
+        try:
+            _playwright = sync_playwright().start()
+            _browser = _playwright.chromium.launch(headless=True)
+            log.info("dltv_browser: shared chromium launched (pid=%s)", os.getpid())
+            # Kick off the zombie reaper — the chromium helper
+            # subprocesses can outlive the browser and become
+            # zombies of PID 1 (us in the container namespace).
+            _ensure_zombie_reaper()
+            return _playwright, _browser
+        except Exception as exc:
+            log.warning("dltv_browser: chromium launch failed: %s", exc)
+            # If we got the playwright manager but launch failed,
+            # stop it so we don't leak the driver process.
+            if _playwright is not None:
+                try:
+                    _playwright.stop()
+                except Exception:
+                    pass
+                _playwright = None
+            _browser = None
+            return None
+
+
+def _shutdown_playwright() -> None:
+    """Best-effort cleanup at interpreter shutdown.
+
+    Called from `atexit` so we don't leave a chromium process tree
+    behind on a clean Python exit.  Each helper subprocess takes
+    ~30MB of WSL virtual memory even when idle, so we want every
+    exit path to release them.
+    """
+    global _playwright, _browser
+    if _browser is not None:
+        try:
+            _browser.close()
+        except Exception:
+            pass
+        _browser = None
+    if _playwright is not None:
+        try:
+            _playwright.stop()
+        except Exception:
+            pass
+        _playwright = None
+
+
+atexit.register(_shutdown_playwright)
+
+
+def _zombie_reaper_loop(interval_sec: float = 5.0) -> None:
+    """Best-effort zombie reaper.
+
+    v0.3.22: chromium's helper subprocesses (renderer, GPU, V8
+    workers) sometimes outlive the browser process — when that
+    happens they get reparented to PID 1 (us, in the container
+    PID namespace) and become zombies that nobody reaps.  Without
+    this we'd hit `pid_max` in a few hours and the container
+    stops forking.
+
+    The fix: as PID 1, we can call `waitpid(-1, WNOHANG)` and
+    reap any zombie in our namespace.  This is harmless to our
+    own children — those are waited on normally by their
+    respective parents (uvicorn for workers, etc.).
+
+    Runs in a daemon thread; started lazily on the first browser
+    launch (no point running if playwright is never used).
+    """
+    while True:
+        try:
+            # Drain ALL zombies in our namespace, then sleep.
+            while True:
+                try:
+                    pid, _ = os.waitpid(-1, os.WNOHANG)
+                except ChildProcessError:
+                    # No more zombies to reap right now.
+                    break
+                except Exception:
+                    # If waitpid fails for any reason, stop and
+                    # try again next interval.
+                    break
+                if pid == 0:
+                    break
+        finally:
+            time.sleep(interval_sec)
+
+
+_reaper_thread_started = False
+_reaper_lock = threading.Lock()
+
+
+def _ensure_zombie_reaper() -> None:
+    """Start the zombie reaper thread if not already running."""
+    global _reaper_thread_started
+    with _reaper_lock:
+        if _reaper_thread_started:
+            return
+        t = threading.Thread(
+            target=_zombie_reaper_loop,
+            name="dltv_browser-zombie-reaper",
+            daemon=True,
+        )
+        t.start()
+        _reaper_thread_started = True
 
 
 def _ensure_cache_dir() -> None:
@@ -185,37 +297,59 @@ def fetch_player_winrates(url: str) -> Dict[str, float]:
     obscure and DLTV only shows team names) we return an empty
     dict and the caller falls back to existing encoder values.
 
+    v0.3.22: uses a shared, long-lived chromium browser (see
+    `_get_playwright()`) so we don't leak subprocesses on every
+    publisher tick.  Each fetch creates a *new browser context*
+    and tears it down on exit — that's the boundary that owns
+    the page-level helper processes (renderer, GPU, V8 workers)
+    and closing it kills them.  Without that we'd see ~1-2 leaked
+    `chrome-headless` PIDs per fetch.
+
     Raises DiscoveryError on hard failures (Playwright missing,
     chromium binary missing, network unreachable).  The caller
     should treat that as "skip this update" and retry next tick.
     """
+    pw = _get_playwright()
+    if pw is None:
+        raise DiscoveryError("playwright not available")
+    _playwright_ctx, browser = pw
     try:
-        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+        from playwright.sync_api import TimeoutError as PWTimeout
     except ImportError as exc:
         raise DiscoveryError(f"playwright not installed: {exc}")
 
     rates: Dict[str, float] = {}
-    with sync_playwright() as p:
+    context = None
+    page = None
+    try:
+        # `new_context()` (not `new_page()` directly) so we have a
+        # proper boundary to close.  Closing the context kills all
+        # helper subprocesses that the browser spawned for the page.
+        context = browser.new_context()
+        page = context.new_page()
         try:
-            browser = p.chromium.launch(headless=True)
-        except Exception as exc:
-            # Most common cause: chromium binary missing.  We log
-            # once and let the caller disable future fetches.
-            raise DiscoveryError(f"chromium launch failed: {exc}")
-        try:
-            page = browser.new_page()
+            page.goto(url, timeout=PLAYER_WR_FETCH_TIMEOUT_MS,
+                      wait_until="domcontentloaded")
+        except PWTimeout:
+            raise DiscoveryError(f"goto timeout: {url}")
+        page.wait_for_timeout(PLAYER_WR_PAGE_LOAD_WAIT_MS)
+        # The player row format is tournament-specific; we try
+        # a few common shapes and pick the one that yields
+        # >0 results.  Each block below is best-effort.
+        rates = _extract_via_text_match(page) or _extract_via_datalayer(page)
+    finally:
+        # Close in reverse order: page first (cheap), then context
+        # (this is what actually kills the subprocesses).
+        if page is not None:
             try:
-                page.goto(url, timeout=PLAYER_WR_FETCH_TIMEOUT_MS,
-                          wait_until="domcontentloaded")
-            except PWTimeout:
-                raise DiscoveryError(f"goto timeout: {url}")
-            page.wait_for_timeout(PLAYER_WR_PAGE_LOAD_WAIT_MS)
-            # The player row format is tournament-specific; we try
-            # a few common shapes and pick the one that yields
-            # >0 results.  Each block below is best-effort.
-            rates = _extract_via_text_match(page) or _extract_via_datalayer(page)
-        finally:
-            browser.close()
+                page.close()
+            except Exception:
+                pass
+        if context is not None:
+            try:
+                context.close()
+            except Exception:
+                pass
     return rates
 
 
@@ -338,34 +472,55 @@ def update_player_wr_cache(series_id: int, url: str) -> Optional[Dict[str, float
 def _read_heroes_from_window(page) -> Dict[str, Dict[str, Any]]:
     """Read `window.__heroes` and return a hash -> hero dict.
 
-    DLTV's live page embeds all 127 heroes as a single JS object
-    `window.__heroes = { "<dltv_id>": {id, steam_id, title, slug,
-    image, ...} }`.  The hero cards reference the hero image by
-    URL hash like `/uploads/heroes/pethqKDQjJLPolvncSyuAOsDwWZUuUe8.png`
-    — the only way to recover the dltv_id/steam_id/title from a
-    rendered pick is to look it up in this table.
+    DLTV's live page used to embed all 127 heroes as a single JS
+    object `window.__heroes = { "<dltv_id>": {id, steam_id, ...} }`.
+    As of v0.3.22 they sometimes drop that block (page is lighter
+    and only the live match's hero IDs are needed) — we then
+    fall back to our own `client.get_heroes()` index, which is
+    the same data and is always available.
 
-    Returns {} if the JS object isn't present (e.g. very early
-    before hydration, or the page changed shape).
+    Returns a dict keyed by the image-URL hash (the part between
+    `/uploads/heroes/` and `.png`/`.jpg`).
     """
+    # Try the embedded block first (faster, no extra network)
     try:
         raw = page.evaluate("() => window.__heroes ? JSON.stringify(window.__heroes) : null")
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict) and parsed:
+                    out: Dict[str, Dict[str, Any]] = {}
+                    for h in parsed.values():
+                        if not isinstance(h, dict):
+                            continue
+                        image = h.get("image") or ""
+                        if "/" in image:
+                            hash_part = image.rsplit("/", 1)[-1].split(".", 1)[0]
+                        else:
+                            hash_part = image
+                        if hash_part:
+                            out[hash_part] = h
+                    if out:
+                        return out
+            except Exception:
+                pass
     except Exception:
-        return {}
-    if not raw:
-        return {}
+        pass
+
+    # Fall back to the project-local hero index.  `client.get_heroes()`
+    # is populated at startup from the v1 API and cached for the
+    # life of the process; it has the same `image` field as DLTV's
+    # page so the hash -> hero lookup works identically.
     try:
-        parsed = json.loads(raw)
+        from .dltv_client import client as _dltv_client
+        heroes = _dltv_client.get_heroes() or []
     except Exception:
-        return {}
-    if not isinstance(parsed, dict):
         return {}
     out: Dict[str, Dict[str, Any]] = {}
-    for h in parsed.values():
+    for h in heroes:
         if not isinstance(h, dict):
             continue
         image = h.get("image") or ""
-        # image is like "/uploads/heroes/XXXX.png" — split to hash
         if "/" in image:
             hash_part = image.rsplit("/", 1)[-1].split(".", 1)[0]
         else:
@@ -427,10 +582,20 @@ def _read_map_block_from_dom(page) -> Dict[str, Any]:
                 const teamEls = Array.from(map.querySelectorAll('.team__title'));
                 const teams = teamEls.slice(0, 2).map(t => {
                     const name = t.querySelector('.name');
+                    // Pull the side from the .side element's classList
+                    // — class names are locale-independent ('side dire'
+                    // / 'side radiant'), unlike the text content which
+                    // gets translated into the user's locale (Russian,
+                    // German, Chinese, ...).
                     const side = t.querySelector('.side');
+                    let side_kind = 'unknown';
+                    if (side) {
+                        if (side.classList.contains('dire')) side_kind = 'dire';
+                        else if (side.classList.contains('radiant')) side_kind = 'radiant';
+                    }
                     return {
                         name: name ? (name.textContent || '').trim() : '',
-                        side: side ? (side.textContent || '').trim() : '',
+                        side_kind: side_kind,
                     };
                 });
                 return {
@@ -448,21 +613,14 @@ def _read_map_block_from_dom(page) -> Dict[str, Any]:
     if not isinstance(data, dict):
         return out
 
-    # Resolve the team order: 'dire' if side text is the dark/dire word,
-    # 'radiant' for the light/radiant word.  Russian and English both
-    # handled (DLTV's server picks the locale; we don't).
-    DIRE_WORDS = ("dire", "тьмы", "dark", "тeмные", "тёмные")
-    RADIANT_WORDS = ("radiant", "света", "light", "сияющие")
+    # Use the locale-independent `side_kind` ("dire" | "radiant" |
+    # "unknown") that the JS already pulled from the .side classList.
     team_order: list = []
     for t in data.get("teams") or []:
-        side_text = (t.get("side") or "").lower().strip()
-        if any(w in side_text for w in DIRE_WORDS):
-            team_order.append("dire")
-        elif any(w in side_text for w in RADIANT_WORDS):
-            team_order.append("radiant")
+        kind = (t.get("side_kind") or "unknown").lower().strip()
+        if kind in ("dire", "radiant"):
+            team_order.append(kind)
         else:
-            # Unknown side — leave it as a placeholder; the caller
-            # will fall back to the default radiant-first order.
             team_order.append("unknown")
     out["team_order"] = team_order[:2]
 
@@ -592,40 +750,59 @@ def fetch_match_state(url: str) -> Dict[str, Any]:
       - game_time:       "MM:SS" string
       - team_order:      ["dire", "radiant"] (or whatever the DOM shows)
 
+    v0.3.22: uses the shared chromium browser (see
+    `_get_playwright()`) AND isolates each fetch in its own
+    `browser.new_context()` that's explicitly closed in
+    `finally`.  Without the context boundary, `page.close()`
+    alone leaks ~1-2 helper subprocesses per fetch.  The
+    browser itself lives until process exit (atexit-registered
+    cleanup).
+
     Raises DiscoveryError on hard failures (Playwright missing,
     chromium binary missing, network unreachable).
     """
+    pw = _get_playwright()
+    if pw is None:
+        raise DiscoveryError("playwright not available")
+    _playwright_ctx, browser = pw
     try:
-        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+        from playwright.sync_api import TimeoutError as PWTimeout
     except ImportError as exc:
         raise DiscoveryError(f"playwright not installed: {exc}")
 
     state: Dict[str, Any] = {}
-    with sync_playwright() as p:
+    context = None
+    page = None
+    try:
+        context = browser.new_context()
+        page = context.new_page()
         try:
-            browser = p.chromium.launch(headless=True)
-        except Exception as exc:
-            raise DiscoveryError(f"chromium launch failed: {exc}")
-        try:
-            page = browser.new_page()
+            page.goto(url, timeout=PLAYER_WR_FETCH_TIMEOUT_MS,
+                      wait_until="domcontentloaded")
+        except PWTimeout:
+            raise DiscoveryError(f"goto timeout: {url}")
+        page.wait_for_timeout(PLAYER_WR_PAGE_LOAD_WAIT_MS)
+        # v0.3.22: the new DLTV layout puts the entire live
+        # state inside `.map__finished-v2` with image-hash
+        # hero references resolved via `window.__heroes`.
+        # Skip the React-payload walk (no longer works) and
+        # go straight to the DOM read.
+        state = _read_map_block_from_dom(page)
+        # Last-resort fallback: body-text scan if scores/time
+        # are still missing (older page versions, pre-hydration).
+        if state.get("radiant_score") is None or state.get("game_time") is None:
+            state.update(_extract_score_from_text(page))
+    finally:
+        if page is not None:
             try:
-                page.goto(url, timeout=PLAYER_WR_FETCH_TIMEOUT_MS,
-                          wait_until="domcontentloaded")
-            except PWTimeout:
-                raise DiscoveryError(f"goto timeout: {url}")
-            page.wait_for_timeout(PLAYER_WR_PAGE_LOAD_WAIT_MS)
-            # v0.3.22: the new DLTV layout puts the entire live
-            # state inside `.map__finished-v2` with image-hash
-            # hero references resolved via `window.__heroes`.
-            # Skip the React-payload walk (no longer works) and
-            # go straight to the DOM read.
-            state = _read_map_block_from_dom(page)
-            # Last-resort fallback: body-text scan if scores/time
-            # are still missing (older page versions, pre-hydration).
-            if state.get("radiant_score") is None or state.get("game_time") is None:
-                state.update(_extract_score_from_text(page))
-        finally:
-            browser.close()
+                page.close()
+            except Exception:
+                pass
+        if context is not None:
+            try:
+                context.close()
+            except Exception:
+                pass
     return state
 
 

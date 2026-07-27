@@ -342,6 +342,15 @@ sprint.
 | 0.3.12   | XGBoost для kills + duration (hero only) — -0.46 MAE kills, -0.49 MAE duration forward | ✅ shipped |
 | 0.3.13   | Cross-side lane matchups (bot 2v2, top 2v2, mid 1v1) + patch encoding — +1.0% honest forward on winner | ✅ shipped |
 | 0.3.14   | Smoothing grid for matchup encoder (negative — default 3.0 already optimal); coverage diagnostic shows mid 1v1 = 82% OOS hit, bot/top 2v2 = 1-2% (still useful) | ✅ shipped |
+| 0.3.15   | Per-player features (`PlayerWinRateEncoder`) — winner_v15 = current production | ✅ shipped |
+| 0.3.16   | `/api/board` async rewrite (single-flight + 25s wait_for + stale auto-board) + accuracy tracking (`record_prediction` / `score_pending` / `accuracy_summary`, JSONL log) | ✅ shipped |
+| 0.3.17   | Playwright `dltv_browser` for live `player.win_rate` (Phase 3) — fetches `dltv.org/matches/{id}/{slug}` HTML, caches to `ml_data/player_wr_cache.json` (5 min TTL) | ✅ shipped |
+| 0.3.18   | nginx `map $http_x_api_key $effective_api_key` for dev X-API-Key auto-inject (static UI doesn't need to embed the secret) | ✅ shipped |
+| 0.3.19   | Live enrichment TTL 120 s → 5 s so live picks/score don't lag DLTV | ✅ shipped |
+| 0.3.20   | Playwright + match-state overlay for in-progress series (`_live_card` synthesizes from `/live/{id}.json`) + chromium binary copied to `/app/.cache/ms-playwright/` (1.61 ignores `PLAYWRIGHT_BROWSERS_PATH`) | ✅ shipped |
+| 0.3.21   | Live TTL fix + match-state overlay + nginx X-API-Key + league-filter UI (chip row of top-5, bulk-select in picker) | ✅ shipped |
+| 0.3.22   | Live extractor rewrite (image-hash heroes via `window.__heroes` fallback) + chromium subprocess-leak fix (shared browser + per-fetch context + zombie reaper, started eagerly at module import) + strict live filter + auto-board server-side filter (`/api/board` no longer triggers a rebuild for filtered requests — instant) | ✅ shipped |
+| 0.4.0    | Cookie-based SSE auth + Postgres + auto-retrain | 🚧 next |
 | 1.0.0    | First production-ready release              | 🎯 goal     |
 
 ¹ Calibration plumbing landed but the empirical run on the

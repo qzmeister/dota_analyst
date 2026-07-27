@@ -16,6 +16,199 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com), a
 
 ---
 
+## [0.3.22] — 2026-07-27 — Docker deploy + DLTV live extractor rewrite + memory-leak fix
+
+Final hardening sprint before 0.4.0 (cookie-based SSE auth, prod
+infra).  Five commits; the headline is **the live filter no longer
+fights the build pipeline** and **chromium no longer leaks processes
+inside the container**.
+
+### Commits
+
+| SHA       | Subject                                                                    |
+|-----------|----------------------------------------------------------------------------|
+| `3d66264` | v0.3.22: fix live picks/score extractor (DLTV DOM change) + league filter UI |
+| `d7ed601` | v0.3.22 (cont): fix chromium subprocess leak that ballooned WSL to 16GB     |
+| `775d69c` | v0.3.22 (cont 2): start zombie reaper eagerly at module import              |
+| (f1dddde) | v0.3.22 (cont 3+4): strict live filter + auto-board server-side filter      |
+
+### What changed
+
+**Live match extractor (3d66264)**
+- DLTV redesigned `/matches` — old selectors (`.pick.player`,
+  `data-hero-id`) are gone.  Replaced with image-hash lookup against
+  the embedded `window.__heroes` (or a local hero index fallback).
+- New DOM: `.map__finished-v2` container, `.pick` (no `.player`),
+  `.pick__image` (background-image URL → hero hash), `.team__title` +
+  `.side.dire`/`.side.radiant` for locale-independent side detection,
+  `.team__scores-kills` for per-game kills, `.duration b` for game
+  time.
+- Discovery synthesizes live rows with `started_at = m.start_time or
+  now()` and `status: 1` so `classify_stage` returns "live" (was
+  "prematch" before — broke the `_live_card` overlay for in-progress
+  games).
+- 11 new tests in `tests/test_dltv_browser_v2.py`.
+
+**Chromium subprocess leak (d7ed601, 775d69c) — CRITICAL**
+- Each `sync_playwright()` created ~20 chromium helper subprocesses.
+  `browser.close()` left them orphaned; they got reparented to PID 1
+  (uvicorn inside the container) and the cgroup never reaped them.
+  After a few hours: **2675 chrome PIDs, 16 GB WSL** while
+  `docker stats` still showed 540 MB (cgroup memory hides orphaned
+  subprocesses).
+- Three-part fix:
+  1. **Shared Playwright** — `_get_playwright()` returns the same
+     browser for the whole process.
+  2. **Per-fetch `browser.new_context()`** — context is the boundary
+     that actually owns page helpers; `context.close()` is the
+     matching cleanup.
+  3. **Zombie reaper** — daemon thread with
+     `os.waitpid(-1, os.WNOHANG)` every 5s.  PID 1 can reap.
+- Plus: start the reaper eagerly at module import so it runs even
+  on a quiet evening with no live matches.
+- Documented two container gotchas: (a) `WORKDIR=/app` makes
+  in-tree `business/` take precedence over `site-packages/`, so
+  `docker cp` to site-packages is a no-op — copy to `/app/`;
+  (b) `__pycache__/*.pyc` from the image build date holds stale
+  bytecode that the container's `app` user can't `rm` — clear with
+  `docker exec -u root` if you can't rebuild the image.
+- Verified: 12+ burst fetches → 6-17 chrome PIDs (was 2-3k);
+  WSL 1.4-1.9 GB (was 16 GB); dota-business 150-507 MB (was 327 MB
+  + 2819 orphan PIDs).
+
+**Strict live filter + auto-board server-side filter (f1dddde)**
+- v0.3.21's "filter is permissive" live filter leaked Steam-only
+  cards (eid=None) into narrowed boards.  Replaced with strict
+  drop — when the user narrows the board, eid=None cards are
+  filtered out.
+- The bigger fix is the data path: every distinct
+  `?events=...&watch=...` previously triggered a fresh
+  `build_board()` which, on a slow publisher (60-90s per build
+  when dltv.org is timing out), meant filtered requests
+  timed out at 25s and returned an empty board.  The user saw
+  `0+0+0` and thought the filter was broken.
+- New path: `/api/board` always serves the publisher's auto-board
+  (no filter applied at build time), then applies the user's
+  `events=` selection server-side as an in-memory
+  `card.event_id in allowed_set` check per card.  Response is
+  instant (sub-second).  Watchlist pins (by `match_id`) always
+  pass.
+- 8 new tests in `tests/test_auto_board_filter.py`; updated
+  `test_board_event_ids_dedup_and_parse` to assert against the
+  new path.
+- Page-side guard: `visibilitychange` → refresh, so background
+  tabs don't show a stale "Обновлено 11:24" status forever.
+
+**Operational effects (verified in container)**
+- `?events=6617,6626&watch=` → 38 prematch + 0 live + 4 postmatch
+  in **0.03 s** (was 25 s timeout, empty).  `filtered_from_auto:
+  True` marker added for debugging.
+
+### Notes
+- Two scraped live cards in the user's previous screenshots
+  ("Steam league 19479", "Steam league 18867", etc.) were
+  legitimately outside their selected leagues.  The previous
+  v0.3.21 filter let them through; v0.3.22 (cont 3) drops them
+  strictly.  The previous failure to display ANY cards was a
+  separate bug — the 25 s timeout — fixed in v0.3.22 (cont 4).
+- Chromium greenlet error (`greenlet.error: Cannot switch to a
+  different thread`) is partially mitigated by a single-worker
+  `_browser_executor` and `_is_browser_alive()` re-init probe.
+  The proper fix is `async_playwright` — deferred (requires
+  async refactor of `stream.py` publisher loop).
+
+---
+
+## [0.3.21] — 2026-07-26 — Live TTL fix + match-state overlay + nginx X-API-Key
+
+Three small fixes that unblocked the live-accuracy loop:
+
+- `ENRICH_TTL_LIVE` lowered from 120 s to 5 s so picks / score
+  don't lag DLTV by two minutes.
+- `business/board.py::_live_card` now overlays a synthetic
+  match-state for in-progress series (Phase 3 — picks/score
+  visible during a live game, not only after).
+- `web/nginx.conf` adds the `map $http_x_api_key $effective_api_key`
+  block so the static UI doesn't need to embed the dev secret.
+- League-filter UI: chip row of top-5 leagues + bulk-select
+  controls in the picker.
+- `goto` timeout raised 8 s → 20 s after dltv.org cold loads
+  started timing out on the small container.
+
+---
+
+## [0.3.20] — 2026-07-26 — Playwright + dltv_browser for live match state
+
+First Playwright integration.  v1 API hides in-progress series
+(it only returns completed series per event), so the only source
+for live picks is the rendered HTML at
+`dltv.org/matches/{series_id}/{slug}`.  New module
+`business/dltv_browser.py` with `fetch_match_state(url)` and
+`fetch_player_winrates(url)`.  Chromedriver copied to
+`/app/.cache/ms-playwright/` because `PLAYWRIGHT_BROWSERS_PATH`
+isn't honored in 1.61.
+
+---
+
+## [0.3.19] — 2026-07-26 — Live TTL 120 s → 5 s
+
+Single-line change (`ENRICH_TTL_LIVE` in `discovery.py`).  The
+user noticed the live card was showing picks/score 60-120 s
+behind DLTV; investigation showed `_series_cache` was set with
+`ENRICH_TTL_OTHER = 120 s` even for live series.
+
+---
+
+## [0.3.18] — 2026-07-26 — nginx `map` for dev X-API-Key auto-inject
+
+`web/nginx.conf` ships with `map $http_x_api_key $effective_api_key
+{ default "dev-local-dota-analyst-key-change-me"; ~. $http_x_api_key; }`
+so the static UI in `web/public/app.js` can call `/api/board`
+without embedding the secret.  **Public deployment must change
+the default** to `$http_x_api_key` only — see TODO §"Auth & network".
+
+---
+
+## [0.3.17] — 2026-07-25 — Playwright dltv_browser for live player.win_rate (Phase 3)
+
+DLTV's `/live/{steam_match_id}.json` returns the draft but not
+`player.win_rate` (only `map_results` after the game has
+`status: 2` does).  New module scrapes the rendered HTML for
+career WR per player.  Caches to `ml_data/player_wr_cache.json`
+with `PLAYER_WR_TTL_SEC = 5 min`.
+
+---
+
+## [0.3.16] — 2026-07-25 — /api/board hang fix (async + single-flight) + accuracy tracking
+
+The endpoint was synchronous `build_board()` with no upper
+bound.  On a cold cache it could take 1-3 min and 504.  Rewrite:
+- `async def` + `await asyncio.to_thread(...)` so the event
+  loop stays free.
+- Single-flight `Future` keyed on `cache_key` so concurrent
+  misses share one upstream call (not a stampede).
+- `await asyncio.wait_for(..., timeout=25.0)` under the
+  nginx 30 s `proxy_read_timeout`.
+- Stale auto-board fallback (publisher keeps the last good
+  build in `_latest_auto_board`).
+- `business/accuracy.py` with JSONL append-only log:
+  `record_prediction`, `score_pending`, `accuracy_summary`.
+  `POST /api/accuracy` and `GET /api/accuracy` endpoints.
+
+---
+
+## [0.3.15] — 2026-07-25 — Per-player features (PlayerWinRateEncoder) — winner_v15
+
+New encoder reads the player's last N matches' win rate from
+the corpus and adds 4 features to the winner model.  Honest
+forward: +0.5 % accuracy on the 2028 corpus (small but
+consistent across patches).  New `players_from_match(match)`
+helper in `business/ml/features.py`.  v15 is **current
+production** in `ml_data/models/winner_v15/`.
+
+---
+
+
 ## [0.3.10] — 2026-07-25
 
 ### Feature groups + corpus → 2036 + numeric version sort (audit C retry, D v2)

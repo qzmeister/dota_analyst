@@ -257,18 +257,31 @@ async def board_publisher_loop(
 
 
 # --------------------------------------------------------------------------- #
-# Player.win_rate refresh — Playwright-driven, 30 s cadence
+# Player.win_rate refresh — Playwright-driven, 5 s cadence
 # --------------------------------------------------------------------------- #
 #
 # Phase 3: the DLTV v1 API doesn't ship live player.win_rate; only the
 # rendered HTML at /matches/{series_id}/{slug} does.  We poll the
-# Playwright-based scraper every 30 s and write the result to a JSON
+# Playwright-based scraper every 5 s and write the result to a JSON
 # cache so the next predict call (which doesn't have time to spin
 # up chromium) can read it.  Caching is essential because chromium
 # launch is ~2 s — the board's 5 s publisher cycle would never
 # fit if we did this inline.
+#
+# v0.3.24e: dropped from 30s to 5s so the match-state overlay
+# (`dltv_browser.get_cached_match_state`) stays close to the
+# socket.io cadence DLTV's own page uses.  At 30s the live card
+# showed scores that lagged the DLTV page by 5-30s, defeating
+# the point of the cache.  MATCH_STATE_TTL_SEC was bumped in
+# v0.3.24d to 30s specifically to survive a 5s publisher tick
+# — the original design intent — so bringing the publisher back
+# to 5s completes that round of fixes.  Heavy work (chromium
+# fetch) is bounded by `MATCH_STATE_TTL_SEC`: the publisher
+# only re-fetches when the cache has expired OR the cache is
+# empty, so a 5s tick on a 30s TTL means ~1 fetch per match
+# per 30s, not per tick.
 
-PLAYER_WR_POLL_INTERVAL_SEC = 30.0
+PLAYER_WR_POLL_INTERVAL_SEC = 5.0
 
 
 async def player_wr_browser_loop(interval_sec: float = PLAYER_WR_POLL_INTERVAL_SEC) -> None:

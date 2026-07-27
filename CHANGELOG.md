@@ -61,6 +61,89 @@ scoreboard, no-legacy-selector sanity).  418/418 pass.
 
 ---
 
+## [0.3.24e] — 2026-07-27 — Live picks: dual-id namespace fix + 5s publisher
+
+The live card for watchlist / scraper matches rendered the **score**
+correctly (came straight from the cache overlay) but the **picks**
+were empty placeholders (`#120`, no image) — even though the
+`dltv_browser` cache had the real hero names.  Root cause: the
+cache-overlay entry sets **both** `hero_id` (DLTV internal, e.g.
+120 = Hoodwink) and `_steam_id` (Valve, e.g. 123 = Hoodwink), but
+`_picks_to_heroes` only consulted `hero_id`.  When `is_watchlist=True`
+the lookup ran `hero_by_steam_id(120)` and silently resolved
+Hoodwink's dltv_id 120 to **Pangolier** (steam_id 120) — a different
+hero with a colliding number.  The card came out as `#120` /
+`name=None` because the names didn't match and the lookup returned
+the wrong hero or `None`.
+
+What changed:
+- `business/board.py:_picks_to_heroes` and `_bans_to_cards` now
+  prefer the namespace-appropriate field.  `use_steam_id=True`
+  reads `_steam_id` first (falls back to `hero_id`); `use_steam_id=False`
+  reads `hero_id` first (falls back to `_steam_id`).  The card
+  `id` exposed to the front-end is the id we actually looked up
+  by, so icon resolution stays consistent.  Backward-compatible
+  with v0.3.22 (single-id) and watchlist JSON path (both fields
+  set to the steam id).
+- `business/stream.py`: `PLAYER_WR_POLL_INTERVAL_SEC` dropped
+  from 30s to 5s.  The docstring in `dltv_browser.py` always
+  said "publisher poll runs every 5s" — the value drifted.  With
+  `MATCH_STATE_TTL_SEC=30s` and a 5s publisher, the cache is
+  refreshed every 6th tick per match (one fetch per 30s, not one
+  per tick), keeping the live card within a few seconds of the
+  DLTV page's own socket.io feed.
+
+Tests: 3 new in `tests/test_board.py` (dual-id steam path picks up
+Hoodwink not Pangolier, dual-id dltv path keeps the v1 contract,
+bans same fix).  421/421 pass.
+
+---
+
+## [0.3.24] — 2026-07-27 — Live data: hide steam-only, fix cache key, dedup, dual-format tracker lookup
+
+A live card backlog of fixes from the 0.3.23 cutover.  Five
+commits; the headline is **the live filter doesn't drop cards it
+should keep, and the cache overlay actually finds the cache.**
+
+### Commits
+
+| SHA       | Subject                                                                       |
+|-----------|-------------------------------------------------------------------------------|
+| `704c0eb` | v0.3.24:  hide steam-only live matches by default + parse watch-/steam- id     |
+| `b626a8e` | v0.3.24b: map watch-/steam- steam_id to dltv series id for cache lookup        |
+| `622f275` | v0.3.24c: dedup live_series in `get_live_and_prematch`                         |
+| (cont)    | v0.3.24d: handle both tracker formats (top-level steam_id vs maps[].steam_id) + bump MATCH_STATE_TTL_SEC to 30s |
+
+What changed:
+- `LIVE_HIDE_STEAM_ONLY=1` env var (default ON) drops 44 "Steam
+  league XXXX" Chinese amateur cards that DLTV has no coverage
+  for.  Set to `0` to restore the old behaviour.
+- `_live_card` parses the `watch-XXX` / `steam-XXX` prefix and
+  walks the discovery tracker to map `steam_id → dltv series id`
+  before reading the cache.  Without this, `watch-8916384577`
+  looked up cache key `s8916384577` (MISS) instead of `s427530`
+  (HIT), so the overlay silently fell back to the watchlist API
+  (laggy vs. the page's socket.io feed).
+- `discovery.get_live_and_prematch` now dedups by `steam_id`
+  (then `series_id`).  The Steam tracker populates `_by_steam`
+  first; the Scraper populates `_by_series` second and doesn't
+  remove the `_by_steam` entry — result was a duplicate card
+  for the same match.
+- Tracker format detection: scraper rows have top-level
+  `steam_id`, watchlist rows have `maps[].steam_id`.  The
+  cross-reference loop checks both.  Otherwise a scraper
+  tracker entry never matches a watch- row.
+- `MATCH_STATE_TTL_SEC` bumped from 5s to 30s.  The publisher
+  loop runs every 30s; the old 5s TTL caused the cache to expire
+  exactly at the read moment.  Superseded by 0.3.24e (publisher
+  dropped to 5s; the 30s TTL still survives a single missed tick
+  for safety).
+
+Tests: 2 new (`test_steam_only_filter`, `test_live_dedup`).
+421/421 pass after 0.3.24e.
+
+---
+
 ## [0.3.22] — 2026-07-27 — Docker deploy + DLTV live extractor rewrite + memory-leak fix
 
 Final hardening sprint before 0.4.0 (cookie-based SSE auth, prod

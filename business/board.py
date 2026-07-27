@@ -206,23 +206,59 @@ def _names_to_cards(entries: List[Dict]) -> List[Dict]:
 def _picks_to_heroes(picks: Optional[List[Dict]], use_steam_id: bool = False):
     """Return (hero_meta_list, hero_card_list) from a maps[].*_picks list.
 
-    When use_steam_id=True, picks[].hero_id is a Steam hero id (watchlist/live JSON path).
-    Otherwise picks[].hero_id is a DLTV internal hero id (v1 API path).
+    v0.3.24e: three different sources produce entries with a `hero_id`
+    field, and they use DIFFERENT namespaces for that field:
+
+      * v1 API maps[].picks              — `hero_id` is DLTV internal (1..127)
+      * watchlist /live/{id}.json picks  — `hero_id` IS the steam id (1..155)
+      * dltv_browser cache overlay       — `hero_id` is DLTV, `_steam_id` is steam
+
+    v0.3.22/v0.3.24 set both fields on cache-overlay entries, but
+    `_picks_to_heroes` only consulted `hero_id`.  When the source
+    was the cache AND `is_watchlist=True` (the typical live-card path),
+    the lookup ran `hero_by_steam_id(dltv_id)` — which routinely
+    returned the wrong hero (e.g. Hoodwink's dltv_id 120 matched
+    Pangolier's steam_id 120) or None.  The picks came out as `#120`
+    placeholders with no image, so the board card showed an empty
+    draft even though the cache had the real hero names.
+
+    Fix: when `use_steam_id=True`, prefer `_steam_id` (explicit steam
+    namespace) and fall back to `hero_id` (which the watchlist JSON
+    path sets to the steam id anyway).  Symmetrically when
+    `use_steam_id=False`, prefer `hero_id` (dltv) with `_steam_id` as
+    a fallback.  The card `id` exposed to the front-end is the id we
+    actually looked up by, so icon resolution stays consistent.
     """
     metas, cards = [], []
     for p in sorted(picks or [], key=lambda x: x.get("order", 0)):
-        hid = p.get("hero_id")
-        meta = client.hero_by_steam_id(hid) if use_steam_id else client.hero_by_dltv_id(hid)
+        if use_steam_id:
+            sid = p.get("_steam_id") or p.get("hero_id")
+            meta = client.hero_by_steam_id(sid)
+            hid = sid
+        else:
+            did = p.get("hero_id") or p.get("_steam_id")
+            meta = client.hero_by_dltv_id(did)
+            hid = did
         metas.append(meta)
         cards.append(_hero_card(meta, hid))
     return metas, cards
 
 
 def _bans_to_cards(bans: Optional[List[Dict]], use_steam_id: bool = False) -> List[Dict]:
+    """Same dual-id logic as `_picks_to_heroes` — see that docstring
+    for the v0.3.24e rationale.  Without it, bans on watchlist live
+    cards rendered with the wrong hero or `#N` placeholders for the
+    same reason picks did."""
     cards = []
     for b in sorted(bans or [], key=lambda x: x.get("order", 0)):
-        hid = b.get("hero_id")
-        meta = client.hero_by_steam_id(hid) if use_steam_id else client.hero_by_dltv_id(hid)
+        if use_steam_id:
+            sid = b.get("_steam_id") or b.get("hero_id")
+            meta = client.hero_by_steam_id(sid)
+            hid = sid
+        else:
+            did = b.get("hero_id") or b.get("_steam_id")
+            meta = client.hero_by_dltv_id(did)
+            hid = did
         cards.append(_hero_card(meta, hid))
     return cards
 
@@ -504,12 +540,23 @@ def _live_card(series: Dict, event_title: str) -> Dict:
         # id so the overlay can read the real-time socket.io-backed
         # state.  Cold start (no tracker entry) keeps the steam id as a
         # best-effort fallback.
+        #
+        # v0.3.24d: the tracker has TWO different layouts depending on
+        # which path populated it:
+        #   * scraper rows:   `{"series_id": …, "steam_id": …, …}` — steam_id
+        #                     is a top-level key (no `maps` array)
+        #   * watchlist rows: `{"id": "watch-…", "maps": [{"steam_id": …}, …]}`
+        # We must check both, otherwise a scraper-populated tracker entry
+        # never matches a watch- row and the overlay misses the cache.
         if steam_id_for_lookup is not None:
             try:
                 from .discovery import tracker as _dtracker
                 with _dtracker._lock:
                     for tsid, tm in _dtracker._by_series.items():
-                        for mm in tm.get("maps", []):
+                        if tm.get("steam_id") == steam_id_for_lookup:
+                            series_id = int(tsid)
+                            break
+                        for mm in tm.get("maps") or []:
                             if mm.get("steam_id") == steam_id_for_lookup:
                                 series_id = int(tsid)
                                 break

@@ -28,8 +28,14 @@ Caching
 -------
 Each (series_id, slug) request hits dltv.org and the response is
 cached to `ml_data/player_wr_cache.json` (match_state entry) for
-`MATCH_STATE_TTL_SEC` (5s — live).  The publisher poll is the
-natural cadence (5s), so the cache is a no-op for steady-state.
+`MATCH_STATE_TTL_SEC` (30s).  The publisher poll runs every 5s so
+in steady-state the cache is always < 5s old; the 30s TTL only
+matters when a board build is requested *between* publisher ticks
+(an HTTP request to /api/board that reads the auto-board
+synchronously) — without headroom, the cache would expire
+exactly at the build moment and the match-state overlay in
+_live_card would silently miss.  v0.3.24d: bumped from 5s to 30s
+after watching the auto-board's reads land at 5.0-5.4s post-fetch.
 
 Performance
 -----------
@@ -67,7 +73,11 @@ log = get_logger(__name__)
 ML_DATA_DIR = Path(os.environ.get("ML_DATA_DIR", "ml_data"))
 PLAYER_WR_CACHE_FILE = ML_DATA_DIR / "player_wr_cache.json"
 PLAYER_WR_TTL_SEC = 5 * 60.0   # 5 minutes
-MATCH_STATE_TTL_SEC = 5.0      # 5 seconds — live changes every tick
+MATCH_STATE_TTL_SEC = 30.0     # see module docstring — was 5s, raised to 30s
+                                # in v0.3.24d so the overlay survives a
+                                # whole publisher tick cycle (5s) plus
+                                # jitter without expiring exactly at the
+                                # read moment.
 # v0.3.21: dltv.org cold load is slow when the chromium
 # binary has to JIT its V8 on a small container.  8s was
 # too tight — the first goto of a brand-new live match

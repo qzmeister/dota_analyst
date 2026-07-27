@@ -211,6 +211,38 @@ class TestPicksToHeroes:
         metas, cards = _picks_to_heroes(picks, use_steam_id=True)
         assert metas[0]["name"] == "pa"
 
+    def test_dual_id_steam_path_prefers_steam_id(self, mock_client):
+        """v0.3.24e: dltv_browser cache overlay sets BOTH `hero_id`
+        (DLTV internal) and `_steam_id` (Valve) on every entry.
+        When is_watchlist=True, `_picks_to_heroes` must look up by
+        the steam id — otherwise a Hoodwink pick (dltv_id 120) was
+        silently resolved to Pangolier (steam_id 120) and the live
+        card came out empty.  Regression test for that bug."""
+        from business.board import _picks_to_heroes
+        # The two heroes that v0.3.24d swapped: Hoodwink's dltv_id
+        # numerically equals Pangolier's steam_id.
+        mock_client.add_hero_dltv(120, name="Hoodwink",  steam_id=123)
+        mock_client.add_hero_dltv(98,  name="Pangolier", steam_id=120)
+        mock_client.add_hero_steam(123, name="Hoodwink")
+        mock_client.add_hero_steam(120, name="Pangolier")
+        picks = [{"hero_id": 120, "_steam_id": 123, "order": 1}]
+        metas, cards = _picks_to_heroes(picks, use_steam_id=True)
+        assert metas[0]["name"] == "Hoodwink"
+        # The card id must be the steam id we actually looked up by.
+        assert cards[0]["id"] == 123
+
+    def test_dual_id_dltv_path_prefers_hero_id(self, mock_client):
+        """v0.3.24e: when use_steam_id=False (v1 API path) and the
+        source populated both fields, the dltv id wins — preserves
+        the v1 API contract that `hero_id` is the dltv namespace."""
+        from business.board import _picks_to_heroes
+        mock_client.add_hero_dltv(120, name="Hoodwink",  steam_id=123)
+        mock_client.add_hero_steam(123, name="Hoodwink")
+        picks = [{"hero_id": 120, "_steam_id": 123, "order": 1}]
+        metas, cards = _picks_to_heroes(picks, use_steam_id=False)
+        assert metas[0]["name"] == "Hoodwink"
+        assert cards[0]["id"] == 120
+
     def test_empty_picks_returns_empty_lists(self, mock_client):
         from business.board import _picks_to_heroes
         assert _picks_to_heroes(None) == ([], [])
@@ -228,6 +260,18 @@ class TestBansToCards:
         ]
         cards = _bans_to_cards(bans)
         assert [c["id"] for c in cards] == [1, 3]
+
+    def test_dual_id_steam_path_prefers_steam_id(self, mock_client):
+        """Same dual-id bug as picks — bans on the live card were
+        silently resolving the wrong hero too."""
+        from business.board import _bans_to_cards
+        mock_client.add_hero_dltv(120, name="Hoodwink",  steam_id=123)
+        mock_client.add_hero_dltv(98,  name="Pangolier", steam_id=120)
+        mock_client.add_hero_steam(123, name="Hoodwink")
+        mock_client.add_hero_steam(120, name="Pangolier")
+        bans = [{"hero_id": 120, "_steam_id": 123, "order": 1}]
+        cards = _bans_to_cards(bans, use_steam_id=True)
+        assert cards[0]["id"] == 123
 
 
 # ============================================================================ #

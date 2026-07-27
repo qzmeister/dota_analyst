@@ -469,24 +469,54 @@ def _live_card(series: Dict, event_title: str) -> Dict:
     # Watchlist live matches carry a string id like "watch-8916245727"
     # (built in dltv_client._live_json_to_series) and the Steam-only
     # fallback path uses "steam-8916245727".  Both forms embed an int
-    # series id — that's the dltv_browser cache key.  Parse it; if
-    # extraction fails (truly unknown id shape) skip the overlay.
+    # series id — but the dltv_browser cache is keyed by the **DLTV**
+    # series id (e.g. 427530), NOT the steam match id.  The publisher
+    # loop in stream.py writes `update_match_state_cache(427530, url)`
+    # for the row the scraper found, so without a steam→dltv map we
+    # miss the cache and fall back to the watchlist API (which is
+    # DLTV's own cached JSON, laggy vs. the page's socket.io feed).
+    #
+    # Look the dltv id up in the discovery tracker first; fall back to
+    # the embedded int (in case the scraper hasn't run for this row
+    # yet) so cold-start doesn't regress to an empty overlay.
     series_id_raw = series.get("id")
     series_id: Optional[int] = None
+    steam_id_for_lookup: Optional[int] = None
     if isinstance(series_id_raw, int):
         series_id = series_id_raw
     elif isinstance(series_id_raw, str):
-        # Try the "<prefix>-<int>" form first (watch-…, steam-…).
         for prefix in ("watch-", "steam-"):
             if series_id_raw.startswith(prefix):
                 tail = series_id_raw[len(prefix):]
                 if tail.isdigit():
-                    series_id = int(tail)
+                    steam_id_for_lookup = int(tail)
+                    series_id = steam_id_for_lookup
                     break
-        # Fall back to a bare-numeric string ("1234567").
         if series_id is None and series_id_raw.isdigit():
             series_id = int(series_id_raw)
     if series_id is not None and not (m.get("radiant_picks") or m.get("dire_picks")):
+        # v0.3.24: when the row came from the watchlist / steam fallback
+        # (string id like "watch-8916384577") the steam match id is NOT
+        # the dltv_browser cache key.  The publisher wrote the cache
+        # under the **DLTV** series id (e.g. 427530) for the same match.
+        # Cross-reference the discovery tracker by steam id; if the
+        # scraper has found a dltv.org page for it, switch to the dltv
+        # id so the overlay can read the real-time socket.io-backed
+        # state.  Cold start (no tracker entry) keeps the steam id as a
+        # best-effort fallback.
+        if steam_id_for_lookup is not None:
+            try:
+                from .discovery import tracker as _dtracker
+                with _dtracker._lock:
+                    for tsid, tm in _dtracker._by_series.items():
+                        for mm in tm.get("maps", []):
+                            if mm.get("steam_id") == steam_id_for_lookup:
+                                series_id = int(tsid)
+                                break
+                        if series_id != steam_id_for_lookup:
+                            break
+            except Exception as exc:
+                log.debug("steam→dltv id map failed for %s: %s", steam_id_for_lookup, exc)
         try:
             from .dltv_browser import get_cached_match_state
             cached_state = get_cached_match_state(series_id) or {}

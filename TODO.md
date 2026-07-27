@@ -353,6 +353,7 @@ sprint.
 | 0.3.23   | Real-time live data via `radiant_picks` / `dire_picks` page globals + `#live_scoreboard` (matches DLTV's visual display, no API delay).  Docker build switched to `npmmirror.com` Playwright mirror to dodge `storage.googleapis.com` timeouts. | ✅ shipped |
 | 0.3.24   | Live filter hardening: hide 44 steam-only Chinese amateur cards (`LIVE_HIDE_STEAM_ONLY=1`) + map `watch-/steam-` steam_id → dltv series id for cache lookup + dedup Steam+Scraper double-adds in `get_live_and_prematch` + handle both tracker formats (top-level `steam_id` vs `maps[].steam_id`) + bump `MATCH_STATE_TTL_SEC` 5s→30s | ✅ shipped |
 | 0.3.24e  | Live picks: dual-id namespace fix in `_picks_to_heroes` / `_bans_to_cards` (Hoodwink's dltv_id 120 was silently matching Pangolier's steam_id 120 → empty `#120` cards with no image) + drop `PLAYER_WR_POLL_INTERVAL_SEC` 30s→5s so the cache keeps up with DLTV's socket.io feed | ✅ shipped |
+| 0.3.24f  | Live card lag cut from 5-15s to ~6-8s avg: `_wait_for_live_state` replaces fixed 3.5s `wait_for_timeout` with a `wait_for_function` predicate that returns as soon as `#live_scoreboard` scores or `radiant_picks`/`dire_picks` globals are populated (0.5-2s steady state) + drop `MATCH_STATE_TTL_SEC` 30s→8s so the cache refreshes between publisher ticks | ✅ shipped |
 | 0.4.0    | Cookie-based SSE auth + Postgres + auto-retrain | 🚧 next |
 | 1.0.0    | First production-ready release              | 🎯 goal     |
 

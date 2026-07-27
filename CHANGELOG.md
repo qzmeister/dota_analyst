@@ -99,6 +99,41 @@ bans same fix).  421/421 pass.
 
 ---
 
+## [0.3.24f] — 2026-07-27 — Live card lag: smart wait + tighter TTL
+
+After 0.3.24e the picks were showing but the user still saw
+5-15s of lag vs. DLTV's own display.  Two root causes:
+
+  1. The `fetch_match_state` call did `page.wait_for_timeout(3.5s)`
+     on every fetch — the **fixed** 3.5s dominated the per-fetch
+     cost (5-10s total per live match).  DLTV's live state is
+     populated by socket.io AFTER React hydrates, so a fixed
+     wait either waits too long (when hydration is fast) or too
+     short (when chromium is cold).
+  2. `MATCH_STATE_TTL_SEC` was 30s (bumped in 0.3.24d to survive
+     the 30s publisher tick).  With the publisher now at 5s
+     the 30s TTL was overkill — between fetches the cache was
+     5-30s old, which the user perceived as steady staleness.
+
+What changed:
+- `business/dltv_browser.py:_wait_for_live_state`: new helper
+  that uses `page.wait_for_function(predicate, timeout=3.5s)`.
+  The predicate returns true as soon as `#live_scoreboard` has
+  both team scores OR `radiant_picks`/`dire_picks` is populated.
+  In steady state this fires at 0.5-2s.  On timeout (cold
+  chromium, older DLTV layouts) the function falls through to
+  the legacy extractors.
+- `MATCH_STATE_TTL_SEC` dropped from 30s to 8s.  Combined with
+  the faster fetches this brings the worst-case cache age to
+  `TTL + one tick + fetch = ~16s` and the average to ~6-8s
+  (was 15-25s with 30s TTL + 5-10s fetch).
+
+Tests: 1 new in `tests/test_dltv_browser_v2.py` (wait_for_function
+timeout branch falls back to the legacy extractors and still
+produces a valid state).  422/422 pass.
+
+---
+
 ## [0.3.24] — 2026-07-27 — Live data: hide steam-only, fix cache key, dedup, dual-format tracker lookup
 
 A live card backlog of fixes from the 0.3.23 cutover.  Five

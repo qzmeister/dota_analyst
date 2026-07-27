@@ -28,14 +28,16 @@ Caching
 -------
 Each (series_id, slug) request hits dltv.org and the response is
 cached to `ml_data/player_wr_cache.json` (match_state entry) for
-`MATCH_STATE_TTL_SEC` (30s).  The publisher poll runs every 5s so
-in steady-state the cache is always < 5s old; the 30s TTL only
-matters when a board build is requested *between* publisher ticks
-(an HTTP request to /api/board that reads the auto-board
-synchronously) — without headroom, the cache would expire
-exactly at the build moment and the match-state overlay in
-_live_card would silently miss.  v0.3.24d: bumped from 5s to 30s
-after watching the auto-board's reads land at 5.0-5.4s post-fetch.
+`MATCH_STATE_TTL_SEC` (8s as of v0.3.24f).  The publisher poll
+runs every 5s and the fetch itself takes 2-3s with the
+`wait_for_function` predicate (was 3.5-10s with a fixed
+`wait_for_timeout`).  In steady state the cache age at the SSE
+rebuild moment is therefore 0-5s + SSE roundtrip, well within
+the user's "feel real-time" threshold.  v0.3.24d had bumped
+the TTL from 5s to 30s to survive the publisher's 30s tick,
+but the publisher was reduced to 5s in v0.3.24e — so 8s
+leaves one tick of headroom for jitter while keeping the
+cache fresh enough for live predictions.
 
 Performance
 -----------
@@ -73,11 +75,6 @@ log = get_logger(__name__)
 ML_DATA_DIR = Path(os.environ.get("ML_DATA_DIR", "ml_data"))
 PLAYER_WR_CACHE_FILE = ML_DATA_DIR / "player_wr_cache.json"
 PLAYER_WR_TTL_SEC = 5 * 60.0   # 5 minutes
-MATCH_STATE_TTL_SEC = 30.0     # see module docstring — was 5s, raised to 30s
-                                # in v0.3.24d so the overlay survives a
-                                # whole publisher tick cycle (5s) plus
-                                # jitter without expiring exactly at the
-                                # read moment.
 # v0.3.21: dltv.org cold load is slow when the chromium
 # binary has to JIT its V8 on a small container.  8s was
 # too tight — the first goto of a brand-new live match
@@ -86,7 +83,25 @@ MATCH_STATE_TTL_SEC = 30.0     # see module docstring — was 5s, raised to 30s
 # network is fully down) and let the page settle for an
 # extra second after DOMContentLoaded.
 PLAYER_WR_FETCH_TIMEOUT_MS = 20000
+# v0.3.24f: the live state's `radiant_picks` / `dire_picks`
+# globals are populated by socket.io events AFTER React
+# hydrates.  A fixed 3.5s wait worked but made every fetch
+# at least 3.5s long; with a 5s publisher tick + 5-10s
+# fetch the live card lagged DLTV by 5-15s.  Replaced the
+# fixed `page.wait_for_timeout(PLAYER_WR_PAGE_LOAD_WAIT_MS)`
+# with `page.wait_for_function(predicate, timeout=...)` so
+# we return as soon as the data is ready (0.5-2s in steady
+# state).  The constant is now the MAX wait (hard upper
+# bound), not the actual wait.  See `_wait_for_live_state`.
 PLAYER_WR_PAGE_LOAD_WAIT_MS = 3500
+# v0.3.24f: with faster fetches (1-3s) the 30s cache TTL was
+# overkill — the live card was up to 30s old between fetches,
+# which the user perceived as a steady 15-25s lag.  Drop to
+# 8s: the publisher tick (5s) ensures a fetch is in flight
+# before the cache expires, and a single missed tick is
+# bounded by the fetch duration (~3s).  Worst-case cache
+# age: TTL + one tick + fetch = ~16s, average ~6-8s.
+MATCH_STATE_TTL_SEC = 8.0
 
 
 # Lazy playwright import.  We don't want a hard dependency at
@@ -986,6 +1001,52 @@ def fetch_match_state(url: str) -> Dict[str, Any]:
     return fut.result(timeout=PLAYER_WR_FETCH_TIMEOUT_MS / 1000.0 + 30.0)
 
 
+def _wait_for_live_state(page, max_ms: int) -> None:
+    """Wait for the page's live state to be populated.
+
+    v0.3.24f: the live card's picks/score lag was dominated by a
+    fixed `page.wait_for_timeout(PLAYER_WR_PAGE_LOAD_WAIT_MS)`
+    (3.5s) on every fetch.  With a 5s publisher tick and 1-2s
+    page-load time, the per-fetch cost was 5-6s; the user saw
+    5-15s of staleness in the card.
+
+    DLTV's live state lives in three places, populated by socket.io
+    events AFTER React hydrates:
+      1. `#live_scoreboard .team__scores-kills` (DOM, scores)
+      2. `radiant_picks` / `dire_picks` page globals (picks/bans)
+      3. `.info__duration[data-game-time]` (game time)
+
+    The predicate returns true as soon as ANY of these is present.
+    In steady state this fires at 0.5-2s; on a cold chromium
+    (just-launched V8) it can take the full `max_ms`.  On timeout
+    we fall through to the legacy extractors (which read
+    `.map__finished-v2` or scan the body text) — those paths
+    don't depend on socket.io so they still produce something
+    useful for older DLTV page versions.
+    """
+    from playwright.sync_api import TimeoutError as PWTimeout
+    try:
+        page.wait_for_function(
+            """() => {
+                const sb = document.getElementById('live_scoreboard');
+                if (!sb) return false;
+                const scoreEls = sb.querySelectorAll('.team__scores-kills');
+                if (scoreEls.length >= 2) return true;
+                if (typeof radiant_picks !== 'undefined' && Array.isArray(radiant_picks) && radiant_picks.length > 0) return true;
+                if (typeof dire_picks !== 'undefined' && Array.isArray(dire_picks) && dire_picks.length > 0) return true;
+                return false;
+            }""",
+            timeout=max_ms,
+        )
+    except PWTimeout:
+        # Cold chromium or older DLTV layout — proceed with whatever
+        # the legacy extractors can find.  The condition that would
+        # have triggered a return is most likely 'page not yet
+        # hydrated', which is the same condition the legacy
+        # extractors handle gracefully.
+        log.debug("dltv_browser: live state wait timed out after %dms", max_ms)
+
+
 def _fetch_match_state_inner(browser, url: str) -> Dict[str, Any]:
     """Inner fetch — runs on the dedicated playwright thread."""
     from playwright.sync_api import TimeoutError as PWTimeout
@@ -1001,7 +1062,7 @@ def _fetch_match_state_inner(browser, url: str) -> Dict[str, Any]:
                       wait_until="domcontentloaded")
         except PWTimeout:
             raise DiscoveryError(f"goto timeout: {url}")
-        page.wait_for_timeout(PLAYER_WR_PAGE_LOAD_WAIT_MS)
+        _wait_for_live_state(page, max_ms=PLAYER_WR_PAGE_LOAD_WAIT_MS)
         # v0.3.23: DLTV redesigned the live page for the third time
         # in 24h.  The new layout puts the in-progress game inside
         # `#live_scoreboard` and computes picks/bans via JS, exposing

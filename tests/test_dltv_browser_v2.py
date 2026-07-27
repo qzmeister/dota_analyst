@@ -61,6 +61,20 @@ class _MockPage:
     def wait_for_timeout(self, ms):
         return None
 
+    def wait_for_function(self, predicate, timeout=None, **kw):
+        # v0.3.24f: the real implementation waits for the page's
+        # socket.io-fed `radiant_picks` / `dire_picks` globals or the
+        # `#live_scoreboard .team__scores-kills` to appear.  In the
+        # mock those are injected by `evaluate` BEFORE the wait runs,
+        # so the predicate is always satisfied and we can return
+        # immediately.  Tests that want to exercise the timeout
+        # branch set `wait_for_function` on the page to raise
+        # TimeoutError.
+        if getattr(self, "_wait_for_function_raises", False):
+            from playwright.sync_api import TimeoutError
+            raise TimeoutError("mock: wait_for_function forced to time out")
+        return None
+
     def locator(self, sel: str):
         return _Locator(self._element_map.get(sel, []))
 
@@ -533,6 +547,82 @@ class TestFetchMatchStateIntegration:
         assert result["game_time"] == "36:15"
         # team_order is preserved so the caller can re-map if it wants
         assert result["team_order"] == ["dire", "radiant"]
+
+    def test_falls_back_to_legacy_extractor_when_wait_times_out(self, monkeypatch):
+        """v0.3.24f: when the page's socket.io-fed globals haven't
+        been populated within PLAYER_WR_PAGE_LOAD_WAIT_MS, the
+        `wait_for_function` predicate times out.  The legacy
+        extractors (`.map__finished-v2`, body-text scan) must still
+        produce a valid state — otherwise a slow chromium / flaky
+        network would silently drop the live card."""
+        from business import dltv_browser
+
+        # Build a page that has the OLDER layout (no
+        # `#live_scoreboard` element), so the wait_for_function
+        # predicate never returns true and the timeout branch fires.
+        # The `.map__finished-v2` block IS present, so the legacy
+        # extractor has something to read.
+        page = _make_page(team_order_dire_first=True)
+        page._wait_for_function_raises = True  # force the timeout branch
+
+        class _MockExecutor:
+            def submit(self, fn, *args, **kwargs):
+                class _Fut:
+                    _result = None
+                    _exc = None
+                    def result(self, timeout=None):
+                        if self._exc is not None:
+                            raise self._exc
+                        return self._result
+                f = _Fut()
+                try:
+                    f._result = fn(*args, **kwargs)
+                except Exception as e:
+                    f._exc = e
+                return f
+
+        class _MockPW:
+            def start(self):
+                return self
+            def stop(self):
+                pass
+            @property
+            def chromium(self):
+                class _C:
+                    def launch(self, **kw):
+                        class _B:
+                            def new_context(self):
+                                class _X:
+                                    def new_page(self):
+                                        return page
+                                    def close(self):
+                                        pass
+                                return _X()
+                            def new_page(self):
+                                return page
+                            def close(self):
+                                pass
+                            @property
+                            def contexts(self):
+                                return [self]
+                        return _B()
+                return _C()
+
+        import playwright.sync_api as psa
+        monkeypatch.setattr(psa, "sync_playwright", _MockPW)
+        monkeypatch.setattr(dltv_browser, "PLAYER_WR_PAGE_LOAD_WAIT_MS", 100)
+        monkeypatch.setattr(dltv_browser, "PLAYER_WR_FETCH_TIMEOUT_MS", 5000)
+        monkeypatch.setattr(dltv_browser, "_browser", None)
+        monkeypatch.setattr(dltv_browser, "_playwright", None)
+        monkeypatch.setattr(dltv_browser, "_browser_executor", _MockExecutor())
+
+        result = dltv_browser.fetch_match_state("https://dltv.org/matches/427530/x")
+        # Legacy extractor (.map__finished-v2) must have produced
+        # something — at minimum the picks (5+5) and the score.
+        assert result["picks"]["radiant"], "legacy extractor produced no picks"
+        assert result["picks"]["dire"], "legacy extractor produced no picks"
+        assert result["radiant_score"] == 35
+        assert result["dire_score"] == 6
 
 
 class TestDiscoverySynthesizesLiveRow:

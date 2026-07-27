@@ -223,6 +223,18 @@ def _ensure_zombie_reaper() -> None:
         _reaper_thread_started = True
 
 
+# v0.3.22: start the reaper eagerly at module import time.  The
+# daemon thread costs nothing when there are no zombies (waitpid
+# returns 0 immediately) and is needed BEFORE the first chromium
+# launch — otherwise we have a window where chromium subprocesses
+# can become zombies and accumulate because the reaper hasn't
+# started yet.  In particular, the publisher loop only fires
+# fetch_match_state when the board has live matches, so on a
+# quiet evening with no live games the reaper would never start
+# on its own.
+_ensure_zombie_reaper()
+
+
 def _ensure_cache_dir() -> None:
     ML_DATA_DIR.mkdir(parents=True, exist_ok=True)
 

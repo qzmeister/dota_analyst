@@ -374,6 +374,99 @@ class TestReadMapBlockFromDom:
         assert result["picks"]["radiant"][0]["name"] == "Bane"
 
 
+class TestReadLiveStateFromScoreboard:
+    """v0.3.24g: `_read_live_state_from_scoreboard` extracts picks
+    from the page globals AND the live `radiant_score` / `dire_score`
+    / `game_time` / `radiant_networth` / `dire_networth` from the
+    `#live_scoreboard` DOM.  The tests below cover the networth
+    fields specifically (the rest was already covered by the legacy
+    `_read_map_block_from_dom` tests, which exercise the same data
+    path through a different selector)."""
+
+    def _page(self, *, team_order_dire_first: bool, networth_r: int, networth_d: int, scores=(6, 35), game_time=2235):
+        """Build a `_MockPage` whose `evaluate()` returns the new
+        live-state payload (the shape produced by the JS block in
+        `_read_live_state_from_scoreboard`).
+        """
+        if team_order_dire_first:
+            teams = [
+                {"name": "Team Jenz",    "side_kind": "dire",    "kills": scores[0], "networth": networth_d},
+                {"name": "Team Syntax",  "side_kind": "radiant", "kills": scores[1], "networth": networth_r},
+            ]
+            radiant_score, dire_score = scores[1], scores[0]
+        else:
+            teams = [
+                {"name": "Team Syntax",  "side_kind": "radiant", "kills": scores[0], "networth": networth_r},
+                {"name": "Team Jenz",    "side_kind": "dire",    "kills": scores[1], "networth": networth_d},
+            ]
+            radiant_score, dire_score = scores[0], scores[1]
+        payload = {
+            "picks": {"radiant": [], "dire": []},
+            "bans": {"radiant": [], "dire": []},
+            "team_order": [t["side_kind"] for t in teams],
+            "teams": teams,
+            "radiant_score": radiant_score,
+            "dire_score": dire_score,
+            "game_time": game_time,
+            "radiant_networth": networth_r,
+            "dire_networth": networth_d,
+        }
+        # The JS in `_read_live_state_from_scoreboard` references
+        # `radiant_picks` / `dire_picks` (page globals) and the
+        # `#live_scoreboard` selector.  We key on both substrings so
+        # the mock returns the payload for that evaluate call.
+        return _MockPage(
+            {
+                "radiant_picks": payload,
+                "#live_scoreboard": payload,
+            },
+            {},
+        )
+
+    def test_networth_extracted_per_side(self):
+        from business import dltv_browser
+        page = self._page(team_order_dire_first=True, networth_r=23888, networth_d=20651)
+        result = dltv_browser._read_live_state_from_scoreboard(page)
+        # The extractor walks `teams[]` to expose networth at the
+        # top level as `radiant_networth` / `dire_networth`.  In the
+        # dire-first mock, teams[0] is dire, teams[1] is radiant.
+        assert result["radiant_networth"] == 23888
+        assert result["dire_networth"] == 20651
+        # team_names / team_sides are exposed at the top level for
+        # the board layer to attribute the networth back to a team
+        # name without re-reading the DOM.
+        assert "Team Syntax" in result["team_names"]
+        assert "Team Jenz" in result["team_names"]
+
+    def test_networth_missing_for_finished_map_returns_none(self):
+        """v0.3.24g: a finished map leaves `.team__networth` empty
+        in the DOM.  The extractor must report `networth=None` (not
+        0) so the live card hides the gold line instead of showing
+        a misleading "0  0" lead."""
+        from business import dltv_browser
+        # The mock returns the payload regardless of which field is
+        # missing.  Simulate the "empty DOM" case by setting networth
+        # to None on both teams.
+        page = self._page(team_order_dire_first=False, networth_r=None, networth_d=None)
+        result = dltv_browser._read_live_state_from_scoreboard(page)
+        # The mock's `radiant_picks` key still matches the evaluate
+        # call, so the extractor runs end-to-end.  But since the
+        # payload has networth=None on every team, the top-level
+        # fields must be None too.
+        assert result["radiant_networth"] is None
+        assert result["dire_networth"] is None
+
+    def test_game_time_passes_through(self):
+        """`game_time` was already extracted in v0.3.23; verify the
+        new extractor still surfaces it (we now read it in the
+        same call as the networth, so a regression in one would
+        hit the other)."""
+        from business import dltv_browser
+        page = self._page(team_order_dire_first=False, networth_r=10000, networth_d=9000, game_time=1234)
+        result = dltv_browser._read_live_state_from_scoreboard(page)
+        assert result["game_time"] == 1234
+
+
 class TestFetchMatchStateIntegration:
     """End-to-end: spin up a mocked `sync_playwright` and verify the
     `fetch_match_state` glue.  The actual `page.goto` is intercepted

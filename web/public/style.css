@@ -200,6 +200,26 @@ body {
 .live-score .d { color: var(--dire); }
 .live-score .sep { color: var(--muted); margin: 0 6px; font-size: 14px; }
 
+/* v0.3.24g: live gold-lead + game clock.  Sits between the live
+   score (kills) and the draft row, like DLTV's own layout.  Hidden
+   when the cache didn't carry networth this round (the live card
+   just doesn't render the line at all in that case). */
+.live-gold {
+  text-align: center; font-size: 13px; font-weight: 600;
+  margin: -2px 0 4px;
+  display: flex; gap: 8px; justify-content: center; align-items: baseline;
+  flex-wrap: wrap;
+}
+.live-gold .gold-pos { color: #2ecc71; }   /* radiant ahead (green) */
+.live-gold .gold-neg { color: #e74c3c; }   /* dire ahead (red) */
+.live-gold .gold-team { color: var(--text); font-weight: 700; }
+.live-gold .gold-split { color: var(--muted); font-weight: 400; font-size: 12px; }
+.live-time {
+  text-align: center; font-size: 12px; color: var(--muted);
+  margin: 0 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------- Predictions ---------- */
 .pred {
   margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 10px;

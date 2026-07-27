@@ -695,6 +695,17 @@ def _live_card(series: Dict, event_title: str) -> Dict:
             "radiant": m.get("radiant_score") or 0,
             "dire": m.get("dire_score") or 0,
         },
+        # v0.3.24g: elapsed game time in seconds (int), or None if the
+        # cache doesn't carry it (older DLTV layouts).  The frontend
+        # formats as MM:SS.
+        "game_time": m.get("game_time"),
+        # v0.3.24g: current networth (in-game gold) per side, plus
+        # the signed lead for the RADIANT side (positive = radiant
+        # is ahead).  All three are None if the cache didn't include
+        # networth this round (e.g. a finished map the publisher
+        # hasn't seen).  Frontend renders these next to the live
+        # score, like DLTV's own display.
+        "live_gold": _build_live_gold(m),
         "draft": {
             "radiant_picks": r_cards,
             "dire_picks": d_cards,
@@ -710,6 +721,33 @@ def _live_card(series: Dict, event_title: str) -> Dict:
         # (line ~485).
         "_steam_only": bool(series.get("_steam_only")),
         "is_watchlist": is_watchlist,
+    }
+
+
+def _build_live_gold(m: Dict) -> Optional[Dict]:
+    """Build the `live_gold` block for the live card.
+
+    Returns None if the cache didn't carry networth this round (so
+    the frontend can hide the row instead of showing "—").  Otherwise
+    returns:
+        {
+          "radiant": int,
+          "dire": int,
+          "lead_radiant": int,   # radiant - dire; positive = radiant ahead
+        }
+
+    The values come from `m["radiant_networth"]` / `m["dire_networth"]`
+    which the `_read_live_state_from_scoreboard` extractor in
+    `dltv_browser.py` pulls from `.team__networth .networth > span`.
+    """
+    rn = m.get("radiant_networth")
+    dn = m.get("dire_networth")
+    if not isinstance(rn, int) or not isinstance(dn, int):
+        return None
+    return {
+        "radiant": rn,
+        "dire": dn,
+        "lead_radiant": rn - dn,
     }
 
 

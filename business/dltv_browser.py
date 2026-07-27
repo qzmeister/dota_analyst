@@ -697,6 +697,23 @@ def _read_live_state_from_scoreboard(page) -> Dict[str, Any]:
                     const nameEl = t.querySelector('.team__title-name .name');
                     const sideEl = t.querySelector('.team__title-name .side');
                     const killsEl = t.querySelector('.team__scores-kills');
+                    // v0.3.24g: networth (current gold) per team.  DLTV
+                    // renders the value inside `.team__networth > .networth > span`;
+                    // the parent `.networth` also wraps an SVG arrow icon
+                    // (up/down) which we ignore.  The value is a plain
+                    // integer with no thousands separator (e.g. "23888").
+                    // On a finished match the div is empty (the live
+                    // updater stops writing once the map ends) — we
+                    // return `null` in that case so the live card can
+                    // hide the gold lead gracefully.
+                    let networth = null;
+                    const nwEl = t.querySelector('.team__networth .networth');
+                    if (nwEl) {
+                        const nwSpan = nwEl.querySelector('span');
+                        const raw = nwSpan ? nwSpan.textContent : nwEl.textContent;
+                        const n = parseInt((raw || '').trim().replace(/[^\\d-]/g, ''), 10);
+                        if (!Number.isNaN(n) && n > 0) networth = n;
+                    }
                     // The .side element has CSS classes 'side radiant'
                     // or 'side dire' — locale-independent.
                     let sideKind = 'unknown';
@@ -708,12 +725,17 @@ def _read_live_state_from_scoreboard(page) -> Dict[str, Any]:
                         name: nameEl ? (nameEl.textContent || '').trim() : '',
                         side_kind: sideKind,
                         kills: killsEl ? parseInt((killsEl.textContent || '0').trim(), 10) || 0 : null,
+                        networth: networth,
                     };
                 });
                 out.teams = teams;
                 out.team_order = teams.map((t) => t.side_kind);
                 if (teams.length >= 1) out.radiant_score = teams[0].kills;
                 if (teams.length >= 2) out.dire_score = teams[1].kills;
+                // v0.3.24g: also expose networth at the top level so the
+                // board layer doesn't have to walk `teams[]` to find it.
+                if (teams.length >= 1) out.radiant_networth = teams[0].networth;
+                if (teams.length >= 2) out.dire_networth = teams[1].networth;
                 // Game time in seconds (data-game-time is a stable
                 // int on the .info__duration element).
                 const durEl = sb.querySelector('.info__duration');
@@ -761,6 +783,11 @@ def _read_live_state_from_scoreboard(page) -> Dict[str, Any]:
     out["radiant_score"] = data.get("radiant_score")
     out["dire_score"] = data.get("dire_score")
     out["game_time"] = data.get("game_time")
+    # v0.3.24g: networth per side, exposed as plain ints (or None if the
+    # DLTV page didn't render the `.team__networth .networth > span` for
+    # this fetch — e.g. a cold page render or a finished map).
+    out["radiant_networth"] = data.get("radiant_networth")
+    out["dire_networth"] = data.get("dire_networth")
     teams = data.get("teams") or []
     out["team_names"] = [(t.get("name") or "") for t in teams]
     out["team_sides"] = [t.get("side_kind") or "unknown" for t in teams]

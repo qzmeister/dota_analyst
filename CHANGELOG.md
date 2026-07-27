@@ -134,6 +134,52 @@ produces a valid state).  422/422 pass.
 
 ---
 
+## [0.3.24g] — 2026-07-27 — Live card: gold lead + game clock + TM/ТБ predictions
+
+The post-match card already renders the prediction as
+"ТБ 50 (киллы) / ТБ 38 мин (длительность) / 11 (вышки)"
+with the standard over/under shape.  The live card was still
+showing raw `p.kills?.total` / `p.duration_min` / `p.towers?.total`
+and lacked two pieces of information DLTV's own live view
+shows: the in-game gold lead and the elapsed game clock.
+
+What changed:
+- `business/dltv_browser.py`: `_read_live_state_from_scoreboard`
+  now extracts per-team networth from `.team__networth > .networth > span`
+  on the page (the same element that powers DLTV's own gold
+  indicator).  Exposed as `radiant_networth` / `dire_networth`
+  at the top level of the match-state cache entry.
+- `business/board.py`: new `_build_live_gold` helper that turns
+  the two ints into `{radiant, dire, lead_radiant}` (or `None`
+  when either side is missing, so the frontend hides the row
+  instead of showing a misleading "0  0").  `_live_card`
+  attaches it as `live_gold` and also surfaces `game_time`
+  (raw int seconds) at the card top level.
+- `business/analysis.py`: new `towers_over_under` block on the
+  prediction dict, mirroring `kills_total_over_under` and
+  `total_over_under`.  Boundary: total ≥ 10 → ТМ, else ТБ+1.
+- `web/public/app.js`: `liveCard()` now renders the gold-lead
+  row (with a green/red arrow, ahead-team name, and a "23.9k ☀
+  / 19.3k 🌙" split — same shape as DLTV's own display) and
+  the elapsed game clock (`MM:SS`).  Predictions are now
+  formatted as `ТБ X` / `ТМ X` (kills, duration, towers) to
+  match the post-match card.
+- `web/public/style.css`: classes for `.live-gold` /
+  `.live-time` / `.gold-pos` / `.gold-neg` (green when radiant
+  is ahead, red when dire is ahead).
+
+What this does NOT do: DLTV doesn't expose destroyed-tower
+counts in the live DOM in any text form (the page's tower
+map renders icons on a small in-game map image, but the
+counter is image-only).  We can revisit this when DLTV
+redesigns, or probe the socket.io message format on the
+next live match to see if the field is sent over the wire.
+
+Tests: 8 new (3 networth extraction, 4 `_build_live_gold`,
+1 `towers_over_under` consistency).  430/430 pass.
+
+---
+
 ## [0.3.24] — 2026-07-27 — Live data: hide steam-only, fix cache key, dedup, dual-format tracker lookup
 
 A live card backlog of fixes from the 0.3.23 cutover.  Five

@@ -55,6 +55,10 @@ BET_THRESHOLD_OFFSET = 1            # offset added on the "over" side
 
 # --- Tower calibration (function of dominance) -------------------------
 # dominance = abs(p_a - 0.5) * 2  — 0 for balanced, 1 for one-sided.
+TOWER_OVER_UNDER_THRESHOLD = 10     # towers (total): >= 10 -> bet under
+                                    # 11 max per side / 22 max total — the
+                                    # theoretical ceiling, so the under bet
+                                    # has a built-in upper bound.
 TOWER_BALANCED = 5              # towers per side in a 50/50 game
 TOWER_WIN_SLOPE = 6             # extra towers the favored side takes
 TOWER_LOSE_SLOPE = 4            # towers the losing side gets at most
@@ -194,6 +198,14 @@ def analyze(
         towers_a, towers_b = win_tw, lose_tw
     else:
         towers_a, towers_b = lose_tw, win_tw
+    towers_total = towers_a + towers_b
+    # --- Тотальная ставка: Over/Under (same shape as kills/duration) ---
+    if towers_total >= TOWER_OVER_UNDER_THRESHOLD:
+        towers_side = "under"
+        towers_threshold = towers_total
+    else:
+        towers_side = "over"
+        towers_threshold = towers_total + BET_THRESHOLD_OFFSET
 
     # =================================================================== #
     # 5. First to 15 kills (early aggression / lane strength proxy)
@@ -250,9 +262,13 @@ def analyze(
             "formatted": pred_dur_mmss,
         },
         "towers": {
-            "total": towers_a + towers_b,
+            "total": towers_total,
             "radiant": towers_a,
             "dire": towers_b,
+        },
+        "towers_over_under": {
+            "side": towers_side,
+            "threshold": towers_threshold,
         },
         "first_to_15": {
             "team": first15_team["name"],

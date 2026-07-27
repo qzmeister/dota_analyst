@@ -97,9 +97,32 @@ class TestAnalyzeBasics:
         result = analyze(sample_team_a, sample_team_b, heroes_a, heroes_b)
         formatted = result["total_over_under"]["formatted"]
         # "MM:SS" format
-        assert ":" in formatted
-        mm, ss = formatted.split(":")
-        assert mm.isdigit() and ss.isdigit()
+        import re
+        assert re.match(r"^\d+:\d{2}$", formatted), formatted
+
+    def test_towers_over_under_present_and_consistent(self, sample_team_a, sample_team_b, sample_heroes_balanced):
+        """v0.3.24g: `towers_over_under` mirrors the kills/duration
+        over-under shape.  Side ∈ {over, under}, threshold > 0, and
+        when the predicted total is below the threshold the bet is
+        on the "over" side (heuristic over-estimates so we bet
+        contrarian)."""
+        heroes_a, heroes_b = sample_heroes_balanced
+        result = analyze(sample_team_a, sample_team_b, heroes_a, heroes_b)
+        ou = result.get("towers_over_under")
+        assert ou is not None, "analyze() must include towers_over_under"
+        assert ou["side"] in ("over", "under")
+        assert isinstance(ou["threshold"], int)
+        assert ou["threshold"] > 0
+        towers_total = result["towers"]["total"]
+        # Contrarian logic: low total -> over, high total -> under.
+        # The boundary is TOWER_OVER_UNDER_THRESHOLD (10).
+        from business.analysis import TOWER_OVER_UNDER_THRESHOLD, BET_THRESHOLD_OFFSET
+        if towers_total >= TOWER_OVER_UNDER_THRESHOLD:
+            assert ou["side"] == "under"
+            assert ou["threshold"] == towers_total
+        else:
+            assert ou["side"] == "over"
+            assert ou["threshold"] == towers_total + BET_THRESHOLD_OFFSET
 
 
 # ========================================================================== #

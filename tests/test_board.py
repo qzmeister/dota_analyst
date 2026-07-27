@@ -275,6 +275,45 @@ class TestBansToCards:
 
 
 # ============================================================================ #
+# _build_live_gold (v0.3.24g)
+# ============================================================================ #
+
+class TestBuildLiveGold:
+    """`_build_live_gold(m)` turns the raw `radiant_networth` /
+    `dire_networth` ints that come from `dltv_browser._read_live_state_from_scoreboard`
+    into a {radiant, dire, lead_radiant} block for the live card.
+    Returns None when either side is missing or non-numeric — the
+    frontend then hides the gold-lead row entirely instead of
+    showing "0  0"."""
+
+    def test_returns_signed_lead_for_radiant(self):
+        from business.board import _build_live_gold
+        out = _build_live_gold({"radiant_networth": 23888, "dire_networth": 20651})
+        assert out == {"radiant": 23888, "dire": 20651, "lead_radiant": 3237}
+
+    def test_lead_negative_when_dire_ahead(self):
+        from business.board import _build_live_gold
+        out = _build_live_gold({"radiant_networth": 18000, "dire_networth": 22000})
+        assert out["lead_radiant"] == -4000
+
+    def test_none_when_missing(self):
+        """v0.3.24g: a finished map leaves `.team__networth` empty
+        in the DOM.  Returning None (not {'radiant': 0, 'dire': 0})
+        is the contract the frontend uses to hide the gold row."""
+        from business.board import _build_live_gold
+        assert _build_live_gold({}) is None
+        assert _build_live_gold({"radiant_networth": 12345}) is None
+        assert _build_live_gold({"dire_networth": 12345}) is None
+
+    def test_none_for_non_int_values(self):
+        """The page might serialize the value as a string in some
+        DLTV versions.  The contract is "we only return a block
+        when both are int"."""
+        from business.board import _build_live_gold
+        assert _build_live_gold({"radiant_networth": "23888", "dire_networth": "20651"}) is None
+
+
+# ============================================================================ #
 # _played_maps / _active_map
 # ============================================================================ #
 

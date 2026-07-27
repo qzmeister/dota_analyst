@@ -45,6 +45,13 @@ from .stream import board_publisher_loop, event_stream, get_stream
 setup_logging()
 log = get_logger(__name__)
 
+# v0.3.24: hide live matches that are synthesised from Steam raw
+# data without any DLTV coverage (`_steam_only: True`).  These are
+# almost always minor Chinese amateur leagues where the scoreboard
+# is empty, team names are TBD, and the user has no way to click
+# through to a DLTV page.  Set to "0" to keep them.
+LIVE_HIDE_STEAM_ONLY = os.environ.get("LIVE_HIDE_STEAM_ONLY", "1") == "1"
+
 # --------------------------------------------------------------------------- #
 # Board cache (v0.3.14+, v0.3.22 cont 4: filter-on-auto-board)
 # --------------------------------------------------------------------------- #
@@ -443,6 +450,12 @@ def _filter_auto_board(
         # Watchlist pins: always keep — user explicitly requested.
         if mid is not None and int(mid) in watch_set:
             return True
+        # v0.3.24: drop steam-only live cards when the env flag is on.
+        # These come from the `_steam_game_to_series` fallback when DLTV
+        # has no /live/{id}.json entry — typically minor amateur leagues
+        # (Chinese "Steam league 17599" etc.) with empty scoreboards.
+        if LIVE_HIDE_STEAM_ONLY and card.get("_steam_only"):
+            return False
         # No event_id (steam-only / unmapped scraper card): drop when
         # the user has narrowed the board.  This matches the strict
         # live filter in build_board() so server-side filtering and

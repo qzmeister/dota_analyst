@@ -464,8 +464,29 @@ def _live_card(series: Dict, event_title: str) -> Dict:
     # score.  Falls back silently if the cache is empty (e.g.
     # chromium binary missing in the container) — the card then
     # just shows teams + event as before.
-    series_id = series.get("id")
-    if isinstance(series_id, int) and not (m.get("radiant_picks") or m.get("dire_picks")):
+    #
+    # v0.3.24: the `isinstance(series_id, int)` guard was too narrow.
+    # Watchlist live matches carry a string id like "watch-8916245727"
+    # (built in dltv_client._live_json_to_series) and the Steam-only
+    # fallback path uses "steam-8916245727".  Both forms embed an int
+    # series id — that's the dltv_browser cache key.  Parse it; if
+    # extraction fails (truly unknown id shape) skip the overlay.
+    series_id_raw = series.get("id")
+    series_id: Optional[int] = None
+    if isinstance(series_id_raw, int):
+        series_id = series_id_raw
+    elif isinstance(series_id_raw, str):
+        # Try the "<prefix>-<int>" form first (watch-…, steam-…).
+        for prefix in ("watch-", "steam-"):
+            if series_id_raw.startswith(prefix):
+                tail = series_id_raw[len(prefix):]
+                if tail.isdigit():
+                    series_id = int(tail)
+                    break
+        # Fall back to a bare-numeric string ("1234567").
+        if series_id is None and series_id_raw.isdigit():
+            series_id = int(series_id_raw)
+    if series_id is not None and not (m.get("radiant_picks") or m.get("dire_picks")):
         try:
             from .dltv_browser import get_cached_match_state
             cached_state = get_cached_match_state(series_id) or {}
@@ -604,6 +625,13 @@ def _live_card(series: Dict, event_title: str) -> Dict:
             "dire_bans": _bans_to_cards(m.get("dire_bans"), use_steam_id=is_watchlist),
         },
         "predictions": predictions,
+        # v0.3.24: surface the "synthesised from Steam raw, no DLTV coverage"
+        # marker so the server-side /api/board filter can drop these
+        # by default — they were polluting the board with 50+ Chinese
+        # amateur league matches.  The flag is set only on the
+        # `_steam_game_to_series` fallback path in dltv_client.py
+        # (line ~485).
+        "_steam_only": bool(series.get("_steam_only")),
         "is_watchlist": is_watchlist,
     }
 

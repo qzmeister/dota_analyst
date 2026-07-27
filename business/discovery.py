@@ -711,6 +711,28 @@ class _DiscoveryTracker:
         with self._lock:
             all_m = list(self._by_series.values()) + list(self._by_steam.values())
 
+        # v0.3.24c: dedup by steam_id (and by series_id as a fallback for
+        # matches the scraper found before the Steam id propagated).  A
+        # single match can live in both `_by_series` (keyed by dltv
+        # series_id, populated by the scraper) and `_by_steam` (keyed
+        # by steam_id, populated by the Steam poller).  refresh() runs
+        # Steam first, scraper second, so when scraper lands a row
+        # with both ids the corresponding `_by_steam[steam_id]` entry
+        # is stale but not removed.  Without this dedup the loop
+        # below produces two identical `watch-…` series for the same
+        # match — the user-visible "two cards for the same game" bug.
+        seen_keys: set = set()
+        deduped: List[Dict] = []
+        for m in all_m:
+            mid = m.get("steam_id")
+            sid = m.get("series_id")
+            key = mid or sid
+            if key is None or key in seen_keys:
+                continue
+            seen_keys.add(key)
+            deduped.append(m)
+        all_m = deduped
+
         for m in all_m:
             sid = m.get("series_id")
             mid = m.get("steam_id")

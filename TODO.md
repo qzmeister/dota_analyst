@@ -350,6 +350,7 @@ sprint.
 | 0.3.20   | Playwright + match-state overlay for in-progress series (`_live_card` synthesizes from `/live/{id}.json`) + chromium binary copied to `/app/.cache/ms-playwright/` (1.61 ignores `PLAYWRIGHT_BROWSERS_PATH`) | ✅ shipped |
 | 0.3.21   | Live TTL fix + match-state overlay + nginx X-API-Key + league-filter UI (chip row of top-5, bulk-select in picker) | ✅ shipped |
 | 0.3.22   | Live extractor rewrite (image-hash heroes via `window.__heroes` fallback) + chromium subprocess-leak fix (shared browser + per-fetch context + zombie reaper, started eagerly at module import) + strict live filter + auto-board server-side filter (`/api/board` no longer triggers a rebuild for filtered requests — instant) | ✅ shipped |
+| 0.3.23   | Real-time live data via `radiant_picks` / `dire_picks` page globals + `#live_scoreboard` (matches DLTV's visual display, no API delay).  Docker build switched to `npmmirror.com` Playwright mirror to dodge `storage.googleapis.com` timeouts. | ✅ shipped |
 | 0.4.0    | Cookie-based SSE auth + Postgres + auto-retrain | 🚧 next |
 | 1.0.0    | First production-ready release              | 🎯 goal     |
 

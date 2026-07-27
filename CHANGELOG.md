@@ -16,6 +16,51 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com), a
 
 ---
 
+## [0.3.23] — 2026-07-27 — Real-time live data via socket.io globals
+
+DLTV redesigned the match page **for the third time in 24h**.  The
+v0.3.22 extractor (which read `.map__finished-v2` / `.pick__image`
+/ `.duration b`) found **zero** matches on the new layout.  The
+new page renders the live state inside `#live_scoreboard` and
+populates `radiant_picks` / `dire_picks` JavaScript globals on every
+socket.io `__nd2_match_{steam_id}` event.
+
+The fix: **read from page globals** (not the DOM).  After 5s of
+playwright loading, the page's own `handleGame(result)` callback
+has run, `radiant_picks` and `dire_picks` are populated, and we
+read them via `page.evaluate()`.  This gives us picks/score at the
+**same speed the page renders them** (real-time, no API delay)
+- matches DLTV's visual display instead of the cached API response.
+
+What changed:
+- New `_read_live_state_from_scoreboard()` (v0.3.23) replaces
+  `_read_map_block_from_dom()` as the primary extractor:
+  - Kills: `#live_scoreboard .team__scores-kills` (locale-
+    independent CSS class)
+  - Game time: `#live_scoreboard .info__duration[data-game-time]`
+    (data attribute, in seconds, no text translation risk)
+  - Picks: `radiant_picks` / `dire_picks` page globals (real-time)
+  - Team sides: from CSS classes on `.side` element
+    (`side radiant` / `side dire`), not user-visible text
+- Old `_read_map_block_from_dom()` kept as fallback for older
+  page versions or pre-hydration.
+- `docker/Dockerfile.business`: `PLAYWRIGHT_DOWNLOAD_HOST`
+  pointed at `npmmirror.com/mirrors/playwright` to dodge the
+  `storage.googleapis.com` timeout that bricked the 0.3.22
+  build (5x 30s = 150s wasted on the upstream CDN).
+
+Verified in container: `/api/board?events=6617` returns
+`live_score: {radiant: 10, dire: 8}` and full 5+5 picks
+(Beastmaster/Techies/Jakiro/Nature's Prophet/Pangolier vs
+Slardar/Lina/Undying/Centaur Warrunner/Dark Willow), matching
+DLTV's display exactly.
+
+Tests: 6 new in `tests/test_scoreboard_extractor.py` (kills,
+picks, both-ids-distinct invariant, locale-independence, empty
+scoreboard, no-legacy-selector sanity).  418/418 pass.
+
+---
+
 ## [0.3.22] — 2026-07-27 — Docker deploy + DLTV live extractor rewrite + memory-leak fix
 
 Final hardening sprint before 0.4.0 (cookie-based SSE auth, prod

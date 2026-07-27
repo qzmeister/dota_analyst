@@ -162,6 +162,11 @@ def audit_file(path: Path) -> List[Finding]:
                 if "change-me" in line and ("#" in line or "dev-local" in line):
                     # informational, not a finding — but mark it
                     findings.append(Finding("[P1]", "dev-secret-inline", str(path), line_idx, msg))
+                elif _is_test_file(path):
+                    # test fixtures use literal "secret" / "wrong" / etc.
+                    # for the auth middleware tests.  Skip — they're
+                    # not real secrets, they're test inputs.
+                    continue
                 else:
                     findings.append(Finding("[P0]", "secret-literal", str(path), line_idx, msg))
         # suspicious calls

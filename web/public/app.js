@@ -451,66 +451,79 @@ function liveCard(c) {
   const pr = w.prob_radiant ?? 50;
   const draft = c.draft || {};
   // v0.3.24g: TM/ТБ helpers — same shape as the postmatch card.
-  // `side` is "over" → ТБ, "under" → ТМ.  Frontend is the only place
-  // that maps the boolean to the Cyrillic label.
   const overUnder = (ou) => {
     if (!ou || !ou.side) return "—";
     const side = ou.side === "over" ? "ТБ" : "ТМ";
     return `${side} ${ou.threshold ?? "—"}`;
   };
-  // v0.3.24g: format the game clock (raw seconds) as MM:SS.  The
-  // server gives us int seconds (or null if the cache didn't carry
-  // it yet); null / NaN collapse to "—".
+  // v0.3.24g: format the game clock (raw seconds) as MM:SS.
   const fmtClock = (s) => {
     if (typeof s !== "number" || !Number.isFinite(s) || s < 0) return "—";
     const mm = Math.floor(s / 60);
     const ss = Math.floor(s % 60);
     return `${mm}:${String(ss).padStart(2, "0")}`;
   };
-  // v0.3.24g: format networth (an int) as e.g. "23.9k" — DLTV's
-  // own display style.  Negative values get a minus sign.
+  // v0.3.24g: format networth (an int) as e.g. "23.9k" — DLTV style.
   const fmtGold = (g) => {
     if (typeof g !== "number" || !Number.isFinite(g)) return "—";
     const sign = g < 0 ? "-" : "";
     const abs = Math.abs(g);
     return `${sign}${(abs / 1000).toFixed(1)}k`;
   };
-  // v0.3.24g: gold-lead line under the live score.  Hidden when
-  // the cache hasn't carried networth this round (e.g. cold
-  // chromium fetch, finished map).  Renders the lead as
-  // "+3.2k  Team NS" (or "−3.2k  Team Rostik" if the other side
-  // is ahead) with a green/red arrow — same shape as DLTV.
+  // v0.3.24h: gold block — handle partial data.  The lead only
+  // exists when both sides are known; when only one is, show what
+  // we have and leave the lead / missing side as "—".
   let goldLine = "";
-  if (c.live_gold && typeof c.live_gold.radiant === "number" && typeof c.live_gold.dire === "number") {
+  if (c.live_gold && (typeof c.live_gold.radiant === "number" || typeof c.live_gold.dire === "number")) {
     const g = c.live_gold;
-    const lead = g.lead_radiant;
-    const fmtLead = fmtGold(lead);
-    // Map the radiant/dire networth back to team A / team B for
-    // the label.  We use `radiant_team` / `dire_team` set by the
-    // backend so the names match the rest of the card.
-    const aheadIsRadiant = lead >= 0;
-    const aheadName = aheadIsRadiant ? c.radiant_team.name : c.dire_team.name;
-    const arrow = aheadIsRadiant ? "▲" : "▼";
-    const cls = aheadIsRadiant ? "gold-pos" : "gold-neg";
-    goldLine = `<div class="live-gold"><span class="${cls}">${arrow} ${fmtLead}</span><span class="gold-team">${aheadName}</span><span class="gold-split">${fmtGold(g.radiant)} ☀ / 🌙 ${fmtGold(g.dire)}</span></div>`;
+    const rn = g.radiant, dn = g.dire, lead = g.lead_radiant;
+    if (typeof lead === "number") {
+      const aheadIsRadiant = lead >= 0;
+      const aheadName = aheadIsRadiant ? c.radiant_team.name : c.dire_team.name;
+      const arrow = aheadIsRadiant ? "▲" : "▼";
+      const cls = aheadIsRadiant ? "gold-pos" : "gold-neg";
+      goldLine = `<div class="live-gold"><span class="${cls}">${arrow} ${fmtGold(lead)}</span><span class="gold-team">${aheadName}</span><span class="gold-split">${fmtGold(rn)} ☀ / 🌙 ${fmtGold(dn)}</span></div>`;
+    } else {
+      // Partial: only one side known.
+      const which = typeof rn === "number" ? "radiant" : "dire";
+      const val = which === "radiant" ? rn : dn;
+      const sym = which === "radiant" ? "☀" : "🌙";
+      const name = which === "radiant" ? c.radiant_team.name : c.dire_team.name;
+      goldLine = `<div class="live-gold"><span class="gold-split">${sym} ${fmtGold(val)} ${name}</span></div>`;
+    }
   }
+  // v0.3.24h: per-team side block — team name + row of 5 big hero
+  // icons.  This is the DLTV layout: name on top, hero icons
+  // underneath, player names below the icons.  We don't have
+  // player names in the cache (the picks carry hero names, not
+  // player names), so the label under each icon is the hero name.
+  const sideBlock = (team, picks, sideClass) => {
+    const heroCells = (picks || []).map((h) => {
+      const inner = h.image
+        ? `<img src="${h.image}" title="${h.name || ""}" onerror="this.parentNode.innerHTML='<div class=ph>${h.name || "?"}</div>'"/>`
+        : `<div class="ph">${h.name || "?"}</div>`;
+      return `<div class="hero hero-lg">${inner}<div class="hero-name">${h.name || "—"}</div></div>`;
+    }).join("");
+    const ph = (picks || []).length === 0
+      ? `<div class="heroes-empty">— нет пиков —</div>`
+      : "";
+    return `<div class="side-block ${sideClass}">
+      <div class="side-block-name">${teamLogo(team)} <span>${team.name}</span></div>
+      <div class="side-block-heroes">${heroCells}${ph}</div>
+    </div>`;
+  };
   return el(`
-    <div class="card">
+    <div class="card live-card">
       <div class="event"><span>${c.event} · Игра ${c.game_no}</span><span class="bo-tag">${c.bo}</span></div>
-      <div class="teams-row">
-        ${teamBlock(c.radiant_team, "")}
-        <span class="vs">${c.series_score_a}–${c.series_score_b}</span>
-        ${teamBlock(c.dire_team, "right")}
-      </div>
-      <div class="live-score"><span class="r">${c.live_score.radiant}</span><span class="sep">kills</span><span class="d">${c.live_score.dire}</span></div>
-      ${goldLine}
-      <div class="live-time">⏱ ${fmtClock(c.game_time)}</div>
-
-      <div class="draft">
-        <div class="side-label radiant">☀ ${c.radiant_team.name}</div>
-        ${heroesRow(draft.radiant_picks)}
-        <div class="side-label dire">🌙 ${c.dire_team.name}</div>
-        ${heroesRow(draft.dire_picks)}
+      <div class="live-header">
+        ${sideBlock(c.radiant_team, draft.radiant_picks, "radiant")}
+        <div class="live-center">
+          <div class="live-score"><span class="r">${c.live_score.radiant}</span><span class="sep">:</span><span class="d">${c.live_score.dire}</span></div>
+          <div class="live-clock">⏱ ${fmtClock(c.game_time)}</div>
+          ${goldLine}
+          <div class="live-series-score">серия ${c.series_score_a}–${c.series_score_b}</div>
+        </div>
+        ${sideBlock(c.dire_team, draft.dire_picks, "dire")}
       </div>
 
       <div class="pred">

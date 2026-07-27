@@ -307,17 +307,31 @@ async def player_wr_browser_loop(interval_sec: float = PLAYER_WR_POLL_INTERVAL_S
         while True:
             try:
                 # Snapshot the live series with a URL — these are the
-                # ones the scraper found on /matches.  We only need
-                # the (series_id, url) pair; the rest of the live
-                # card lives in `_by_series`.
+                # ones the scraper found on /matches.  We need the
+                # (series_id, url, steam_id) triple: the dltv series id
+                # is the primary cache key (the publisher writes it);
+                # the steam id is an alias key so the watchlist path
+                # can find the same data after the tracker is pruned
+                # (which happens immediately when a match ends).
                 with _tracker._lock:
-                    targets = [
-                        (sid, m.get("url"))
-                        for sid, m in _tracker._by_series.items()
-                        if m.get("stage") == "live" and m.get("url")
-                    ]
-                for sid, url in targets:
-                    sid_int = int(sid)
+                    targets = []
+                    for sid, m in _tracker._by_series.items():
+                        if m.get("stage") != "live" or not m.get("url"):
+                            continue
+                        # Tracker rows have either top-level `steam_id`
+                        # (scraper format) or `maps[0].steam_id`
+                        # (watchlist format).  Check both.
+                        steam_id = m.get("steam_id")
+                        if not steam_id:
+                            maps = m.get("maps") or []
+                            if maps and isinstance(maps[0], dict):
+                                steam_id = maps[0].get("steam_id")
+                        try:
+                            steam_id = int(steam_id) if steam_id is not None else None
+                        except (TypeError, ValueError):
+                            steam_id = None
+                        targets.append((int(sid), m.get("url"), steam_id))
+                for sid_int, url, steam_id in targets:
                     # v0.3.20: match state is the more important
                     # thing — without it the live card shows empty
                     # picks.  Try it first; the WR fetch piggybacks
@@ -325,7 +339,7 @@ async def player_wr_browser_loop(interval_sec: float = PLAYER_WR_POLL_INTERVAL_S
                     # module, but the cache write is shared).
                     if dltv_browser.get_cached_match_state(sid_int) is None:
                         await _aio.to_thread(dltv_browser.update_match_state_cache,
-                                             sid_int, url)
+                                             sid_int, url, steam_id)
                     if dltv_browser.get_cached_player_winrates(sid_int) is None:
                         await _aio.to_thread(dltv_browser.update_player_wr_cache,
                                              sid_int, url)

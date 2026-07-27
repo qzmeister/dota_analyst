@@ -564,9 +564,30 @@ def _live_card(series: Dict, event_title: str) -> Dict:
                             break
             except Exception as exc:
                 log.debug("steam→dltv id map failed for %s: %s", steam_id_for_lookup, exc)
+        # v0.3.24h: try the cache by the dltv series id first, then by
+        # the steam id.  The publisher writes both keys when it knows
+        # the steam id, so the watchlist path can find the data
+        # without going through the tracker (which is pruned as soon
+        # as a match ends — see the comment in
+        # `dltv_browser.update_match_state_cache` for the full
+        # rationale).
         try:
-            from .dltv_browser import get_cached_match_state
+            from .dltv_browser import get_cached_match_state, get_cached_match_state_by_steam
+            # v0.3.24h: try the cache by the dltv series id first,
+            # then by the steam id, then by the explicit dltv id
+            # carried on the watchlist series (`_dltv_series_id`).
+            # The first two handle the publisher's alias keys; the
+            # third is the critical one for finished matches where
+            # the tracker has been pruned but the watchlist series
+            # itself remembers the dltv id from the /live/{id}.json
+            # response.
             cached_state = get_cached_match_state(series_id) or {}
+            if not cached_state and steam_id_for_lookup is not None and steam_id_for_lookup != series_id:
+                cached_state = get_cached_match_state_by_steam(steam_id_for_lookup) or {}
+            if not cached_state:
+                dltv_id_from_series = series.get("_dltv_series_id")
+                if dltv_id_from_series is not None and int(dltv_id_from_series) != int(series_id):
+                    cached_state = get_cached_match_state(int(dltv_id_from_series)) or {}
             ms_picks = cached_state.get("picks") or {}
             ms_bans = cached_state.get("bans") or {}
             # We don't have hero_ids from the DOM extraction, only
@@ -601,11 +622,24 @@ def _live_card(series: Dict, event_title: str) -> Dict:
                     "radiant_bans":  [_entry(c, i) for i, c in enumerate(r_ban_cards)],
                     "dire_bans":     [_entry(c, i) for i, c in enumerate(d_ban_cards)],
                 }
-                # If we have a real score, overlay it too.
-                if "radiant_score" in cached_state:
-                    m["radiant_score"] = cached_state["radiant_score"]
-                if "dire_score" in cached_state:
-                    m["dire_score"] = cached_state["dire_score"]
+            # v0.3.24h: every per-map field the cache carries is
+            # overlaid onto `m` so the live card shows it even when
+            # picks are empty (DLTV's `/live/{id}.json` returns
+            # empty picks in late game / between games; without
+            # this branch the gold/time/score would also be
+            # lost).  Each `if` is a no-op when the field is
+            # missing or None, so a partial cache can't clobber
+            # the watchlist path's value.
+            if "radiant_score" in cached_state:
+                m["radiant_score"] = cached_state["radiant_score"]
+            if "dire_score" in cached_state:
+                m["dire_score"] = cached_state["dire_score"]
+            if cached_state.get("game_time") is not None:
+                m["game_time"] = cached_state["game_time"]
+            if cached_state.get("radiant_networth") is not None:
+                m["radiant_networth"] = cached_state["radiant_networth"]
+            if cached_state.get("dire_networth") is not None:
+                m["dire_networth"] = cached_state["dire_networth"]
         except Exception as exc:
             log.debug("match-state overlay failed for %s: %s", series_id, exc)
 
@@ -727,14 +761,19 @@ def _live_card(series: Dict, event_title: str) -> Dict:
 def _build_live_gold(m: Dict) -> Optional[Dict]:
     """Build the `live_gold` block for the live card.
 
-    Returns None if the cache didn't carry networth this round (so
-    the frontend can hide the row instead of showing "—").  Otherwise
-    returns:
-        {
-          "radiant": int,
-          "dire": int,
-          "lead_radiant": int,   # radiant - dire; positive = radiant ahead
-        }
+    v0.3.24h: the live page sometimes exposes only one side's
+    networth (e.g. the page was captured before the trailing side
+    got its first tick, or the layout puts the leading side in
+    a more prominent position).  We return a partial block when
+    at least one side is present so the user sees the value we
+    do have; the lead is `None` in that case and the frontend
+    shows "—" for the lead / missing side instead of the whole
+    row.
+
+    Returns:
+        None                            — neither side is known
+        {radiant, dire, lead_radiant}    — both sides known
+        {radiant, dire, lead_radiant=None}  — only one side known
 
     The values come from `m["radiant_networth"]` / `m["dire_networth"]`
     which the `_read_live_state_from_scoreboard` extractor in
@@ -742,12 +781,15 @@ def _build_live_gold(m: Dict) -> Optional[Dict]:
     """
     rn = m.get("radiant_networth")
     dn = m.get("dire_networth")
-    if not isinstance(rn, int) or not isinstance(dn, int):
+    rn = rn if isinstance(rn, int) else None
+    dn = dn if isinstance(dn, int) else None
+    if rn is None and dn is None:
         return None
+    lead = (rn - dn) if (rn is not None and dn is not None) else None
     return {
         "radiant": rn,
         "dire": dn,
-        "lead_radiant": rn - dn,
+        "lead_radiant": lead,
     }
 
 

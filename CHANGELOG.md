@@ -180,6 +180,77 @@ Tests: 8 new (3 networth extraction, 4 `_build_live_gold`,
 
 ---
 
+## [0.3.24h] — 2026-07-27 — Live card: cache survives match end + DLTV-style layout
+
+The live card was rendering empty picks/score/time the moment
+the discovery tracker pruned a finished match — the cache
+held the data, but the watchlist path (which only knows the
+steam id) couldn't find it.  Two reasons:
+
+  1. The cache was keyed by the DLTV series id, but the
+     watchlist path passes the steam id.  The dltv_browser
+     cache lookup walked the tracker to map one to the other;
+     once pruned, the walk returned nothing.
+  2. The cache overlay only ran when picks were present, so
+     a late-game fetch with empty `picks` from DLTV's
+     `/live/{id}.json` would lose the time / score / gold
+     overlay too.
+
+Plus a UI ask: the user wanted DLTV-style layout — bigger
+hero icons under each team name, time + gold lead in the
+header next to the score.
+
+What changed:
+- `business/dltv_client.py`: `_live_json_to_series` now
+  carries `_dltv_series_id` from the `/live/{id}.json`
+  response's `db.series.id` field.  The watchlist path can
+  then look up the dltv_browser cache by the dltv id
+  directly, without going through the tracker.
+- `business/dltv_browser.py`:
+    * `update_match_state_cache(series_id, url, steam_id=None)`:
+      when `steam_id` is given, also write the entry under
+      the alias key `s{steam_id}`.  Watchlist can find it
+      without the tracker.
+    * `get_cached_match_state_by_steam(steam_id)`: alias
+      lookup.
+    * `MATCH_STATE_TTL_SEC` raised 8s → 1h.  During a live
+      match the publisher writes every 5s, so the cache is
+      always < 5s old; the 1h TTL is for the post-match
+      window where the tracker has pruned the row but the
+      user still wants the final picks/score/gold.
+- `business/board.py`:
+    * `_live_card` cache lookup now tries `series_id`,
+      then `steam_id`, then `_dltv_series_id` from the
+      series itself (the critical one for finished matches).
+    * The overlay now applies `game_time`,
+      `radiant_networth`, `dire_networth` even when picks
+      are empty — DLTV's late-game state has empty picks but
+      a real time + score, and the user wants those.
+    * `_build_live_gold` returns a partial block when only
+      one side is known (e.g. the page was captured before
+      both ticks landed).  Frontend shows the value we have
+      and "—" for the rest.
+- `business/stream.py`: `player_wr_browser_loop` now
+  passes the steam id (looked up from the tracker entry's
+  `steam_id` field or `maps[0].steam_id`) to
+  `update_match_state_cache` so the alias key gets written.
+- `web/public/app.js` + `style.css`:
+    * `liveCard` rewritten: three-column grid (team-side /
+      score+time+gold / team-side), big 44x56 hero icons
+      (image + name) under each team name, the series score
+      and the live card's match id sit under the centre.
+    * Gold line shows the partial-block form correctly:
+      "☀ 23.9k Team Rostik" when only one side is known,
+      "▲ +3.2k Team NS   23.9k ☀ / 19.3k 🌙" when both are.
+    * Collapses to a single column on narrow screens
+      (≤ 700px) via a media query.
+
+Tests: 4 new (cache alias under both keys; partial-gold
+block; the live-card cache fallback for the finished-match
+window; pick+time overlay decoupling).  433/433 pass.
+
+---
+
 ## [0.3.24] — 2026-07-27 — Live data: hide steam-only, fix cache key, dedup, dual-format tracker lookup
 
 A live card backlog of fixes from the 0.3.23 cutover.  Five

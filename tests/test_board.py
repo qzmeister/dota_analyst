@@ -296,21 +296,35 @@ class TestBuildLiveGold:
         out = _build_live_gold({"radiant_networth": 18000, "dire_networth": 22000})
         assert out["lead_radiant"] == -4000
 
-    def test_none_when_missing(self):
+    def test_none_when_both_missing(self):
         """v0.3.24g: a finished map leaves `.team__networth` empty
         in the DOM.  Returning None (not {'radiant': 0, 'dire': 0})
         is the contract the frontend uses to hide the gold row."""
         from business.board import _build_live_gold
         assert _build_live_gold({}) is None
-        assert _build_live_gold({"radiant_networth": 12345}) is None
-        assert _build_live_gold({"dire_networth": 12345}) is None
+
+    def test_partial_when_one_side_missing(self):
+        """v0.3.24h: the live page sometimes exposes only one side's
+        networth (e.g. the page was captured before the trailing
+        side got its first tick).  Return a partial block with the
+        known side and `None` for the missing one — the frontend
+        renders the value and shows "—" for the rest."""
+        from business.board import _build_live_gold
+        out_r = _build_live_gold({"radiant_networth": 12345})
+        assert out_r == {"radiant": 12345, "dire": None, "lead_radiant": None}
+        out_d = _build_live_gold({"dire_networth": 12345})
+        assert out_d == {"radiant": None, "dire": 12345, "lead_radiant": None}
 
     def test_none_for_non_int_values(self):
         """The page might serialize the value as a string in some
-        DLTV versions.  The contract is "we only return a block
-        when both are int"."""
+        DLTV versions.  When both are strings, we return None
+        (frontend shows "—" for everything).  When one is an int
+        and the other is a string, we return a partial block with
+        the int side."""
         from business.board import _build_live_gold
         assert _build_live_gold({"radiant_networth": "23888", "dire_networth": "20651"}) is None
+        partial = _build_live_gold({"radiant_networth": 23888, "dire_networth": "20651"})
+        assert partial == {"radiant": 23888, "dire": None, "lead_radiant": None}
 
 
 # ============================================================================ #

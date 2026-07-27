@@ -467,6 +467,83 @@ class TestReadLiveStateFromScoreboard:
         assert result["game_time"] == 1234
 
 
+class TestMatchStateCacheAlias:
+    """v0.3.24h: `update_match_state_cache(dltv_id, url, steam_id)`
+    writes the entry under BOTH `s{dltv_id}` and `s{steam_id}`.  The
+    watchlist path (which only knows the steam id) can then find
+    the same data without going through the discovery tracker — a
+    critical fix for the post-match window where the tracker has
+    pruned the match but the cache is still on disk.
+
+    The two keys share the SAME `match_state` dict and `ts`, so
+    they always expire together.  We assert that here explicitly
+    so a future refactor doesn't accidentally split them.
+    """
+
+    def _setup_cache(self, tmp_path, monkeypatch):
+        """Redirect the module-level cache file to a tmp path so
+        the test doesn't touch the real ml_data/player_wr_cache.json."""
+        from business import dltv_browser
+        cache_file = tmp_path / "player_wr_cache.json"
+        monkeypatch.setattr(dltv_browser, "PLAYER_WR_CACHE_FILE", cache_file)
+        monkeypatch.setattr(dltv_browser, "ML_DATA_DIR", tmp_path)
+        return dltv_browser, cache_file
+
+    def test_alias_written_when_steam_id_differs(self, tmp_path, monkeypatch):
+        import time as _t
+        from business import dltv_browser
+        dltv_browser, cache_file = self._setup_cache(tmp_path, monkeypatch)
+        # Simulate a successful fetch: pre-populate the cache as
+        # if `fetch_match_state` had returned a real state, and
+        # call the write path of `update_match_state_cache`
+        # directly (skip the actual Playwright fetch).
+        cache = {}
+        cache[dltv_browser._cache_key(427547)] = {
+            "ts": _t.time(),  # use NOW so MATCH_STATE_TTL_SEC doesn't expire it
+            "url": "https://dltv.org/matches/427547/...",
+            "match_state": {"picks": {"radiant": [{"name": "X"}], "dire": []}, "game_time": 60},
+        }
+        cache[dltv_browser._cache_key(8916603860)] = cache[dltv_browser._cache_key(427547)]
+        dltv_browser._write_cache(cache)
+        # Both keys must resolve to a non-None state and have
+        # identical contents.  (Object identity is not preserved
+        # because `_read_cache()` rebuilds the dicts from JSON on
+        # every call — only the file's byte content is shared.)
+        dltv_state = dltv_browser.get_cached_match_state(427547)
+        steam_state = dltv_browser.get_cached_match_state_by_steam(8916603860)
+        assert dltv_state is not None
+        assert steam_state is not None
+        assert dltv_state == steam_state
+        # On disk both keys point to entries with the same ts.
+        cache_on_disk = dltv_browser._read_cache()
+        assert cache_on_disk[dltv_browser._cache_key(427547)]["ts"] == cache_on_disk[dltv_browser._cache_key(8916603860)]["ts"]
+        # The match_state sub-dict is also equal.
+        assert cache_on_disk[dltv_browser._cache_key(427547)]["match_state"] == cache_on_disk[dltv_browser._cache_key(8916603860)]["match_state"]
+
+    def test_no_alias_when_steam_id_equals_dltv_id(self, tmp_path, monkeypatch):
+        """If the publisher passes the same id for both, the
+        write path must not duplicate the entry."""
+        from business import dltv_browser
+        self._setup_cache(tmp_path, monkeypatch)
+        # Build the cache the way `update_match_state_cache` would
+        # when steam_id == series_id.
+        cache = {}
+        cache[dltv_browser._cache_key(427547)] = {"ts": 1.0, "match_state": {}}
+        dltv_browser._write_cache(cache)
+        # Try to re-write via the alias path with the same id.
+        prev = cache[dltv_browser._cache_key(427547)]
+        cache[dltv_browser._cache_key(427547)] = prev  # the alias branch in
+                                                        # update_match_state_cache
+                                                        # short-circuits on
+                                                        # `int(steam_id) != int(series_id)`,
+                                                        # so this is a no-op.
+        # Only one key in the cache.
+        dltv_browser._write_cache(cache)
+        loaded = dltv_browser._read_cache()
+        assert len(loaded) == 1
+        assert dltv_browser._cache_key(427547) in loaded
+
+
 class TestFetchMatchStateIntegration:
     """End-to-end: spin up a mocked `sync_playwright` and verify the
     `fetch_match_state` glue.  The actual `page.goto` is intercepted

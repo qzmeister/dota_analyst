@@ -373,6 +373,14 @@ def _live_json_to_series(match_id: int, lj: Dict) -> Optional[Dict]:
         "maps": [m],
         # extra, for UI labeling
         "_watchlist": True,
+        # v0.3.24h: the `/live/{id}.json` response embeds the DLTV
+        # series id in `db.series.id`.  The watchlist path would
+        # otherwise only know the steam match id, which means it
+        # can't look up the dltv_browser cache (the publisher
+        # writes the cache under the DLTV id).  Carrying it here
+        # lets `_live_card` find the cache directly, even after
+        # the discovery tracker has pruned the row.
+        "_dltv_series_id": series_meta.get("id"),
         "_series_score_first": first_score,
         "_series_score_second": second_score,
     }

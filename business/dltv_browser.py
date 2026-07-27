@@ -101,7 +101,24 @@ PLAYER_WR_PAGE_LOAD_WAIT_MS = 3500
 # before the cache expires, and a single missed tick is
 # bounded by the fetch duration (~3s).  Worst-case cache
 # age: TTL + one tick + fetch = ~16s, average ~6-8s.
-MATCH_STATE_TTL_SEC = 8.0
+MATCH_STATE_TTL_SEC = 3600.0   # v0.3.24h: bumped from 8s to 1h.
+                                # The publisher writes the cache
+                                # every 5s during a live match
+                                # (so the live card stays fresh),
+                                # but a live card for a recently
+                                # finished match still wants to
+                                # show the final picks/score/gold
+                                # from the cache — the discovery
+                                # tracker prunes the match the
+                                # moment it ends, and the watchlist
+                                # path would otherwise render an
+                                # empty card for the next hour
+                                # until someone deletes the file.
+                                # 1h gives the user plenty of time
+                                # to scroll back through finished
+                                # games; the file is small
+                                # (~10KB per entry) so unbounded
+                                # growth is not a concern.
 
 
 # Lazy playwright import.  We don't want a hard dependency at
@@ -1172,10 +1189,41 @@ def get_cached_match_state(series_id: int) -> Optional[Dict[str, Any]]:
     return state
 
 
-def update_match_state_cache(series_id: int, url: str) -> Optional[Dict[str, Any]]:
+def get_cached_match_state_by_steam(steam_id: int) -> Optional[Dict[str, Any]]:
+    """Same as `get_cached_match_state`, but looks up the cache by the
+    Steam match id (alias key written by `update_match_state_cache`).
+
+    v0.3.24h: DLTV's `/live/{id}.json` no longer returns picks/bans
+    (it ships scores + team names only).  The only source of picks
+    for an in-progress series is the dltv_browser scrape, which
+    writes the cache under the DLTV series id (`s{dltv_id}`).  A
+    watchlist row that only knows the steam id can't find that
+    cache after the tracker is pruned (which happens immediately
+    when the match ends).  Writing the cache under both keys keeps
+    the live card alive for the post-match "still in live cards"
+    window — a few minutes where the user wants the data even
+    though the match has technically ended.
+    """
+    return get_cached_match_state(steam_id)
+
+
+def update_match_state_cache(series_id: int, url: str, steam_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
     """Fetch + cache the live match state.  Same write semantics as
     `update_player_wr_cache`: returns None on failure and writes
     a failure marker so the next poll skips the URL.
+
+    v0.3.24h: when `steam_id` is provided, also write the entry under
+    the alias key `s{steam_id}`.  The watchlist path (which only
+    knows the steam id) then finds the same data without going
+    through the discovery tracker — a win for two reasons:
+      1. The tracker is pruned as soon as the match ends, so
+         after-match "live" cards would otherwise be empty.
+      2. The dltv_id lookup currently requires walking the
+         tracker under its lock, which is wasted work when the
+         alias key is right there.
+
+    The two cache entries share the same `match_state` dict and
+    `ts`, so they always expire together.
     """
     cache = _read_cache()
     now = time.time()
@@ -1190,6 +1238,8 @@ def update_match_state_cache(series_id: int, url: str) -> Optional[Dict[str, Any
         prev["match_state"] = {}
         prev["error"] = str(exc)
         cache[_cache_key(series_id)] = prev
+        if steam_id is not None and int(steam_id) != int(series_id):
+            cache[_cache_key(int(steam_id))] = prev
         _write_cache(cache)
         return None
     prev = cache.get(_cache_key(series_id), {})
@@ -1197,5 +1247,7 @@ def update_match_state_cache(series_id: int, url: str) -> Optional[Dict[str, Any
     prev["url"] = url
     prev["match_state"] = state
     cache[_cache_key(series_id)] = prev
+    if steam_id is not None and int(steam_id) != int(series_id):
+        cache[_cache_key(int(steam_id))] = prev
     _write_cache(cache)
     return state

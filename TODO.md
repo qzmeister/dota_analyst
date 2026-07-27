@@ -354,8 +354,61 @@ sprint.
 | 0.3.24   | Live filter hardening: hide 44 steam-only Chinese amateur cards (`LIVE_HIDE_STEAM_ONLY=1`) + map `watch-/steam-` steam_id → dltv series id for cache lookup + dedup Steam+Scraper double-adds in `get_live_and_prematch` + handle both tracker formats (top-level `steam_id` vs `maps[].steam_id`) + bump `MATCH_STATE_TTL_SEC` 5s→30s | ✅ shipped |
 | 0.3.24e  | Live picks: dual-id namespace fix in `_picks_to_heroes` / `_bans_to_cards` (Hoodwink's dltv_id 120 was silently matching Pangolier's steam_id 120 → empty `#120` cards with no image) + drop `PLAYER_WR_POLL_INTERVAL_SEC` 30s→5s so the cache keeps up with DLTV's socket.io feed | ✅ shipped |
 | 0.3.24f  | Live card lag cut from 5-15s to ~6-8s avg: `_wait_for_live_state` replaces fixed 3.5s `wait_for_timeout` with a `wait_for_function` predicate that returns as soon as `#live_scoreboard` scores or `radiant_picks`/`dire_picks` globals are populated (0.5-2s steady state) + drop `MATCH_STATE_TTL_SEC` 30s→8s so the cache refreshes between publisher ticks | ✅ shipped |
-| 0.4.0    | Cookie-based SSE auth + Postgres + auto-retrain | 🚧 next |
+| 0.4.0    | Cookie-based SSE auth + Postgres + auto-retrain + **direct socket.io from Python** (replace chromium page load with a raw websocket connection to `dltv.org`'s `__nd2_match_{steam_id}` channel — drops fetch time to 1-2s, removes the greenlet error + 200MB chromium binary, parallelizes across live matches trivially) + `async_playwright` refactor (the proper fix for the chromium greenlet error if we keep the page-load path) | 🚧 next |
 | 1.0.0    | First production-ready release              | 🎯 goal     |
+
+### Open backlog (any minor)
+
+- [ ] **Direct DLTV socket.io client** — DLTV's live page opens
+      `socket.io` to `https://dltv.org` on `__nd2_match_{steam_id}`,
+      which streams `{picks, score, game_time, gold_lead, ...}`
+      updates in real time.  A Python client (e.g.
+      `python-socketio[asyncio_client]` or a raw websocket with the
+      engine.io handshake) would:
+        * skip chromium entirely → no 200MB browser binary, no
+          greenlet error, no leak risk
+        * cut fetch time from 2-3s (with `_wait_for_live_state`) to
+          ~0.5-1s
+        * trivially parallel across live matches (one asyncio
+          task per match, no single-worker executor)
+        * survive page redesigns (the data shape is in the
+          socket events, not the DOM)
+      Captured here as a 0.4.0 deliverable.  Probe order:
+      (1) inspect what the page sends in
+          `page.evaluate("() => window.io && io.managers")` /
+      (2) confirm the `__nd2_match_{steam_id}` channel name from
+          the page's network tab,
+      (3) sketch a minimal async client that connects, parses
+          the first event, and writes the same `match_state`
+          cache entry the page-load path produces — that lets
+          us A/B compare without touching the consumer.
+- [ ] **Live data fallback chain** — when chromium fetch fails
+      (binary missing, network down, page redesign), currently
+      we just write an empty cache and the live card goes
+      blank.  Layered fallback: direct socket.io → DLTV
+      `/live/{id}.json` (laggy but always works) → Steam
+      `GetLiveLeagueGames` (only team/series data, no picks) →
+      "live state unavailable" with timestamp.
+- [ ] **Multikill classifier revisit** — discontinued in 0.3.10a
+      because the 1111-match pro corpus had zero "Low" matches
+      (the model collapsed to "always High").  Needs a bigger
+      corpus with amateur/pub games to get the rare-multikill
+      examples.  Defer until corpus >5k matches with `multikill`
+      labels.
+- [ ] **Towers regressor** — schema in place, but
+      `full_matches.json` doesn't carry the tower bitmask.
+      DatDota's `tower_radiant` / `tower_dire` are 11-bit
+      bitfields; once we have them in the corpus the model can
+      train.  Most predictive feature we haven't used.
+- [ ] **Audit P1-15** — `except Exception` sites in business
+      modules that swallow + log without re-raise.  Behaviour
+      is intentional in places (per-card loops, ML fallback)
+      but a few are masks for real bugs that never got fixed
+      because the catch hid them.  Audit before 1.0.
+- [ ] **Cookie-based SSE auth** — `/api/stream/*` is currently
+      unauthed for local use (intentional, see `UNAUTHED_PREFIXES`).
+      0.4.0 = add a real login endpoint + signed cookie + remove
+      from `UNAUTHED_PREFIXES`.  Public deploy is blocked on this.
 
 ¹ Calibration plumbing landed but the empirical run on the
 1111-match corpus showed Platt and isotonic both overfit; the

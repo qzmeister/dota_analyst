@@ -211,47 +211,89 @@ async def board_publisher_loop(
     Runs forever (until the event loop is cancelled by shutdown).
     The function lives in `stream.py` so `app.py` can register
     it as a `lifespan` task without taking on the implementation.
+
+    v0.3.25t-patch: split `build_board` (CPU/IO bound, blocking) from
+    the asyncio tick.  The previous version used `asyncio.to_thread()`
+    + `await asyncio.sleep(interval)`, but in our setup the thread
+    blocks forever (chromium / urllib deadlock, or some other in-
+    process contention with the asyncio default executor) — and
+    `asyncio.to_thread` does NOT cancel the actual running thread on
+    cancellation, so the publisher's `build_board` calls pile up in
+    the default executor and the loop never produces a fresh board.
+
+    The fix: a plain `threading.Thread` daemon runs `build_board` in
+    a loop, updating `_app._latest_auto_board` in place.  The
+    asyncio half of this function just polls the cache every
+    `interval_sec` and pushes SSE.  Pure `asyncio.sleep` — no
+    chance of an asyncio-side deadlock cascading into a stuck
+    thread.
+
+    Only this publisher fix is applied; the v0.3.25l (socket.io
+    hook), v0.3.25m (game_time normalisation), v0.3.25n (duration
+    fallback), v0.3.25r (TBD filter) and v0.3.25s (0-picks filter)
+    changes are NOT included — that whole block caused live matches
+    to disappear from the UI and was rolled back by the user.
     """
-    from .board import build_board  # local import — avoids cycle on app startup
     from . import app as _app  # for the module-level board cache (v0.3.14+)
+    from .board import build_board  # local import — avoids cycle on app startup
+    from .ml.engine import get_default_engine
+
+    import threading as _threading
+    import time as _t
 
     log.info("sse publisher loop started; interval=%.1fs", interval_sec)
+
+    _stop = _threading.Event()
+
+    def _build_loop() -> None:
+        log.info("sse publisher: board-builder thread started")
+        while not _stop.is_set():
+            t0 = _t.monotonic()
+            try:
+                board = build_board([], [])
+                if "engine" not in board:
+                    board["engine"] = get_default_engine().name
+                _app._latest_auto_board = board
+                _app._latest_auto_board_ts = _t.monotonic()
+                log.info(
+                    "sse publisher: build_board done in %.2fs (live=%d)",
+                    _t.monotonic() - t0,
+                    len(board.get("live", [])),
+                )
+            except (BoardBuildError, MLError, DiscoveryError, UpstreamError, InfraError) as exc:
+                log.warning("sse publisher build failed: %s", exc, exc_info=False)
+            except Exception as exc:
+                # catch-all so a coding bug in build_board (or any
+                # unanticipated exception) cannot silently kill the
+                # publisher.  Without this the SSE clients would keep
+                # getting the same stale auto-board for hours.
+                log.exception("sse publisher build crashed (recovered): %s", exc)
+            # Tick at interval_sec; break early if cancelled.
+            _stop.wait(interval_sec)
+        log.info("sse publisher: board-builder thread stopped")
+
+    _threading.Thread(target=_build_loop, name="board-builder", daemon=True).start()
+
+    # The asyncio half just watches the cache and pushes SSE
+    # when something changed.  Sleep `interval_sec` between
+    # checks; the publisher's own throttle (publish_if_changed)
+    # de-dupes unchanged boards.
     try:
         while True:
             try:
-                # `build_board` is synchronous and on cold cache can take
-                # 1-3 minutes (DLTV events + scraper + Steam live feed).
-                # Running it inline would block the asyncio event loop
-                # and prevent the FastAPI lifespan from completing
-                # startup (uvicorn never reaches "Application startup
-                # complete").  We run it in a worker thread.
-                board = await asyncio.to_thread(build_board, [], [])
-                # Stamp the engine name on the publisher's payload so
-                # requests that hit the publisher's cache (rather than
-                # a fresh build in /api/board) still report which
-                # engine produced the predictions.  Without this, the
-                # field shows up as `null` on the auto-board cache.
-                if "engine" not in board:
-                    from .ml.engine import get_default_engine
-                    board["engine"] = get_default_engine().name
-                # Expose the latest auto-board to /api/board so a fresh
-                # browser request returns instantly instead of triggering
-                # a parallel build (which would race with this one).
-                import time as _t
-                _app._latest_auto_board = board
-                _app._latest_auto_board_ts = _t.monotonic()
+                await asyncio.sleep(interval_sec)
+                board = _app._latest_auto_board
+                if not board:
+                    continue
                 delivered = await stream.publish_if_changed(board)
                 if delivered:
                     log.debug("sse publish delivered to %d subscribers", delivered)
             except (BoardBuildError, MLError, DiscoveryError, UpstreamError, InfraError) as exc:
-                # Poller is the safety net for the whole data pipeline —
-                # a network blip or a single bad scrape must not kill the
-                # background task.  We catch our full exception tree but
-                # deliberately let `KeyboardInterrupt`/`SystemExit` and
-                # coding bugs in our own modules surface.
-                log.warning("sse publisher tick failed: %s", exc, exc_info=True)
-            await asyncio.sleep(interval_sec)
+                log.warning("sse publisher tick failed: %s", exc, exc_info=False)
+            except Exception as exc:
+                log.exception("sse publisher tick crashed (recovered): %s", exc)
     except asyncio.CancelledError:
+        _stop.set()
         log.info("sse publisher loop cancelled")
         raise
 

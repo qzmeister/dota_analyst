@@ -5,6 +5,7 @@ Board assembly: turns DLTV series into Kanban cards
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set
 
@@ -14,6 +15,25 @@ from .analysis import analyze, analyze_map_with_verdict, decode_towers
 from .dltv_client import client, _parse_dt
 from .exceptions import AccuracyError, DotaAnalystError, MLError
 from .ml.engine import get_default_engine
+
+# v17 trained-model predictor (opt-in via V17_PREDICT=1).
+# Loads `ml_data/models/<target>_v17/` 4 production models trained on
+# 603 OpenDota pro matches from top-30 teams (270-day window, 21
+# features, threshold-pruned per target).  Backtest: 73.8% winner
+# accuracy on 599 matches.  Falls back to legacy engine on MLError.
+if os.environ.get("V17_PREDICT", "0") == "1":
+    try:
+        from . import v17_predict
+        if v17_predict.is_available():
+            _V17_ENABLED = True
+        else:
+            log.warning("V17_PREDICT=1 but models missing; falling back to legacy engine")
+            _V17_ENABLED = False
+    except Exception as _exc:  # noqa: BLE001
+        log.warning("V17_PREDICT=1 but import failed: %s", _exc)
+        _V17_ENABLED = False
+else:
+    _V17_ENABLED = False
 
 log = get_logger(__name__)
 
@@ -357,10 +377,36 @@ def _postmatch_prediction(series: Dict, is_watchlist: bool = False) -> Optional[
     heroes_b = _picks_to_heroes(d_picks if radiant_is_first else r_picks,
                                  use_steam_id=is_watchlist)[0]
     try:
-        engine = get_default_engine()
-        pred = engine.analyze(first if radiant_is_first else second,
-                              second if radiant_is_first else first,
-                              heroes_a, heroes_b)
+        if _V17_ENABLED:
+            # v17 trained models (603-match honest 5-fold CV):
+            # winner 75.3% accuracy, kills MAE 11.8, duration MAE 587,
+            # first_15 MAE 3.92.  Bypass legacy engine entirely.
+            radiant_team_id = last_map.get("radiant_team_id")
+            dire_team_id    = last_map.get("dire_team_id")
+            # For live cards we have raw hero_ids; pass them straight
+            # through.  For postmatch we may have hero_id or hero_steam_id
+            # mixed; `_picks_to_heroes` normalises that.
+            r_hero_ids = [h.get("hero_id") for h in (r_picks if radiant_is_first else d_picks)
+                          if isinstance(h, dict) and h.get("hero_id") is not None]
+            d_hero_ids = [h.get("hero_id") for h in (d_picks if radiant_is_first else r_picks)
+                          if isinstance(h, dict) and h.get("hero_id") is not None]
+            pred = v17_predict.predict(
+                radiant_team_id=radiant_team_id,
+                dire_team_id=dire_team_id,
+                radiant_picks=r_hero_ids,
+                dire_picks=d_hero_ids,
+                radiant_bans=[b.get("hero_id") for b in (last_map.get("radiant_bans") or [])
+                              if isinstance(b, dict) and b.get("hero_id") is not None],
+                dire_bans=[b.get("hero_id") for b in (last_map.get("dire_bans") or [])
+                           if isinstance(b, dict) and b.get("hero_id") is not None],
+                start_time=last_map.get("start_time"),
+                patch=last_map.get("patch"),
+            )
+        else:
+            engine = get_default_engine()
+            pred = engine.analyze(first if radiant_is_first else second,
+                                  second if radiant_is_first else first,
+                                  heroes_a, heroes_b)
     except MLError:
         # ML subsystem failed (model missing, features broken, etc.).
         # Fall back to the caller — the per-card builder decides whether

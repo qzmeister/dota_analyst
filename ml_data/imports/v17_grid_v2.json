@@ -1,0 +1,340 @@
+{
+  "n_matches": 529,
+  "n_features": 21,
+  "feature_names": [
+    "patch",
+    "r_tier",
+    "d_tier",
+    "r_team_id",
+    "d_team_id",
+    "r_hero_enc",
+    "d_hero_enc",
+    "r_dire_syn",
+    "r_picks",
+    "d_picks",
+    "r_top_team",
+    "d_top_team",
+    "side_rad",
+    "r_ban_enc",
+    "d_ban_enc",
+    "r_team_syn",
+    "d_team_syn",
+    "gold_adv_5",
+    "gold_adv_10",
+    "days_since_patch",
+    "n_top_players"
+  ],
+  "results": {
+    "kills_total": {
+      "configs": {
+        "ridge_a0.1": {
+          "params": {
+            "alpha": 0.1
+          },
+          "model": "ridge",
+          "mae": 12.112543478398893,
+          "rmse": 15.647210514234084
+        },
+        "ridge_a1.0": {
+          "params": {
+            "alpha": 1.0
+          },
+          "model": "ridge",
+          "mae": 12.102385874113615,
+          "rmse": 15.637826394817164
+        },
+        "ridge_a10": {
+          "params": {
+            "alpha": 10.0
+          },
+          "model": "ridge",
+          "mae": 12.058524067384075,
+          "rmse": 15.620181813221075
+        },
+        "hgb_default": {
+          "params": {},
+          "model": "hgb",
+          "mae": 12.658315280122299,
+          "rmse": 16.435855065139492
+        },
+        "hgb_max_depth3": {
+          "params": {
+            "max_depth": 3,
+            "learning_rate": 0.05
+          },
+          "model": "hgb",
+          "mae": 12.177979187069761,
+          "rmse": 15.990327534089563
+        },
+        "hgb_poisson": {
+          "params": {
+            "loss": "poisson"
+          },
+          "model": "hgb",
+          "mae": 12.479498802518114,
+          "rmse": 16.306936761032084
+        },
+        "xgb_reg_sq": {
+          "params": {
+            "objective": "reg:squarederror",
+            "max_depth": 4,
+            "eta": 0.1,
+            "n_estimators": 200
+          },
+          "model": "xgb_reg",
+          "mae": 12.465963554382324,
+          "rmse": 16.329850486566908
+        },
+        "xgb_reg_poisson": {
+          "params": {
+            "objective": "count:poisson",
+            "max_depth": 4,
+            "eta": 0.1,
+            "n_estimators": 200
+          },
+          "model": "xgb_reg",
+          "mae": 12.572591400146484,
+          "rmse": 16.427923927310513
+        }
+      },
+      "best_config": "ridge_a10",
+      "best_mae": 12.058524067384075,
+      "n_samples": 529
+    },
+    "duration_sec": {
+      "configs": {
+        "ridge_a0.1": {
+          "params": {
+            "alpha": 0.1
+          },
+          "model": "ridge",
+          "mae": 600.3378138359622,
+          "rmse": 791.9797065117124
+        },
+        "ridge_a1.0": {
+          "params": {
+            "alpha": 1.0
+          },
+          "model": "ridge",
+          "mae": 598.7858693141297,
+          "rmse": 789.914726189151
+        },
+        "ridge_a10": {
+          "params": {
+            "alpha": 10.0
+          },
+          "model": "ridge",
+          "mae": 595.0021479570055,
+          "rmse": 785.2907887653485
+        },
+        "hgb_default": {
+          "params": {},
+          "model": "hgb",
+          "mae": 614.314854795534,
+          "rmse": 812.1036833974067
+        },
+        "hgb_max_depth3": {
+          "params": {
+            "max_depth": 3,
+            "learning_rate": 0.05
+          },
+          "model": "hgb",
+          "mae": 600.5585713356911,
+          "rmse": 797.3581245521289
+        },
+        "hgb_poisson": {
+          "params": {
+            "loss": "poisson"
+          },
+          "model": "hgb",
+          "mae": 612.4776222595958,
+          "rmse": 819.3298452881596
+        },
+        "xgb_reg_sq": {
+          "params": {
+            "objective": "reg:squarederror",
+            "max_depth": 4,
+            "eta": 0.1,
+            "n_estimators": 200
+          },
+          "model": "xgb_reg",
+          "mae": 636.6546752929687,
+          "rmse": 817.7006139718357
+        },
+        "xgb_reg_quantile_p50": {
+          "params": {
+            "objective": "reg:quantileerror",
+            "quantile_alpha": 0.5,
+            "max_depth": 4,
+            "eta": 0.1,
+            "n_estimators": 200
+          },
+          "model": "xgb_reg",
+          "mae": 615.6876220703125,
+          "rmse": 819.3130012066091
+        }
+      },
+      "best_config": "ridge_a10",
+      "best_mae": 595.0021479570055,
+      "n_samples": 529
+    },
+    "first_15_kills": {
+      "configs": {
+        "ridge_a0.1": {
+          "params": {
+            "alpha": 0.1
+          },
+          "model": "ridge",
+          "mae": 3.887925788838494,
+          "rmse": 4.999149328102274
+        },
+        "ridge_a1.0": {
+          "params": {
+            "alpha": 1.0
+          },
+          "model": "ridge",
+          "mae": 3.893719060329853,
+          "rmse": 5.010458612330657
+        },
+        "ridge_a10": {
+          "params": {
+            "alpha": 10.0
+          },
+          "model": "ridge",
+          "mae": 3.910059651453799,
+          "rmse": 5.028060948016986
+        },
+        "hgb_default": {
+          "params": {},
+          "model": "hgb",
+          "mae": 4.063873219249349,
+          "rmse": 5.222196143982837
+        },
+        "hgb_max_depth3": {
+          "params": {
+            "max_depth": 3,
+            "learning_rate": 0.05
+          },
+          "model": "hgb",
+          "mae": 3.939830606352497,
+          "rmse": 5.056824298053109
+        },
+        "hgb_poisson": {
+          "params": {
+            "loss": "poisson"
+          },
+          "model": "hgb",
+          "mae": 4.0958505483130665,
+          "rmse": 5.298358262034525
+        },
+        "xgb_reg_sq": {
+          "params": {
+            "objective": "reg:squarederror",
+            "max_depth": 4,
+            "eta": 0.1,
+            "n_estimators": 200
+          },
+          "model": "xgb_reg",
+          "mae": 4.203322076797486,
+          "rmse": 5.3623172071569645
+        },
+        "xgb_reg_poisson": {
+          "params": {
+            "objective": "count:poisson",
+            "max_depth": 4,
+            "eta": 0.1,
+            "n_estimators": 200
+          },
+          "model": "xgb_reg",
+          "mae": 4.001386260986328,
+          "rmse": 5.171168546050832
+        }
+      },
+      "best_config": "ridge_a0.1",
+      "best_mae": 3.887925788838494,
+      "n_samples": 529
+    },
+    "winner": {
+      "configs": {
+        "logreg_c0.5_l1": {
+          "params": {
+            "C": 0.5,
+            "penalty": "l1",
+            "solver": "liblinear"
+          },
+          "model": "logreg",
+          "accuracy": 0.7295597484276729,
+          "logloss": 0.5616700373700251
+        },
+        "logreg_c1.0_l2": {
+          "params": {
+            "C": 1.0,
+            "penalty": "l2"
+          },
+          "model": "logreg",
+          "accuracy": 0.6711051212938006,
+          "logloss": 0.599345109436024
+        },
+        "logreg_c2.0_l2": {
+          "params": {
+            "C": 2.0,
+            "penalty": "l2"
+          },
+          "model": "logreg",
+          "accuracy": 0.6880862533692722,
+          "logloss": 0.5934101749066383
+        },
+        "hgb_default": {
+          "params": {},
+          "model": "hgb",
+          "accuracy": 0.7163701707097934,
+          "logloss": 0.7391380093980784
+        },
+        "hgb_max_depth3": {
+          "params": {
+            "max_depth": 3,
+            "learning_rate": 0.05
+          },
+          "model": "hgb",
+          "accuracy": 0.7200898472596585,
+          "logloss": 0.5860173133423838
+        },
+        "hgb_max_depth4": {
+          "params": {
+            "max_depth": 4,
+            "learning_rate": 0.1
+          },
+          "model": "hgb",
+          "accuracy": 0.7144654088050314,
+          "logloss": 0.6457793706751863
+        },
+        "xgb_dart": {
+          "params": {
+            "booster": "dart",
+            "max_depth": 4,
+            "eta": 0.1,
+            "n_estimators": 200,
+            "rate_drop": 0.1
+          },
+          "model": "xgb_clf",
+          "accuracy": 0.7332794249775382,
+          "logloss": 0.5640798449516297
+        },
+        "xgb_gbtree": {
+          "params": {
+            "booster": "gbtree",
+            "max_depth": 4,
+            "eta": 0.1,
+            "n_estimators": 200
+          },
+          "model": "xgb_clf",
+          "accuracy": 0.7050314465408805,
+          "logloss": 0.617181944847107
+        }
+      },
+      "best_config": "xgb_dart",
+      "best_accuracy": 0.7332794249775382,
+      "n_samples": 529
+    }
+  }
+}

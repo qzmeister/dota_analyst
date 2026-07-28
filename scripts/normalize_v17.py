@@ -377,7 +377,7 @@ def main(argv: List[str]) -> int:
     skipped = 0
     for i, src in enumerate(files, 1):
         try:
-            raw = json.loads(src.read_text())
+            raw = json.loads(src.read_text(encoding="utf-8"))
             if not isinstance(raw, dict):
                 continue
             norm = normalize_one(raw, top_team_ids=top_ids)

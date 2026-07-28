@@ -1,0 +1,361 @@
+{
+  "method": "coefficient|permutation",
+  "results": {
+    "kills_total": {
+      "best_config": "ridge_a10",
+      "importance": [
+        {
+          "feature": "r_tier",
+          "score": 0.26743242144584656
+        },
+        {
+          "feature": "r_top_team",
+          "score": 0.23517102003097534
+        },
+        {
+          "feature": "d_tier",
+          "score": 0.1335533708333969
+        },
+        {
+          "feature": "n_top_players",
+          "score": 0.10679566115140915
+        },
+        {
+          "feature": "d_top_team",
+          "score": 0.0966501235961914
+        },
+        {
+          "feature": "r_picks",
+          "score": 0.05211171507835388
+        },
+        {
+          "feature": "d_picks",
+          "score": 0.05211171507835388
+        },
+        {
+          "feature": "r_dire_syn",
+          "score": 0.01373646967113018
+        },
+        {
+          "feature": "r_team_syn",
+          "score": 0.010586359538137913
+        },
+        {
+          "feature": "d_hero_enc",
+          "score": 0.009888799861073494
+        },
+        {
+          "feature": "r_ban_enc",
+          "score": 0.006392179988324642
+        },
+        {
+          "feature": "days_since_patch",
+          "score": 0.0054720062762498856
+        },
+        {
+          "feature": "d_team_syn",
+          "score": 0.00408972566947341
+        },
+        {
+          "feature": "r_hero_enc",
+          "score": 0.0038476719055324793
+        },
+        {
+          "feature": "d_ban_enc",
+          "score": 0.0018977844156324863
+        },
+        {
+          "feature": "gold_adv_5",
+          "score": 0.00020433783356565982
+        },
+        {
+          "feature": "gold_adv_10",
+          "score": 5.8618057664716616e-05
+        },
+        {
+          "feature": "d_team_id",
+          "score": 2.7250726120087165e-08
+        },
+        {
+          "feature": "r_team_id",
+          "score": 1.106939873096735e-08
+        },
+        {
+          "feature": "side_rad",
+          "score": 0.0
+        },
+        {
+          "feature": "patch",
+          "score": 0.0
+        }
+      ]
+    },
+    "duration_sec": {
+      "best_config": "ridge_a10",
+      "importance": [
+        {
+          "feature": "r_tier",
+          "score": 0.2926500141620636
+        },
+        {
+          "feature": "n_top_players",
+          "score": 0.2407076209783554
+        },
+        {
+          "feature": "d_picks",
+          "score": 0.1409176141023636
+        },
+        {
+          "feature": "r_picks",
+          "score": 0.1409176141023636
+        },
+        {
+          "feature": "d_tier",
+          "score": 0.13211725652217865
+        },
+        {
+          "feature": "r_top_team",
+          "score": 0.016911501064896584
+        },
+        {
+          "feature": "d_top_team",
+          "score": 0.013681471347808838
+        },
+        {
+          "feature": "r_team_syn",
+          "score": 0.005772535689175129
+        },
+        {
+          "feature": "r_hero_enc",
+          "score": 0.0034295746590942144
+        },
+        {
+          "feature": "r_ban_enc",
+          "score": 0.003114710794761777
+        },
+        {
+          "feature": "d_team_syn",
+          "score": 0.0027721587102860212
+        },
+        {
+          "feature": "days_since_patch",
+          "score": 0.0024527725763618946
+        },
+        {
+          "feature": "d_hero_enc",
+          "score": 0.0018020698335021734
+        },
+        {
+          "feature": "r_dire_syn",
+          "score": 0.001627494697459042
+        },
+        {
+          "feature": "d_ban_enc",
+          "score": 0.0010653567733243108
+        },
+        {
+          "feature": "gold_adv_5",
+          "score": 3.9649035898037255e-05
+        },
+        {
+          "feature": "gold_adv_10",
+          "score": 2.0442843378987163e-05
+        },
+        {
+          "feature": "d_team_id",
+          "score": 6.565384325085688e-08
+        },
+        {
+          "feature": "r_team_id",
+          "score": 3.4591273845308024e-08
+        },
+        {
+          "feature": "side_rad",
+          "score": 0.0
+        },
+        {
+          "feature": "patch",
+          "score": 0.0
+        }
+      ]
+    },
+    "first_15_kills": {
+      "best_config": "ridge_a0.1",
+      "importance": [
+        {
+          "feature": "r_team_syn",
+          "score": 0.24356576800346375
+        },
+        {
+          "feature": "r_ban_enc",
+          "score": 0.18773727118968964
+        },
+        {
+          "feature": "r_dire_syn",
+          "score": 0.11716092377901077
+        },
+        {
+          "feature": "r_hero_enc",
+          "score": 0.10376925766468048
+        },
+        {
+          "feature": "d_top_team",
+          "score": 0.10292313992977142
+        },
+        {
+          "feature": "r_top_team",
+          "score": 0.07947169244289398
+        },
+        {
+          "feature": "d_ban_enc",
+          "score": 0.060866452753543854
+        },
+        {
+          "feature": "d_tier",
+          "score": 0.04225752875208855
+        },
+        {
+          "feature": "d_team_syn",
+          "score": 0.02905973792076111
+        },
+        {
+          "feature": "d_hero_enc",
+          "score": 0.01339181698858738
+        },
+        {
+          "feature": "d_picks",
+          "score": 0.0064651696011424065
+        },
+        {
+          "feature": "r_picks",
+          "score": 0.0064651696011424065
+        },
+        {
+          "feature": "r_tier",
+          "score": 0.005517448764294386
+        },
+        {
+          "feature": "n_top_players",
+          "score": 0.0010103259701281786
+        },
+        {
+          "feature": "days_since_patch",
+          "score": 0.00031501834746450186
+        },
+        {
+          "feature": "gold_adv_5",
+          "score": 1.7610051145311445e-05
+        },
+        {
+          "feature": "gold_adv_10",
+          "score": 5.783011147286743e-06
+        },
+        {
+          "feature": "d_team_id",
+          "score": 3.5317337943041593e-09
+        },
+        {
+          "feature": "r_team_id",
+          "score": 1.21784582418627e-09
+        },
+        {
+          "feature": "side_rad",
+          "score": 0.0
+        },
+        {
+          "feature": "patch",
+          "score": 0.0
+        }
+      ]
+    },
+    "winner": {
+      "best_config": "xgb_dart",
+      "importance": [
+        {
+          "feature": "r_top_team",
+          "score": 0.18003852665424347
+        },
+        {
+          "feature": "d_tier",
+          "score": 0.12659163773059845
+        },
+        {
+          "feature": "gold_adv_10",
+          "score": 0.07478492707014084
+        },
+        {
+          "feature": "r_tier",
+          "score": 0.07311280071735382
+        },
+        {
+          "feature": "d_ban_enc",
+          "score": 0.05836950242519379
+        },
+        {
+          "feature": "d_hero_enc",
+          "score": 0.055195245891809464
+        },
+        {
+          "feature": "r_ban_enc",
+          "score": 0.051102131605148315
+        },
+        {
+          "feature": "gold_adv_5",
+          "score": 0.05028121918439865
+        },
+        {
+          "feature": "r_team_syn",
+          "score": 0.050127819180488586
+        },
+        {
+          "feature": "r_dire_syn",
+          "score": 0.04646104946732521
+        },
+        {
+          "feature": "r_hero_enc",
+          "score": 0.04621708765625954
+        },
+        {
+          "feature": "days_since_patch",
+          "score": 0.04447755590081215
+        },
+        {
+          "feature": "d_team_syn",
+          "score": 0.040050871670246124
+        },
+        {
+          "feature": "n_top_players",
+          "score": 0.03883860260248184
+        },
+        {
+          "feature": "d_team_id",
+          "score": 0.036498211324214935
+        },
+        {
+          "feature": "r_team_id",
+          "score": 0.027852816507220268
+        },
+        {
+          "feature": "side_rad",
+          "score": 0.0
+        },
+        {
+          "feature": "r_picks",
+          "score": 0.0
+        },
+        {
+          "feature": "d_picks",
+          "score": 0.0
+        },
+        {
+          "feature": "d_top_team",
+          "score": 0.0
+        },
+        {
+          "feature": "patch",
+          "score": 0.0
+        }
+      ]
+    }
+  }
+}

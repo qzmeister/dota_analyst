@@ -1,0 +1,30 @@
+{
+  "kills_total": {
+    "dir": "C:\\Users\\artka\\.minimax\\workspace\\dota_analyst\\ml_data\\models\\kills_total_v17",
+    "metrics": {
+      "mae": 12.058524067384075,
+      "rmse": 15.620181813221075
+    }
+  },
+  "duration_sec": {
+    "dir": "C:\\Users\\artka\\.minimax\\workspace\\dota_analyst\\ml_data\\models\\duration_sec_v17",
+    "metrics": {
+      "mae": 595.0021479570055,
+      "rmse": 785.2907887653485
+    }
+  },
+  "first_15_kills": {
+    "dir": "C:\\Users\\artka\\.minimax\\workspace\\dota_analyst\\ml_data\\models\\first_15_kills_v17",
+    "metrics": {
+      "mae": 3.887925788838494,
+      "rmse": 4.999149328102274
+    }
+  },
+  "winner": {
+    "dir": "C:\\Users\\artka\\.minimax\\workspace\\dota_analyst\\ml_data\\models\\winner_v17",
+    "metrics": {
+      "accuracy": 0.7332794249775382,
+      "logloss": 0.5640798449516297
+    }
+  }
+}

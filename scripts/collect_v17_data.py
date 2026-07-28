@@ -54,8 +54,14 @@ IMPORTS = ML_DATA / "imports"
 # Top-N teams we'll anchor the corpus on.  30 is the user spec.
 TOP_N_TEAMS = int(os.environ.get("V17_TOP_N", "30"))
 
-# Lookback window in seconds (90 days).
-LOOKBACK_SEC = int(os.environ.get("V17_LOOKBACK_DAYS", "90")) * 86400
+# Lookback window in seconds.  270 days ≈ 9 months, enough to cover
+# the current patch plus the two previous ones (7.41, 7.40, 7.39 each
+# last 3-7 months).  Default 270; override with V17_LOOKBACK_DAYS.
+LOOKBACK_SEC = int(os.environ.get("V17_LOOKBACK_DAYS", "270")) * 86400
+
+# Patches we anchor the corpus on.  Filled in from /api/constants/patch
+# at Phase 7 time; here we just keep a "current N patches" selector.
+PATCH_DEPTH = int(os.environ.get("V17_PATCH_DEPTH", "3"))
 
 # OpenDota asks for <= 1 req/sec on the public API; we sleep a
 # little longer to be polite.
@@ -296,6 +302,8 @@ def main(argv: List[str]) -> int:
             top_ids = {t["team_id"] for t in teams}
             rows = filter_top_teams_matches(rows, top_ids)
             print(f"  filtered to {len(rows)} matches involving top-{TOP_N_TEAMS} teams", file=sys.stderr)
+        # Drop `--teams-only` to also keep top-N teams even without
+        # the team filter (we already do by default; `--all` overrides).
         mids = [r["match_id"] for r in rows]
         collect_match_details(mids)
     elif phase == "4":

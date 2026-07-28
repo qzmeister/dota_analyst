@@ -1,0 +1,41 @@
+{
+  "target": "kills_total",
+  "config": {
+    "name": "ridge_a10",
+    "model": "ridge",
+    "params": {
+      "alpha": 10.0
+    }
+  },
+  "n_matches": 529,
+  "n_features": 21,
+  "feature_columns": [
+    "patch",
+    "r_tier",
+    "d_tier",
+    "r_team_id",
+    "d_team_id",
+    "r_hero_enc",
+    "d_hero_enc",
+    "r_dire_syn",
+    "r_picks",
+    "d_picks",
+    "r_top_team",
+    "d_top_team",
+    "side_rad",
+    "r_ban_enc",
+    "d_ban_enc",
+    "r_team_syn",
+    "d_team_syn",
+    "gold_adv_5",
+    "gold_adv_10",
+    "days_since_patch",
+    "n_top_players"
+  ],
+  "metrics_honest": {
+    "mae": 12.058524067384075,
+    "rmse": 15.620181813221075
+  },
+  "trained_at": 1785272445,
+  "trainer_version": "v2"
+}

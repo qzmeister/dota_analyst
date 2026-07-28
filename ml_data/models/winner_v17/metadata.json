@@ -1,0 +1,45 @@
+{
+  "target": "winner",
+  "config": {
+    "name": "xgb_dart",
+    "model": "xgb_clf",
+    "params": {
+      "booster": "dart",
+      "max_depth": 4,
+      "eta": 0.1,
+      "n_estimators": 200,
+      "rate_drop": 0.1
+    }
+  },
+  "n_matches": 529,
+  "n_features": 21,
+  "feature_columns": [
+    "patch",
+    "r_tier",
+    "d_tier",
+    "r_team_id",
+    "d_team_id",
+    "r_hero_enc",
+    "d_hero_enc",
+    "r_dire_syn",
+    "r_picks",
+    "d_picks",
+    "r_top_team",
+    "d_top_team",
+    "side_rad",
+    "r_ban_enc",
+    "d_ban_enc",
+    "r_team_syn",
+    "d_team_syn",
+    "gold_adv_5",
+    "gold_adv_10",
+    "days_since_patch",
+    "n_top_players"
+  ],
+  "metrics_honest": {
+    "accuracy": 0.7332794249775382,
+    "logloss": 0.5640798449516297
+  },
+  "trained_at": 1785272445,
+  "trainer_version": "v2"
+}

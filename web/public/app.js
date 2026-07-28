@@ -532,7 +532,11 @@ function liveCard(c) {
   // underneath, player names below the icons.  We don't have
   // player names in the cache (the picks carry hero names, not
   // player names), so the label under each icon is the hero name.
-  const sideBlock = (team, picks, sideClass) => {
+  // v0.3.25i: also render a static BANS row below the picks (no
+  // collapse — always visible) so the user can see what was taken
+  // away without clicking a toggle.  Smaller + desaturated to keep
+  // the visual hierarchy clear (picks > bans).
+  const sideBlock = (team, picks, bans, sideClass) => {
     const heroCells = (picks || []).map((h) => {
       const inner = h.image
         ? `<img src="${h.image}" title="${h.name || ""}" onerror="this.parentNode.innerHTML='<div class=ph>${h.name || "?"}</div>'"/>`
@@ -542,23 +546,33 @@ function liveCard(c) {
     const ph = (picks || []).length === 0
       ? `<div class="heroes-empty">— нет пиков —</div>`
       : "";
+    const banCells = (bans || []).map((h) => {
+      const inner = h.image
+        ? `<img src="${h.image}" title="${h.name || ""}" onerror="this.parentNode.innerHTML='<div class=ph>${h.name || "?"}</div>'"/>`
+        : `<div class="ph">${h.name || "?"}</div>`;
+      return `<div class="hero hero-ban" title="${h.name || "—"}">${inner}</div>`;
+    }).join("");
+    const banRow = (bans || []).length === 0
+      ? ""
+      : `<div class="side-block-bans-label">BANS</div><div class="side-block-bans">${banCells}</div>`;
     return `<div class="side-block ${sideClass}">
       <div class="side-block-name">${teamLogo(team)} <span>${team.name}</span></div>
       <div class="side-block-heroes">${heroCells}${ph}</div>
+      ${banRow}
     </div>`;
   };
   return el(`
     <div class="card live-card">
       <div class="event"><span>${c.event} · Игра ${c.game_no}</span><span class="bo-tag">${c.bo}</span></div>
       <div class="live-header">
-        ${sideBlock(c.radiant_team, draft.radiant_picks, "radiant")}
+        ${sideBlock(c.radiant_team, draft.radiant_picks, draft.radiant_bans, "radiant")}
         <div class="live-center">
           <div class="live-score"><span class="r">${c.live_score.radiant}</span><span class="sep">:</span><span class="d">${c.live_score.dire}</span></div>
           <div class="live-clock">⏱ ${fmtClock(c.game_time)}</div>
           ${goldLine}
           <div class="live-series-score">серия ${c.series_score_a}–${c.series_score_b}</div>
         </div>
-        ${sideBlock(c.dire_team, draft.dire_picks, "dire")}
+        ${sideBlock(c.dire_team, draft.dire_picks, draft.dire_bans, "dire")}
       </div>
 
       <div class="pred">

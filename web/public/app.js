@@ -299,7 +299,18 @@ function heroIcon(h, cls = "") {
   const inner = h.image
     ? `<img src="${h.image}" title="${h.name}" onerror="this.parentNode.innerHTML='<div class=ph>${h.name}</div>'"/>`
     : `<div class="ph">${h.name}</div>`;
-  return `<div class="hero ${cls}">${inner}</div>`;
+  // v0.4.0-players: surface the actual player name under the
+  // hero icon when the backend sends `player_name` (DLTV-style:
+  // "Rylai" under a Puck portrait).  We use a separate
+  // `.hero-player` div so CSS can size/colour it without
+  // touching the icon itself.  Country code is kept in
+  // `data-country` for future flag-overlay work.
+  const pn = h.player_name;
+  const pc = h.player_country;
+  const playerLine = pn
+    ? `<div class="hero-player" data-country="${pc || ""}">${pn}</div>`
+    : "";
+  return `<div class="hero ${cls}">${inner}${playerLine}</div>`;
 }
 function fmtDate(iso) {
   if (!iso) return "";

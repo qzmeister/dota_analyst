@@ -302,6 +302,20 @@ body {
   max-width: 44px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   line-height: 1;
 }
+/* v0.4.0-players: actual player name (Rylai, N0tail, ...)
+   under the hero icon, smaller and dimmer than the hero name.
+   DLTV-style, surfaces only when backend ships player_name. */
+.side-block-heroes .hero.hero-lg .hero-player {
+  font-size: 8px;
+  color: var(--muted);
+  opacity: 0.75;
+  max-width: 50px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1;
+  font-weight: 500;
+}
 .side-block-heroes .heroes-empty {
   font-size: 11px; color: var(--muted); padding: 14px 0;
   text-align: center;

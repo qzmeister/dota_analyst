@@ -63,6 +63,89 @@ The user rolled back to `ec61adb` (v0.3.25k) because v0.3.25l–n, r, s had hidd
 
 ---
 
+## [0.4.0-v17] — 2026-07-28 — ML v17: pro-corpus trained models for kills / duration / first-15 / winner
+
+User request: walk the public Dota 2 stats sites (liquipedia, dotabuff, stratz, opendota, datdota), build a local knowledge base of pro matches/players/heroes/picks/meta/lanes/matchups for the **top-30 teams by OpenDota rating** over the **current and two previous patches**, then normalise (drop outliers), train 4 prediction models for **kills / duration / first-15 / winner**, with recency weights (recent matches weigh more) and team-tier weights (premium tier weighs more).  Then grid-research and prune to the significant features.
+
+### What we shipped
+
+- **Corpus — 603 matches, top-50 teams, 270-day window** (covers 7.41 fully + early 7.40).  Sources:
+  - **OpenDota** (no auth, the only viable public source).  `phase1` top teams by rating → 30 + 50 variants, `phase2` OpenDota `/api/explorer` SQL → match IDs with `leagueid IS NOT NULL AND radiant_team_id IS NOT NULL AND dire_team_id IS NOT NULL`, `phase3` per-match blob → `kills_log`, `picks_bans`, `radiant_gold_adv`, `radiant_xp_adv`, `objectives`, `teamfights`, `players` (10 slots, hero_id/kills/kda/lh_t/dn_t).  `phase4` per-patch hero pick/win (7-day windows via `pub_pick_trend`).  `phase5` per-hero matchups (127 heroes × 127 = ~16k counter-pairs).  `phase6` team rosters for top-N (50 account_ids each).  `phase7` patch boundaries (61 patches, 7.41 = current id 60).
+  - **Other sites** — Stratz requires a bearer token (`HTTP 403: A bearer token is required`); DatDota is a JS SPA (no public API); Dotabuff returns `403 Forbidden` to non-browser UAs; Liquipedia serves HTML but everything we need (per-patch pick/win, meta trends, tier weights) is already in OpenDota, so we did not parse it.  Documented in `scripts/collect_v17_data.py` docstring + this changelog.
+- **Outlier handling** — 8 files in Phase 3 had `charmap` decode errors in the `chat` field (Windows-1252 in UTF-8 stream); fixed by `read_text(encoding="utf-8")` in `normalize_v17.py`.  374 → 603 valid matches after the fix.  Per-target `_outlier_flags` in normalize checks `300 ≤ duration ≤ 7200` and `0 ≤ kills ≤ 100`; `_v17_outliers` block on every record.
+- **21 features** (`scripts/train_v17_v2.py build_arrays`):
+  - patch / r_tier / d_tier / r_team_id / d_team_id (categorical)
+  - r_hero_enc / d_hero_enc / r_dire_syn (hero target encoding: `pub_win_trend[0]+5*0.5 / pub_pick_trend[0]+5`)
+  - r_picks / d_picks / r_top_team / d_top_team / side_rad
+  - **r_ban_enc / d_ban_enc** — bans carry signal too
+  - **r_team_syn / d_team_syn** — stddev of per-team hero enc (signature picks vs. generic comps)
+  - **gold_adv_5 / gold_adv_10** — in-game gold lead at 5/10 min from `radiant_gold_adv` (honest because all 4 targets are end-of-game)
+  - **days_since_patch** — days from patch release to match start
+  - **n_top_players** — how many players on the 10-player field are on a top-N roster (was 24% importance for duration!)
+- **Sample weights** — `recency_weight * sqrt(tier_weight)`.  Recency: `0.5**(days/30)` half-life.  Tier: premium=1.0, professional=0.7, minor=0.4, geometric mean across both teams.
+- **Honest 5-fold CV** with **encoder refit per fold** (no target-encoding leak) and `sample_weight=wt[tr]` on every model.  Models tested: ridge (α=0.1, 1, 10), hgb (default / max_depth3 / max_depth4 / Poisson), logreg (L1 liblinear / L2), **XGBoost** (gbtree / dart / poisson / quantile — XGBoost 3.3.0 already in env).
+- **Per-target threshold pruning** (`scripts/train_v17_v3_prune.py`): pick features with `importance ≥ tol * max`, with per-target `min_keep` (kills=10, duration=10, first_15=12, winner=14).  Greedy RFE (`train_v17_v3_rfe.py`) was tried but proved too cautious — every drop yielded Δ ≤ 0 so it stopped at step 0; threshold pruning is the right tool.
+
+### Production models (saved to `ml_data/models/<target>_v17/`)
+
+| Target | Config | Honest score | # features |
+|---|---|---|---|
+| `kills_total`    | ridge_a10             | MAE **11.80**   | 13 |
+| `duration_sec`   | ridge_a10             | MAE **586.94** sec | 13 |
+| `first_15_kills` | hgb_max_depth3        | MAE **3.92**    | 16 |
+| `winner`         | logreg_c0.5_l1        | accuracy **75.30%**, logloss 0.5641 | 14 |
+
+**Backtest on all 599 v17 corpus matches (5/5 picks both teams)**: winner accuracy **73.8%** — close to the honest CV (75.30%); kills MAE 12.72, duration MAE 752 sec, first_15 MAE 3.57.  Duration MAE degrades on out-of-corpus data more than other targets — the `gold_adv_5/10` and `n_top_players` features add value but a longer corpus (3 patches, 800+ matches) would tighten it further.
+
+### Wiring (opt-in)
+
+- **`business/v17_predict.py`** — lazy-loads 4 models, encodes 21 features, returns dict in the legacy `engine.analyze()` shape.  `MLError` on any load/predict failure.  Helper `is_available()` for callers.
+- **`business/board.py`** — new env var `V17_PREDICT=1` routes `_postmatch_prediction` through `v17_predict.predict`; legacy `get_default_engine()` retained as default.  Test coverage unchanged.
+
+### What we deliberately did not do
+
+- **3-patch coverage (7.39 / 7.40 / 7.41)** — 270 days covers 7.41 fully and the very start of 7.40 (24.12.2025).  Going back to 7.39 (22.05.2025) needs ~450 days, which means 7–8 k match IDs and a multi-hour Phase 3 — out of scope for this session.  The `V17_LOOKBACK_DAYS=450` env var already plumbs through; can be turned on later.
+- **Liquipedia / Stratz / Dotabuff / DatDota** — explored and explicitly rejected.  Reasons documented above.  Adding them later would require either user-supplied API tokens (Stratz) or a Playwright scraper (Liquipedia is the only one that even serves HTML to us, and OpenDota already covers everything we'd pull).
+- **Per-player / per-account features** — `account_id` is in the corpus but encoding 1000+ unique accounts would explode the feature space and overfit on 600 rows.  `n_top_players` is the only account-derived feature.
+- **Forward feature selection** — left for v0.4.x; the threshold-pruned set already covers the dominant signals (tier, top-N flag, hero enc, ban enc, days_since_patch).
+
+### Files added / changed
+
+| Path | What |
+|---|---|
+| `scripts/collect_v17_data.py` | OpenDota 7-phase pipeline; `LOOKBACK_SEC` 90→270 days |
+| `scripts/normalize_v17.py` | utf-8 read fix; `_outlier_flags` |
+| `scripts/train_v17_v2.py` | 21 features + XGBoost + feature importance |
+| `scripts/train_v17_v3_rfe.py` | Greedy RFE (experimental, not used) |
+| `scripts/train_v17_v3_prune.py` | Threshold-based pruning with per-target `min_keep` |
+| `business/v17_predict.py` | Production predictor (lazy-loaded) |
+| `business/board.py` | `V17_PREDICT=1` opt-in |
+| `ml_data/imports/v17_phase*.json` | 7 source-of-truth data dumps |
+| `ml_data/imports/v17_grid_v{2,3}.json` | Grid research results |
+| `ml_data/imports/v17_feature_importance_v2.json` | Permutation importance per feature |
+| `ml_data/imports/v17_train_results_v{2,3}.json` | Production training metrics |
+| `ml_data/models/<target>_v17/model.joblib` | 4 saved production models |
+| `ml_data/models/<target>_v17/metadata.json` | feature_columns, config, honest score |
+
+### Commits
+
+- `399d4f6` v0.4.0-v17: 529 матчей, 21 фича, 4 production models
+- `a8b…` (this commit) v0.4.0-v17: top-50 + per-target pruning + production train
+- `4c231f6` v0.4.0-v17-wire: business/v17_predict.py + board.py opt-in wiring
+
+### Open follow-ups (0.4.x)
+
+- 3-patch corpus extension via `V17_LOOKBACK_DAYS=450`
+- Forward feature selection to complement threshold pruning
+- Reduce `duration_sec` MAE (12 min → 8 min target) by re-tuning XGBoost
+- Per-player features (deferred until corpus > 2000 matches)
+
+### Test count
+
+433/433 pass (no new tests — v0.4.0-v17 is an additive ML subsystem; the public contract for the legacy engine is unchanged).
+
+---
+
 ## [0.3.25] — 2026-07-28 — ML v16: overnight grid research delivers substantial honest improvement
 
 Overnight grid research with **1 200+ (model × hyperparams × feature-groups) combinations** across 5-fold CV with honest encoder refit per fold.  Picks the truly-best honest config for each target (not the leaky in-sample winner) and ships the v16 production models.

@@ -658,7 +658,7 @@ def _read_heroes_from_window(page) -> Dict[str, Dict[str, Any]]:
     return out
 
 
-def _install_socket_hook(context) -> None:
+def _install_socket_hook(context, expected_steam_id: Optional[int] = None) -> None:
     """Install a JS init-script that intercepts DLTV's socket.io events.
 
     DLTV ships live match data via socket.io (`__nd2_match_{steam_id}`
@@ -677,10 +677,25 @@ def _install_socket_hook(context) -> None:
     Reading from the socket payload is independent of any CSS
     choice on DLTV's part and is therefore stable.
 
+    v0.3.25l-bugfix: the unfiltered version of this hook captured
+    payloads from EVERY `__nd2_match_*` event the page fires,
+    including the live-ticker / sidebar / chat widgets DLTV ships
+    alongside the main match.  The result was a `__dltv_lastResult`
+    that ping-ponged between matches — the cache ended up with
+    `radiant_score=50, dire_score=1` for a match that's actually
+    44:33.  We now extract `steam_id` from the event name and
+    filter: only payloads whose `steam_id` matches
+    `expected_steam_id` land in `__dltv_lastResult`.  Per-match
+    payloads are still kept in `__dltv_results[steam_id]` for
+    debug visibility.
+
     Must be called on the `BrowserContext` BEFORE
     `context.new_page()` so the init-script runs in every page
     the context produces.
     """
+    # The expected_steam_id is interpolated into the JS as a literal
+    # so the hook can compare it in the browser.  Default -1 = "any".
+    expected_js = int(expected_steam_id) if expected_steam_id is not None else -1
     try:
         context.add_init_script(
             r"""
@@ -689,10 +704,18 @@ def _install_socket_hook(context) -> None:
                 window.__dltv_hookInstalled = true;
                 window.__dltv_lastResult = null;
                 window.__dltv_resultCount = 0;
-                const store = (data) => {
+                window.__dltv_results = {};   // steam_id -> payload
+                const expected = __DLTV_EXPECTED_STEAM_ID__;
+                const store = (steamId, data) => {
                     try {
+                        if (expected > 0 && steamId !== null && steamId !== expected) {
+                            return;  // skip payloads from other matches
+                        }
                         window.__dltv_lastResult = data;
                         window.__dltv_resultCount++;
+                        if (steamId) {
+                            window.__dltv_results[steamId] = data;
+                        }
                     } catch (e) { /* ignore */ }
                 };
                 const tryWrap = () => {
@@ -703,11 +726,18 @@ def _install_socket_hook(context) -> None:
                         proto.on = function(...args) {
                             try {
                                 const ev = String(args[0] || '');
+                                // Extract steam_id from event name like
+                                // `__nd2_match_8917853656`.  Falls back
+                                // to null when the event doesn't carry one
+                                // (e.g. global `live` / `game` events).
+                                let sid = null;
+                                const m = ev.match(/__nd2_match_(\d+)/);
+                                if (m) sid = parseInt(m[1], 10);
                                 if (/match|game|live|nd2/i.test(ev)) {
                                     const cb = args[args.length - 1];
                                     if (typeof cb === 'function') {
                                         const wrapped = function(data) {
-                                            store(data);
+                                            store(sid, data);
                                             return cb.apply(this, arguments);
                                         };
                                         args[args.length - 1] = wrapped;
@@ -730,7 +760,7 @@ def _install_socket_hook(context) -> None:
                         const orig = window[n];
                         if (typeof orig === 'function' && !orig.__dltv_patched) {
                             window[n] = function(r) {
-                                store(r);
+                                store(null, r);  // can't filter, no steam_id
                                 return orig.apply(this, arguments);
                             };
                             window[n].__dltv_patched = true;
@@ -738,7 +768,7 @@ def _install_socket_hook(context) -> None:
                     } catch (e) { /* ignore */ }
                 });
             })();
-            """
+            """.replace("__DLTV_EXPECTED_STEAM_ID__", str(expected_js))
         )
     except Exception as exc:  # pragma: no cover — defensive
         log.debug("dltv_browser: install_socket_hook failed: %s", exc)
@@ -1197,7 +1227,7 @@ def _extract_score_from_text(page) -> Dict[str, Any]:
     return out
 
 
-def fetch_match_state(url: str) -> Dict[str, Any]:
+def fetch_match_state(url: str, expected_steam_id: Optional[int] = None) -> Dict[str, Any]:
     """Open `url` with Playwright and return the live match state.
 
     The returned dict has these keys (any may be missing if the
@@ -1210,6 +1240,14 @@ def fetch_match_state(url: str) -> Dict[str, Any]:
       - dire_score:      int
       - game_time:       "MM:SS" string
       - team_order:      ["dire", "radiant"] (or whatever the DOM shows)
+
+    v0.3.25l-bugfix: `expected_steam_id` is forwarded to the
+    socket.io hook so it can filter out payloads from neighbouring
+    matches on the page (live ticker / sidebar / chat).  When the
+    page receives a `__nd2_match_{steam_id}` event whose `steam_id`
+    doesn't match, the payload is dropped instead of being
+    captured into `__dltv_lastResult`.  See
+    `_install_socket_hook` for the full rationale.
 
     v0.3.22: uses the shared chromium browser (see
     `_get_playwright()`) AND isolates each fetch in its own
@@ -1229,7 +1267,7 @@ def fetch_match_state(url: str) -> Dict[str, Any]:
     if _browser_executor is None:
         raise DiscoveryError("browser executor not initialized")
     fut = _browser_executor.submit(
-        _fetch_match_state_inner, browser, url
+        _fetch_match_state_inner, browser, url, expected_steam_id
     )
     return fut.result(timeout=PLAYER_WR_FETCH_TIMEOUT_MS / 1000.0 + 30.0)
 
@@ -1280,7 +1318,7 @@ def _wait_for_live_state(page, max_ms: int) -> None:
         log.debug("dltv_browser: live state wait timed out after %dms", max_ms)
 
 
-def _fetch_match_state_inner(browser, url: str) -> Dict[str, Any]:
+def _fetch_match_state_inner(browser, url: str, expected_steam_id: Optional[int] = None) -> Dict[str, Any]:
     """Inner fetch — runs on the dedicated playwright thread."""
     from playwright.sync_api import TimeoutError as PWTimeout
 
@@ -1294,7 +1332,12 @@ def _fetch_match_state_inner(browser, url: str) -> Dict[str, Any]:
         # runs before DLTV's own scripts attach handlers.  Without
         # this ordering the Manager.prototype.on patch lands after
         # DLTV has already wired up, and we miss the first event.
-        _install_socket_hook(context)
+        # v0.3.25l-bugfix: pass `expected_steam_id` so the hook can
+        # filter out payloads from neighbouring matches (live ticker
+        # / sidebar / chat).  Without it the cache accumulates
+        # `radiant_score=50, dire_score=1`-style garbage for any
+        # match whose sidebar ticker fires a different event.
+        _install_socket_hook(context, expected_steam_id=expected_steam_id)
         page = context.new_page()
         try:
             page.goto(url, timeout=PLAYER_WR_FETCH_TIMEOUT_MS,
@@ -1423,7 +1466,7 @@ def update_match_state_cache(series_id: int, url: str, steam_id: Optional[int] =
     cache = _read_cache()
     now = time.time()
     try:
-        state = fetch_match_state(url)
+        state = fetch_match_state(url, expected_steam_id=steam_id)
     except DiscoveryError as exc:
         log.warning("dltv_browser: match_state fetch failed for %s: %s", series_id, exc)
         # Preserve any prior rates we may have cached.

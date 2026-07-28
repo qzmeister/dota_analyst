@@ -630,10 +630,28 @@ def _live_card(series: Dict, event_title: str) -> Dict:
             # lost).  Each `if` is a no-op when the field is
             # missing or None, so a partial cache can't clobber
             # the watchlist path's value.
-            if "radiant_score" in cached_state:
-                m["radiant_score"] = cached_state["radiant_score"]
-            if "dire_score" in cached_state:
-                m["dire_score"] = cached_state["dire_score"]
+            #
+            # v0.3.25l-bugfix: the dltv_browser's socket.io hook has
+            # been observed to capture placeholder / draft-phase
+            # payloads (e.g. `radiant_score: 50, dire_score: 1` for
+            # a match that's actually 44:33 on the page).  When the
+            # underlying map already carries real data (e.g. the
+            # watchlist `/live/{id}.json` adapter produced
+            # non-zero scores), trust THAT data over the cache —
+            # the cache is real-time but unreliable, the adapter
+            # is laggy but authoritative.  The cache wins only when
+            # the map has no real data (draft / pre-pick phase
+            # where the adapter itself returns zeros).
+            cache_radiant = cached_state.get("radiant_score")
+            cache_dire = cached_state.get("dire_score")
+            map_has_real_score = (
+                (m.get("radiant_score") or 0) > 0
+                or (m.get("dire_score") or 0) > 0
+            )
+            if not map_has_real_score and cache_radiant is not None:
+                m["radiant_score"] = cache_radiant
+            if not map_has_real_score and cache_dire is not None:
+                m["dire_score"] = cache_dire
             if cached_state.get("game_time") is not None:
                 # v0.3.25m (re-applied): legacy cache entries (pre-
                 # v0.3.25m `_extract_score_from_text`) store
@@ -641,7 +659,17 @@ def _live_card(series: Dict, event_title: str) -> Dict:
                 # frontend expects int seconds — anything non-numeric
                 # becomes "—" on render.  Normalise here so a stale
                 # cache entry still lights up the clock.
-                m["game_time"] = _parse_clock_seconds(cached_state["game_time"])
+                # Same trust rule as scores: if the map has a real
+                # game_time, prefer it; the cache wins only for
+                # draft-phase cards where the adapter left
+                # `game_time` empty.
+                cache_gt = _parse_clock_seconds(cached_state["game_time"])
+                map_gt = _parse_clock_seconds(m.get("game_time") if m.get("game_time") is not None else m.get("duration"))
+                if (map_gt is None or map_gt == 0) and cache_gt is not None:
+                    m["game_time"] = cache_gt
+                elif map_gt is not None:
+                    # keep the existing map game_time
+                    pass
             elif cached_state.get("duration") is not None:
                 # v0.3.25n (re-applied): the dltv_browser cache
                 # layer sometimes stores the elapsed-time field as
@@ -650,7 +678,13 @@ def _live_card(series: Dict, event_title: str) -> Dict:
                 # API) instead of `game_time`.  Treat that as a
                 # synonym so the live clock renders instead of
                 # staying "—".
-                m["game_time"] = _parse_clock_seconds(cached_state["duration"])
+                cache_dur = _parse_clock_seconds(cached_state["duration"])
+                map_gt = _parse_clock_seconds(m.get("game_time") if m.get("game_time") is not None else m.get("duration"))
+                if (map_gt is None or map_gt == 0) and cache_dur is not None:
+                    m["game_time"] = cache_dur
+            # Gold / networth: cache is the ONLY source, so always
+            # overlay (even if it ends up empty — the live card
+            # gracefully hides it when partial).
             if cached_state.get("radiant_networth") is not None:
                 m["radiant_networth"] = cached_state["radiant_networth"]
             if cached_state.get("dire_networth") is not None:
@@ -1024,6 +1058,19 @@ def build_board(event_ids: List[int], watch_ids: Optional[List[int]] = None) -> 
                 # unless user selected leagues that explicitly exclude this match's event
                 ws_eid = ws.get("event_id")
                 if has_filter and ws_eid is not None and int(ws_eid) not in allowed_events:
+                    continue
+                # v0.3.25r (re-applied on top of v0.3.25k): drop "TBD vs TBD"
+                # watchlist cards.  Same rationale as the live-section
+                # filter — the card has real score/time but the UI
+                # can't tell the user *which match* it is.  Watchlist
+                # pins still keep the card visible only if the team
+                # slugs resolved (real names).
+                first = ws.get("first_team") or {}
+                second = ws.get("second_team") or {}
+                fn = first.get("name")
+                sn = second.get("name")
+                if (not fn or fn == "TBD") and (not sn or sn == "TBD"):
+                    log.debug("skip watchlist TBD: %s", steam_id)
                     continue
                 stage = client.classify_stage(ws)
                 event_id = ws.get("event_id")

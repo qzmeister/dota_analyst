@@ -456,6 +456,17 @@ def _filter_auto_board(
         # (Chinese "Steam league 17599" etc.) with empty scoreboards.
         if LIVE_HIDE_STEAM_ONLY and card.get("_steam_only"):
             return False
+        # v0.3.25r (re-applied on top of v0.3.25k): drop "TBD vs TBD"
+        # live cards.  These come from DLTV `/live/{id}.json` payloads
+        # that haven't resolved the team slugs yet (pre-pick phase).
+        # The card has real score/time/networth but the UI can't tell
+        # the user *which match* it is — pure noise.  The watchlist
+        # path above keeps it visible to anyone who pinned it.
+        if card.get("stage") == "live":
+            rn = (card.get("radiant_team") or {}).get("name")
+            dn = (card.get("dire_team") or {}).get("name")
+            if (not rn or rn == "TBD") and (not dn or dn == "TBD"):
+                return False
         # No event_id (steam-only / unmapped scraper card): drop when
         # the user has narrowed the board.  This matches the strict
         # live filter in build_board() so server-side filtering and

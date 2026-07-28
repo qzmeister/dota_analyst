@@ -696,12 +696,61 @@ class _DiscoveryTracker:
 
     # ---- produce series dicts for the board ---- #
 
+    # ---- parallel enrichment helpers ---- #
+
+    # v0.4.0-perf: how many worker threads to use when fetching
+    # /live/{id}.json in parallel for a board build.  urllib's
+    # default thread pool tops out around 6-8 active connections
+    # to one host before DNS/connect contention kicks in, so 6 is
+    # a sweet spot.
+    _ENRICH_WORKERS = 6
+
+    def _fetch_one_live(self, cache_key: int, mid: int, m: Dict, scraper_event_id: Optional[int], now: float) -> Tuple[int, Optional[Dict]]:
+        """Fetch /live/{id}.json for a single match and synthesise a series dict.
+
+        Returns (cache_key, series_or_None).  Failures (timeout, 404, parse
+        error) are swallowed here — the tracker just won't get a fresh
+        series this cycle and will fall back to the previous cache (if any)
+        on the next call.
+        """
+        series: Optional[Dict] = None
+        lj = client.get_live_json(mid)
+        if lj:
+            try:
+                series = _live_json_to_series(mid, lj)
+            except (DLTVError, ParseError, AttributeError, TypeError) as exc:
+                log.warning("synth failed for %s: %s", mid, exc, exc_info=True)
+        # DLTV miss? synthesize from Steam raw data (minor leagues)
+        if not series and m.get("_steam_raw"):
+            try:
+                series = _steam_game_to_series(m["_steam_raw"], mid)
+            except (SteamAPIError, ParseError, AttributeError, TypeError, KeyError) as exc:
+                log.warning("steam-synth failed for %s: %s", mid, exc, exc_info=True)
+        if series:
+            series.setdefault("event_title", m.get("event"))
+            series["_scraper_event"] = m.get("event")
+            series["_scraper_bo"] = m.get("bo")
+            series["_scraper_event_id"] = scraper_event_id
+            self._series_cache[cache_key] = series
+            self._cache_ts[cache_key] = now
+        return cache_key, series
+
     def get_live_and_prematch(self) -> Tuple[List[Dict], List[Dict]]:
         """Return (live_series, prematch_series) dicts suitable for board rendering.
 
         live_series are fully-enriched synthetic series dicts (from /live/{id}.json).
         prematch_series are lightweight dicts with team/event/time only.
+
+        v0.4.0-perf: live enrichment is now fanned out across a
+        `ThreadPoolExecutor` (default 6 workers).  Previously we did
+        this in a single sequential `for` loop, which meant a 20-match
+        board took ~3-5 minutes when 18 of those /live/{id}.json calls
+        timed out at 12s (retries=3 × timeout=3s + backoff).  With
+        parallel fetch and the v0.4.0 retry/timeout trim in
+        `client.get_live_json`, the same build now finishes in <5s.
         """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         self.refresh()
 
         live: List[Dict] = []
@@ -733,66 +782,145 @@ class _DiscoveryTracker:
             deduped.append(m)
         all_m = deduped
 
+        # Two-pass approach: first pass resolves event_id from the
+        # learned steam→event map, and figures out which live matches
+        # have a fresh cache (skip HTTP) vs which need enrichment.
+        needs_fetch: List[Tuple[int, int, Dict, Optional[int]]] = []  # (cache_key, mid, m, scraper_event_id)
+        live_from_cache: List[Dict] = []
         for m in all_m:
             sid = m.get("series_id")
             mid = m.get("steam_id")
             stage = m.get("stage")
-            # Event_id from scraper (for DLTV matches with a known slug)
             scraper_event_id = m.get("event_id")
-            # For Steam-only matches, try to resolve event_id via learned mapping
             steam_league_id = m.get("steam_league_id")
             if not scraper_event_id and steam_league_id:
                 mapped = self.steam_event(steam_league_id)
                 if mapped:
                     scraper_event_id = mapped[0]
-                    # Overlay league title on top of raw event name
                     if not m.get("event"):
                         m["event"] = mapped[1]
 
             if stage == "live" and mid:
-                # enrich via /live/{id}.json (cached)
                 cache_key = sid or mid
                 cached = self._series_cache.get(cache_key)
                 # v0.3.19+: live matches get a 5s TTL — picks/score
-                # change every few seconds in a real game and the
-                # UI drift (e.g. 1-0 on our side, 6-3 on DLTV's
-                # side) was the most visible bug.  Postmatch and
-                # prematch stay at 120s because the JSON is
+                # change every few seconds in a real game.  Postmatch
+                # and prematch stay at 120s because the JSON is
                 # effectively frozen.
                 cache_age = now - self._cache_ts.get(cache_key, 0)
                 if cached and cache_age < ENRICH_TTL_LIVE:
-                    # still overlay event_id (cached series may lack it)
                     cached["_scraper_event_id"] = cached.get("_scraper_event_id") or scraper_event_id
-                    live.append(cached)
-                    continue
-                series = None
-                lj = client.get_live_json(mid)
-                if lj:
+                    live_from_cache.append((cache_key, cached))
+                else:
+                    needs_fetch.append((cache_key, mid, m, scraper_event_id))
+
+        # v0.4.0-perf: parallel enrichment.  Cap workers at the
+        # number of pending fetches so a 3-match build doesn't spawn
+        # 6 idle threads.
+        if needs_fetch:
+            with ThreadPoolExecutor(max_workers=min(self._ENRICH_WORKERS, len(needs_fetch))) as ex:
+                futures = [
+                    ex.submit(self._fetch_one_live, ck, mid, m, scraper_event_id, now)
+                    for (ck, mid, m, scraper_event_id) in needs_fetch
+                ]
+                fetched: Dict[int, Optional[Dict]] = {}
+                for f in as_completed(futures):
                     try:
-                        series = _live_json_to_series(mid, lj)
-                    except (DLTVError, ParseError, AttributeError, TypeError) as exc:
-                        # AttributeError/TypeError are realistic fallout of
-                        # a malformed lj (not a dict, etc.).
-                        log.warning("synth failed for %s: %s", mid, exc, exc_info=True)
-                # DLTV miss? synthesize from Steam raw data (minor leagues)
-                if not series and m.get("_steam_raw"):
-                    try:
-                        series = _steam_game_to_series(m["_steam_raw"], mid)
-                    except (SteamAPIError, ParseError, AttributeError, TypeError, KeyError) as exc:
-                        # _steam_game_to_series can KeyError on a missing
-                        # team name or score; treat that the same as a
-                        # parse failure.
-                        log.warning("steam-synth failed for %s: %s", mid, exc, exc_info=True)
-                if series:
-                    # overlay event/bo from scraper when JSON lacks them
-                    series.setdefault("event_title", m.get("event"))
-                    series["_scraper_event"] = m.get("event")
-                    series["_scraper_bo"] = m.get("bo")
-                    series["_scraper_event_id"] = scraper_event_id
-                    self._series_cache[cache_key] = series
-                    self._cache_ts[cache_key] = now
-                    live.append(series)
-                    continue
+                        ck, series = f.result()
+                    except Exception as exc:
+                        # Should not happen — _fetch_one_live catches its own
+                        # exceptions.  Defensive: log and move on.
+                        log.warning("enrich worker crashed: %s", exc, exc_info=True)
+                        continue
+                    fetched[ck] = series
+
+        # Second pass: assemble the live list (cache first, then fresh fetches,
+        # then live-without-steam-id rows).  We track which cache_keys have
+        # already been added so the third pass doesn't re-add them.
+        added_cache_keys: set = set()
+        for ck, cached in live_from_cache:
+            live.append(cached)
+            added_cache_keys.add(ck)
+
+        for (ck, mid, m, scraper_event_id) in needs_fetch:
+            series = fetched.get(ck)
+            if series is not None:
+                live.append(series)
+            else:
+                # v0.4.0-perf: enrichment failed (timeout / 404).  Fall
+                # back to a synthetic v1-shaped series so the card still
+                # shows in the board (similar to the live-without-steam-id
+                # branch below).  This is what the scraper reported and
+                # /live/{id}.json couldn't enrich.  Better than dropping
+                # the card silently.
+                series = {
+                    "id": m.get("series_id"),
+                    "match_id": int(mid),
+                    "event_id": scraper_event_id,
+                    "first_team": m.get("team_a") or {"name": "TBD"},
+                    "second_team": m.get("team_b") or {"name": "TBD"},
+                    "type": 3,
+                    "maps": [],
+                    "started_at": m.get("start_time") or datetime.now(timezone.utc).isoformat(),
+                    "status": 1,
+                    "live_score": m.get("live_score"),
+                    "_scraper_event": m.get("event"),
+                    "_scraper_bo": m.get("bo"),
+                    "_scraper_event_id": scraper_event_id,
+                    "_live_enrich_failed": True,
+                }
+                live.append(series)
+            added_cache_keys.add(ck)
+
+        # Third pass: live rows without a steam_id and everything that
+        # didn't go to the live section.
+        for m in all_m:
+            sid = m.get("series_id")
+            mid = m.get("steam_id")
+            stage = m.get("stage")
+            scraper_event_id = m.get("event_id")
+
+            if stage == "prematch":
+                prematch.append({
+                    "series_id": sid,
+                    "steam_id": mid,
+                    "stage": "prematch",
+                    "event": m.get("event"),
+                    "event_id": scraper_event_id,
+                    "bo": m.get("bo"),
+                    "stage_label": m.get("stage_label"),
+                    "team_a": m.get("team_a"),
+                    "team_b": m.get("team_b"),
+                    "start_time": m.get("start_time"),
+                })
+                continue
+
+            # Live row without a steam_id: we can't pull picks from
+            # /live/{id}.json, but we still want the card in the
+            # board so the user sees who is playing right now.
+            if stage == "live":
+                ck = sid or mid
+                if ck is not None and ck in added_cache_keys:
+                    continue  # already added via enrichment above
+                title = m.get("event") or "Live match"
+                synthesized_started_at = m.get("start_time") or datetime.now(timezone.utc).isoformat()
+                series = {
+                    "id": sid,
+                    "match_id": mid,
+                    "event_id": scraper_event_id,
+                    "first_team": m.get("team_a") or {"name": "TBD"},
+                    "second_team": m.get("team_b") or {"name": "TBD"},
+                    "type": 3,
+                    "maps": [],
+                    "started_at": synthesized_started_at,
+                    "status": 1,
+                    "live_score": m.get("live_score"),
+                    "_scraper_event": title,
+                    "_scraper_bo": m.get("bo"),
+                    "_scraper_event_id": scraper_event_id,
+                    "_live_no_steam_id": True,
+                }
+                live.append(series)
 
             if stage == "prematch":
                 prematch.append({

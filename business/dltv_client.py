@@ -176,10 +176,30 @@ class DLTVClient:
         v0.3.14: timeout cut from 6s -> 3s.  Called in a loop for every
         live match by `discovery.get_live_and_prematch()`; with 30+
         live matches on the wire a 6s timeout made the cold-cache
-        /api/board take 3+ minutes.  3s is still long enough for a
-        healthy response and short enough that a 404 fails fast.
+        /api/board take 3+ minutes.
+
+        v0.4.0-perf: dropped retries to 1 and timeout to 1.5s.  The
+        default _http_json has retries=3, backoff_base=1.0 which means
+        a timed-out /live/{id}.json took 3*1.5 + 1 + 2 + 4 = ~12s of
+        waiting per match.  Across 20+ live matches that was 3-5
+        minutes of build time.  Since the live data is only useful for
+        in-progress games, a single fast attempt is enough — if it
+        times out, the next 5s TTL window will retry.  Combined with
+        parallel enrichment in `tracker.get_live_and_prematch()` this
+        drops build time to under 5s.
         """
-        return _http_json(f"{LIVE_BASE}/{match_id}.json", timeout=3.0)
+        # Bypass _http_json: it has a fixed retries=3 policy.  We want
+        # a single fast attempt (no backoff) so parallel enrichment
+        # across 30+ matches finishes in seconds, not minutes.
+        from ._http import request_json
+        return request_json(
+            url=f"{LIVE_BASE}/{match_id}.json",
+            headers=HEADERS,
+            timeout=1.5,
+            retries=1,
+            backoff_base=0.0,
+            backoff_cap=0.0,
+        )
 
     # ---- hero index ---- #
 

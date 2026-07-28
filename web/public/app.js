@@ -387,10 +387,16 @@ function gameDetailedHtml(g, c) {
         <span class="pm-label">Общий счёт</span>
         <span>${_valOr(g.team_a_score) + _valOr(g.team_b_score)}</span>
       </div>
+      <!-- v0.3.25e: TOWERS HIDDEN — no reliable data source yet (full_matches
+           lacks the per-side tower bitmask; the heuristic number is
+           made up and was misleading the user).  Uncomment when
+           we have a real per-side tower count. -->
+      <!--
       <div class="pm-stat-row">
         <span class="pm-label">Вышки снесены</span>
         <span>${teamA.slice(0,6)}: ${_valOr(g.team_a_towers)} · ${teamB.slice(0,6)}: ${_valOr(g.team_b_towers)}</span>
       </div>
+      -->
       <div class="pm-stat-row"><span class="pm-label">First Blood</span><span>${_sideLabel(g.fb_side, teamA, teamB)}</span></div>
       <div class="pm-stat-row"><span class="pm-label">Первые 15 киллов</span><span>${_sideLabel(g.f15_side, teamA, teamB)}</span></div>
     </div>`;
@@ -413,10 +419,13 @@ function gameDetailedHtml(g, c) {
         <span class="pm-label">Киллы (всего) ${_verdictBadge(v.kills_total)}</span>
         <span>${kills_total.side ? (kills_total.side === "over" ? "ТБ" : "ТМ") : "—"} ${kills_total.threshold !== undefined ? kills_total.threshold : "—"}</span>
       </div>
+      <!-- v0.3.25e: TOWERS PREDICTION HIDDEN — see note above. -->
+      <!--
       <div class="pm-stat-row">
         <span class="pm-label">Вышки (всего) ${_verdictBadge(v.towers_total)}</span>
         <span>${_valOr((p.towers||{}).total)}</span>
       </div>
+      -->
       <div class="pm-stat-row">
         <span class="pm-label">First Blood ${_verdictBadge(v.first_blood)}</span>
         <span>${_valOr((p.first_blood||{}).team)}</span>
@@ -543,11 +552,14 @@ function liveCard(c) {
           <div class="pval">${overUnder(p.total_over_under)} мин</div>
           <div class="psub">${p.total_over_under?.formatted ?? "—"}</div>
         </div>
+        <!-- v0.3.25e: TOWERS PREDICTION HIDDEN — see note above. -->
+        <!--
         <div class="pbox">
           <div class="plabel">Вышки (потенциал)</div>
           <div class="pval">${overUnder(p.towers_over_under)}</div>
           <div class="psub">${p.towers?.radiant ?? "—"} ☀ / 🌙 ${p.towers?.dire ?? "—"}</div>
         </div>
+        -->
         <div class="pbox">
           <div class="plabel">Первым 15 киллов</div>
           <div class="pval">${p.first_to_15?.team || "—"}</div>

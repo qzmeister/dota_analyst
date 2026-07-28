@@ -260,6 +260,24 @@ async def board_publisher_loop(
                     _t.monotonic() - t0,
                     len(board.get("live", [])),
                 )
+                # v0.4.0: subscribe every live match's steam_id to
+                # the direct socket.io client.  This replaces the
+                # Playwright `dltv_browser` scrape as the source of
+                # real-time live state (see `dltv_socket` for the
+                # full rationale).  We pull steam_ids from the
+                # freshly-built board (it carries the resolution
+                # the discovery tracker has done), plus from the
+                # watchlist (in case a watchlist pin is the only
+                # way the user follows that match).
+                try:
+                    from . import dltv_socket as _ds
+                    for col in ("live", "prematch"):
+                        for c in (board.get(col) or []):
+                            mid = c.get("match_id")
+                            if mid is not None:
+                                _ds.subscribe(int(mid))
+                except Exception as exc:  # never let socket bugs kill the publisher
+                    log.debug("dltv_socket subscribe failed: %s", exc)
             except (BoardBuildError, MLError, DiscoveryError, UpstreamError, InfraError) as exc:
                 log.warning("sse publisher build failed: %s", exc, exc_info=False)
             except Exception as exc:

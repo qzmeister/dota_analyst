@@ -206,6 +206,15 @@ async def _lifespan(app: FastAPI):
     )
     log.info("player_wr browser task scheduled")
 
+    # 5. v0.4.0: direct socket.io client — bypasses chromium and
+    #    the DLTV-side /live/{id}.json cache.  Pushes the latest
+    #    match-state payload per steam_id to an in-memory state the
+    #    board layer reads.  Started in its own thread (see
+    #    `dltv_socket.start_socket_client`).
+    from . import dltv_socket
+    dltv_socket.start_socket_client()
+    log.info("dltv socket client started (background thread)")
+
     try:
         yield
     finally:
@@ -217,7 +226,8 @@ async def _lifespan(app: FastAPI):
                 await t
             except asyncio.CancelledError:
                 pass
-        log.info("sse publisher + accuracy scorer + player_wr browser stopped")
+        dltv_socket.stop_socket_client(timeout=3.0)
+        log.info("sse publisher + accuracy scorer + player_wr browser + dltv socket stopped")
 
 
 app = FastAPI(title="Dota Analyst — business", version="0.3.19", lifespan=_lifespan)

@@ -487,9 +487,20 @@ def _live_card(series: Dict, event_title: str) -> Dict:
     first = client.normalize_team(series.get("first_team"))
     second = client.normalize_team(series.get("second_team"))
     first_id = series.get("first_team_id")
+    second_id = series.get("second_team_id")
     is_watchlist = bool(series.get("_watchlist"))
 
     m = _active_map(series) or {}
+    # v0.4.0: stash the series's first/second team ids on the
+    # map so `_fast_picks_to_map_entries` (called below from the
+    # socket-state overlay) can decide which DLTV `first_team`
+    # is the radiant side.  These are only used by the helper;
+    # the rest of `_live_card` continues to read the original
+    # `series.first_team_id` / `series.second_team_id` directly.
+    if first_id is not None:
+        m["_first_team_id_for_disp"] = first_id
+    if second_id is not None:
+        m["_second_team_id_for_disp"] = second_id
 
     # v0.3.20+: when the v1 API hides the in-progress series
     # (which it does for any live match) we don't have a real
@@ -642,59 +653,131 @@ def _live_card(series: Dict, event_title: str) -> Dict:
             # is laggy but authoritative.  The cache wins only when
             # the map has no real data (draft / pre-pick phase
             # where the adapter itself returns zeros).
-            cache_radiant = cached_state.get("radiant_score")
-            cache_dire = cached_state.get("dire_score")
-            map_has_real_score = (
-                (m.get("radiant_score") or 0) > 0
-                or (m.get("dire_score") or 0) > 0
-            )
-            if not map_has_real_score and cache_radiant is not None:
-                m["radiant_score"] = cache_radiant
-            if not map_has_real_score and cache_dire is not None:
-                m["dire_score"] = cache_dire
-            if cached_state.get("game_time") is not None:
-                # v0.3.25m (re-applied): legacy cache entries (pre-
-                # v0.3.25m `_extract_score_from_text`) store
-                # game_time as a "MM:SS" string.  The live card
-                # frontend expects int seconds — anything non-numeric
-                # becomes "—" on render.  Normalise here so a stale
-                # cache entry still lights up the clock.
-                # Same trust rule as scores: if the map has a real
-                # game_time, prefer it; the cache wins only for
-                # draft-phase cards where the adapter left
-                # `game_time` empty.
-                cache_gt = _parse_clock_seconds(cached_state["game_time"])
-                map_gt = _parse_clock_seconds(m.get("game_time") if m.get("game_time") is not None else m.get("duration"))
-                if (map_gt is None or map_gt == 0) and cache_gt is not None:
-                    m["game_time"] = cache_gt
-                elif map_gt is not None:
-                    # keep the existing map game_time
-                    pass
-            elif cached_state.get("duration") is not None:
-                # v0.3.25n (re-applied): the dltv_browser cache
-                # layer sometimes stores the elapsed-time field as
-                # `duration` (matching the Steam
-                # `scoreboard.duration` name and the older DLTV v1
-                # API) instead of `game_time`.  Treat that as a
-                # synonym so the live clock renders instead of
-                # staying "—".
-                cache_dur = _parse_clock_seconds(cached_state["duration"])
-                map_gt = _parse_clock_seconds(m.get("game_time") if m.get("game_time") is not None else m.get("duration"))
-                if (map_gt is None or map_gt == 0) and cache_dur is not None:
-                    m["game_time"] = cache_dur
-            # Gold / networth: cache is the ONLY source, so always
-            # overlay (even if it ends up empty — the live card
-            # gracefully hides it when partial).
-            if cached_state.get("radiant_networth") is not None:
-                m["radiant_networth"] = cached_state["radiant_networth"]
-            if cached_state.get("dire_networth") is not None:
-                m["dire_networth"] = cached_state["dire_networth"]
-            # v0.3.25l (re-applied): signed gold lead from the
-            # socket.io hook.  The live card uses this when raw
-            # per-side networth isn't available (DLTV's CSS only
-            # ships `Math.abs(lead)`).
-            if cached_state.get("gold_lead_radiant") is not None:
-                m["gold_lead_radiant"] = cached_state["gold_lead_radiant"]
+            #
+            # v0.4.0: the direct socket.io client (see `dltv_socket`)
+            # is now the PRIMARY source for real-time match state.
+            # It pushes the same `result` object the page renders
+            # (radiant_score, dire_score, game_time, radiant_lead,
+            # radiant_match_nw, fast_picks, ...) every few seconds.
+            # When the socket has fresh data, use it; otherwise
+            # fall back to the dltv_browser cache (which is what
+            # the socket REPLACED in spirit, but we keep it around
+            # as a slow fallback for picks during pre-pick / SSR
+            # hydration).
+            socket_state = None
+            try:
+                from . import dltv_socket as _ds
+                if steam_id_for_lookup is not None:
+                    socket_state = _ds.get_live_state(int(steam_id_for_lookup))
+            except Exception:
+                socket_state = None
+
+            def _coerce_int(v: Any) -> Optional[int]:
+                if v is None:
+                    return None
+                if isinstance(v, bool):
+                    return None
+                if isinstance(v, int):
+                    return v
+                if isinstance(v, float):
+                    return int(v) if v.is_finite() else None
+                if isinstance(v, str):
+                    try:
+                        return int(v)
+                    except ValueError:
+                        return None
+                return None
+
+            if socket_state is not None:
+                # Socket is the primary source.  We always overlay
+                # score/time/lead/networth from the socket; the
+                # `cached_state` (dltv_browser) is only used as a
+                # fallback for fields the socket doesn't carry.
+                rs = _coerce_int(socket_state.get("radiant_score"))
+                ds_ = _coerce_int(socket_state.get("dire_score"))
+                if rs is not None:
+                    m["radiant_score"] = rs
+                if ds_ is not None:
+                    m["dire_score"] = ds_
+                gt = _coerce_int(socket_state.get("game_time"))
+                if gt is not None:
+                    m["game_time"] = gt
+                # Networth / lead.  DLTV ships `radiant_match_nw`
+                # and `radiant_lead`; we map to the cache keys the
+                # rest of the code already understands.
+                rnw = _coerce_int(socket_state.get("radiant_match_nw"))
+                if rnw is not None:
+                    m["radiant_networth"] = rnw
+                dnw = _coerce_int(socket_state.get("dire_match_nw"))
+                if dnw is not None:
+                    m["dire_networth"] = dnw
+                rl = _coerce_int(socket_state.get("radiant_lead"))
+                if rl is not None:
+                    m["gold_lead_radiant"] = rl
+                # Fast picks: when the socket has them AND the
+                # local `m` doesn't (e.g. we're between games or
+                # the watchlist adapter is laggy), take them from
+                # the socket.  `_fast_picks_to_map_entries` returns
+                # the same shape as the DLTV `db.first_team.picks`
+                # list, which `_live_card` already knows how to
+                # turn into hero cards via `_picks_to_heroes`.
+                fp = socket_state.get("fast_picks")
+                if isinstance(fp, dict):
+                    is_picks_ended = bool(socket_state.get("is_picks_ended"))
+                    ft_picks = fp.get("first_team") or []
+                    st_picks = fp.get("second_team") or []
+                    if is_picks_ended and (ft_picks or st_picks):
+                        socket_entries = _fast_picks_to_map_entries(
+                            ft_picks, st_picks, m, is_watchlist=is_watchlist
+                        )
+                        if socket_entries is not None:
+                            m["radiant_picks"] = socket_entries["radiant_picks"]
+                            m["dire_picks"]    = socket_entries["dire_picks"]
+            else:
+                # No socket data — fall back to the dltv_browser
+                # cache (with the v0.3.25l-bugfix trust rules).
+                cache_radiant = cached_state.get("radiant_score")
+                cache_dire = cached_state.get("dire_score")
+                map_has_real_score = (
+                    (m.get("radiant_score") or 0) > 0
+                    or (m.get("dire_score") or 0) > 0
+                )
+                if not map_has_real_score and cache_radiant is not None:
+                    m["radiant_score"] = cache_radiant
+                if not map_has_real_score and cache_dire is not None:
+                    m["dire_score"] = cache_dire
+                if cached_state.get("game_time") is not None:
+                    # v0.3.25m (re-applied): legacy cache entries
+                    # (pre-v0.3.25m `_extract_score_from_text`)
+                    # store game_time as a "MM:SS" string.  The
+                    # live card frontend expects int seconds —
+                    # anything non-numeric becomes "—" on render.
+                    cache_gt = _parse_clock_seconds(cached_state["game_time"])
+                    map_gt = _parse_clock_seconds(
+                        m.get("game_time") if m.get("game_time") is not None else m.get("duration")
+                    )
+                    if (map_gt is None or map_gt == 0) and cache_gt is not None:
+                        m["game_time"] = cache_gt
+                elif cached_state.get("duration") is not None:
+                    # v0.3.25n (re-applied): the dltv_browser cache
+                    # layer sometimes stores the elapsed-time
+                    # field as `duration` (matching the Steam
+                    # `scoreboard.duration` name and the older
+                    # DLTV v1 API) instead of `game_time`.  Treat
+                    # that as a synonym so the live clock renders
+                    # instead of staying "—".
+                    cache_dur = _parse_clock_seconds(cached_state["duration"])
+                    map_gt = _parse_clock_seconds(
+                        m.get("game_time") if m.get("game_time") is not None else m.get("duration")
+                    )
+                    if (map_gt is None or map_gt == 0) and cache_dur is not None:
+                        m["game_time"] = cache_dur
+                if cached_state.get("radiant_networth") is not None:
+                    m["radiant_networth"] = cached_state["radiant_networth"]
+                if cached_state.get("dire_networth") is not None:
+                    m["dire_networth"] = cached_state["dire_networth"]
+                if cached_state.get("gold_lead_radiant") is not None:
+                    m["gold_lead_radiant"] = cached_state["gold_lead_radiant"]
         except Exception as exc:
             log.debug("match-state overlay failed for %s: %s", series_id, exc)
 
@@ -1092,6 +1175,70 @@ def build_board(event_ids: List[int], watch_ids: Optional[List[int]] = None) -> 
     postmatch.sort(key=lambda c: c.get("ended_at") or "", reverse=True)
 
     return {"prematch": prematch, "live": live, "postmatch": postmatch}
+
+
+def _fast_picks_to_map_entries(
+    ft_picks: List[Dict],
+    st_picks: List[Dict],
+    m: Dict,
+    is_watchlist: bool,
+) -> Optional[Dict[str, List[Dict]]]:
+    """Convert `fast_picks.{first,second}_team` from a socket.io
+    payload into the `m["radiant_picks"]` / `m["dire_picks"]` shape
+    the rest of `_live_card` already understands.
+
+    Returns a `{"radiant_picks": [...], "dire_picks": [...]}` dict,
+    or None if we can't tell which side is which (no team ids on
+    the map yet — typically only happens for the first frame of
+    a brand-new match).
+    """
+    radiant_team_id = m.get("radiant_team_id")
+    dire_team_id = m.get("dire_team_id")
+    if radiant_team_id is None or dire_team_id is None:
+        return None
+
+    def _entry(p: Dict, i: int) -> Dict:
+        # `hero_id` from the socket payload is the DLTV id.  We
+        # also need a `_steam_id` for `_picks_to_heroes` to use
+        # the steam-id namespace on the watchlist path.  The
+        # websocket sometimes ships `hero_steam_id` directly, but
+        # the page-side React tree also carries the steam id
+        # under `hero_steam_id`; fall back to the dltv id if not.
+        hero_steam = p.get("hero_steam_id")
+        hero_dltv = p.get("hero_id")
+        return {
+            "hero_id": hero_dltv,
+            "_steam_id": hero_steam if hero_steam is not None else hero_dltv,
+            "order": i,
+            "_name": (p.get("player") or {}).get("title"),
+        }
+
+    # DLTV's "first_team" is whichever side the series record
+    # calls first_team.  We don't know which one is radiant at
+    # this point without the radiant_team_id mapping — so we
+    # look at the map (set elsewhere in `_live_card`).
+    # If the map says series.first_team_id == radiant_team_id,
+    # then ft_picks is the radiant side; otherwise it's dire.
+    # Unfortunately we don't have first_team_id on the map here
+    # — the `m` dict only carries radiant_team_id / dire_team_id.
+    # We can compare the FIRST hero's id with the team ids... no
+    # that won't work either.  The reliable signal: the
+    # `_live_card` calls this helper AFTER m has been populated
+    # with `series.first_team_id` / `series.second_team_id` (see
+    # the `m["radiant_team_id"]` line ~575).  We use those to
+    # decide.
+    first_team_id = m.get("_first_team_id_for_disp")
+    second_team_id = m.get("_second_team_id_for_disp")
+    if first_team_id is None or second_team_id is None:
+        return None
+    radiant_is_first = (first_team_id == radiant_team_id)
+    if radiant_is_first:
+        radiant_entries = [_entry(p, i) for i, p in enumerate(ft_picks)]
+        dire_entries    = [_entry(p, i) for i, p in enumerate(st_picks)]
+    else:
+        radiant_entries = [_entry(p, i) for i, p in enumerate(st_picks)]
+        dire_entries    = [_entry(p, i) for i, p in enumerate(ft_picks)]
+    return {"radiant_picks": radiant_entries, "dire_picks": dire_entries}
 
 
 def _parse_clock_seconds(value: Any) -> Optional[int]:

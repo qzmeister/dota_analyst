@@ -12,7 +12,36 @@
   --live: #f0883e;
   --postmatch: #8957e5;
   --shadow: 0 4px 14px rgba(0,0,0,.35);
+  --shadow-strong: 0 6px 22px rgba(0,0,0,.45);
+  --inv-text: #0d1117;       /* text on the accent color in dark mode */
 }
+
+/* v0.3.25f: LIGHT THEME.
+   Flips the palette to GitHub-light-style.  Activated by
+   <html data-theme="light"> (set by the theme radio in app.js).
+   Every color is driven by the same CSS variables, so we just
+   re-declare them under the attribute selector. */
+[data-theme="light"] {
+  --bg: #f6f8fa;
+  --panel: #ffffff;
+  --panel-2: #eef1f4;
+  --border: #d0d7de;
+  --text: #1f2328;
+  --muted: #656d76;
+  --accent: #0969da;
+  --radiant: #1a7f37;
+  --dire: #cf222e;
+  --prematch: #6e7781;
+  --live: #bc4c00;
+  --postmatch: #8250df;
+  --shadow: 0 4px 14px rgba(0,0,0,.08);
+  --shadow-strong: 0 6px 22px rgba(0,0,0,.12);
+  --inv-text: #ffffff;        /* text on the accent color in light mode */
+}
+[data-theme="light"] .btn.primary { color: #ffffff; }
+[data-theme="light"] .radio-pill input:checked + span { color: #ffffff; }
+[data-theme="light"] .badge { color: #ffffff; }
+[data-theme="light"] .chip.chip-on { color: #ffffff; }
 
 * { box-sizing: border-box; }
 body {
@@ -49,6 +78,25 @@ body {
   padding: 1px 8px; font-size: 11px; font-weight: 700; margin-left: 4px;
 }
 .auto { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+
+/* v0.3.25f: radio-pill groups for Авто / Тема.  A single flex row
+   with a label and two pills; the active pill is filled. */
+.radio-group { display: flex; align-items: center; gap: 4px; }
+.radio-label { font-size: 12px; color: var(--muted); margin-right: 2px; }
+.radio-pill {
+  display: inline-flex; align-items: center; padding: 0;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel-2); cursor: pointer; font-size: 12px;
+  user-select: none;
+}
+.radio-pill input { position: absolute; opacity: 0; pointer-events: none; }
+.radio-pill span { display: inline-block; padding: 6px 10px; border-radius: 7px; color: var(--muted); }
+.radio-pill:hover { border-color: var(--accent); }
+.radio-pill input:checked + span {
+  background: var(--accent); color: #0d1117; font-weight: 600;
+}
+/* Light theme: pill text needs to flip to white-on-accent stays fine
+   but the inactive text needs a dark tone (see [data-theme="light"] below). */
 
 /* ---------- League picker ---------- */
 .league-picker { position: relative; }

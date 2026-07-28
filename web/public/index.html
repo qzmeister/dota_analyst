@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dota Analyst — Draft Board</title>
-  <link rel="stylesheet" href="/style.css?v=0.3.25e" />
+  <link rel="stylesheet" href="/style.css?v=0.3.25f" />
 </head>
 <body>
   <header class="topbar">
@@ -36,7 +36,19 @@
           <div class="watch-hint">Вставьте URL или steam_id матча, которого нет в выбранной лиге (обход DLTV v1 API).</div>
         </div>
       </div>
-      <label class="auto"><input type="checkbox" id="autoRefresh" checked /> Авто</label>
+      <!-- v0.3.25f: auto-refresh is now a radio group (Вкл/Выкл)
+           so the toggle is unambiguous on touch devices, and the
+           same pattern carries the new theme switcher (Тёмная/Светлая). -->
+      <div class="radio-group" role="radiogroup" aria-label="Авто-обновление">
+        <span class="radio-label">Авто</span>
+        <label class="radio-pill"><input type="radio" name="autoRefresh" id="autoRefreshOn" value="on" checked /><span>Вкл</span></label>
+        <label class="radio-pill"><input type="radio" name="autoRefresh" id="autoRefreshOff" value="off" /><span>Выкл</span></label>
+      </div>
+      <div class="radio-group" role="radiogroup" aria-label="Тема оформления">
+        <span class="radio-label">Тема</span>
+        <label class="radio-pill"><input type="radio" name="theme" id="themeDark" value="dark" checked /><span>Тёмная</span></label>
+        <label class="radio-pill"><input type="radio" name="theme" id="themeLight" value="light" /><span>Светлая</span></label>
+      </div>
       <button id="refreshBtn" class="btn primary">Обновить</button>
     </div>
   </header>
@@ -63,6 +75,6 @@
     </section>
   </main>
 
-  <script src="/app.js?v=0.3.25e"></script>
+  <script src="/app.js?v=0.3.25f"></script>
 </body>
 </html>

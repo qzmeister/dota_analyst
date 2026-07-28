@@ -3,6 +3,14 @@
 const API = "";
 const LS_KEY = "dota_analyst_leagues";
 const LS_WATCH = "dota_analyst_watchlist";
+const LS_THEME = "dota_analyst_theme";
+// v0.3.25f: auto-refresh became a radio (Вкл/Выкл).  The old
+// checkbox was #autoRefresh; we keep a single helper so the rest
+// of the file doesn't care how the UI exposes the toggle.
+function isAutoRefreshOn() {
+  const el = document.querySelector('input[name="autoRefresh"]:checked');
+  return !el || el.value !== "off";  // default to "on" if the radio is missing
+}
 let LEAGUES = [];
 let SELECTED = new Set(JSON.parse(localStorage.getItem(LS_KEY) || "[]"));
 let WATCHLIST = JSON.parse(localStorage.getItem(LS_WATCH) || "[]"); // [{id, title?}]
@@ -15,7 +23,11 @@ async function loadLeagues() {
   try {
     const r = await fetch(`${API}/api/leagues`);
     const d = await r.json();
-    LEAGUES = d.leagues || [];
+    // v0.3.25f: drop leagues with no scheduled matches — the old
+    // picker listed every DatDota league (60+), most of them empty
+    // for our use case, which just made the dropdown noisy.
+    // match_count is the "would appear in /api/board right now" count.
+    LEAGUES = (d.leagues || []).filter((l) => (l.match_count || 0) > 0);
     // v0.3.21: first-load UX.  An empty SELECTED set used to leave
     // the user staring at an empty board even though every league
     // has cards.  Auto-pick everything so the first /api/board
@@ -235,7 +247,7 @@ async function refresh() {
     const wantFast = (d.live || []).length > 0;
     if (wantFast !== _lastFast) {
       _lastFast = wantFast;
-      if ($("autoRefresh").checked) setupAutoRefresh();
+      if (isAutoRefreshOn()) setupAutoRefresh();
     }
   } catch (e) {
     setStatus("Ошибка загрузки: " + e.message);
@@ -565,11 +577,19 @@ function liveCard(c) {
           <div class="pval">${p.first_to_15?.team || "—"}</div>
           <div class="psub">${p.first_to_15?.probability ?? "—"}% уверенность</div>
         </div>
+        <!-- v0.3.25f: ULTRA KILL / RAMPAGE HIDDEN — multikill classifier
+             degenerated to "always High" on the pro corpus (notes in
+             ml/train.py HEAD_REGISTRY['multikill']).  The heuristic
+             that fills `p.multikill` is a guess; we'd rather not
+             surface a number that has no real signal.  Uncomment when
+             we have a proper per-slot multikill data source. -->
+        <!--
         <div class="pbox full">
           <div class="plabel">Ultra Kill / Rampage</div>
           <div class="pval"><span class="tag-level lvl-${p.multikill?.level || "Low"}">${p.multikill?.level || "—"}</span>
             <span class="psub">чаще у ${p.multikill?.likely_side || "—"}</span></div>
         </div>
+        -->
       </div>
       <div class="conf">достоверность данных: ${Math.round((p.confidence || 0) * 100)}%</div>
     </div>`);
@@ -581,7 +601,7 @@ function setStatus(msg) {
 }
 function setupAutoRefresh() {
   if (refreshTimer) clearInterval(refreshTimer);
-  if ($("autoRefresh").checked) {
+  if (isAutoRefreshOn()) {
     const interval = _lastFast ? REFRESH_FAST : REFRESH_SLOW;
     refreshTimer = setInterval(refresh, interval);
   }
@@ -612,7 +632,7 @@ function startSSE() {
   }
   sseSource.addEventListener("board_update", (ev) => {
     // Re-fetch the full board; the SSE payload is only a summary.
-    if ($("autoRefresh").checked) refresh();
+    if (isAutoRefreshOn()) refresh();
   });
   sseSource.addEventListener("error", () => {
     // EventSource auto-reconnects on transient errors; we just log
@@ -655,7 +675,27 @@ function init() {
     if (e.key === "Enter") { e.preventDefault(); addWatch($("watchInput").value); $("watchInput").value = ""; }
   };
   $("refreshBtn").onclick = refresh;
-  $("autoRefresh").onchange = () => { setupAutoRefresh(); if ($("autoRefresh").checked) startSSE(); else stopSSE(); };
+  // v0.3.25f: auto-refresh is now a radio group (name="autoRefresh"),
+  // not the old checkbox.  Hook the change at the group level.
+  document.querySelectorAll('input[name="autoRefresh"]').forEach((r) => {
+    r.addEventListener("change", () => {
+      setupAutoRefresh();
+      if (isAutoRefreshOn()) startSSE(); else stopSSE();
+    });
+  });
+  // v0.3.25f: theme switcher (Тёмная/Светлая).  Persisted in
+  // localStorage so the user's choice survives a refresh.
+  const applyTheme = (t) => {
+    document.documentElement.setAttribute("data-theme", t);
+    try { localStorage.setItem(LS_THEME, t); } catch (_) {}
+  };
+  const savedTheme = (() => { try { return localStorage.getItem(LS_THEME); } catch (_) { return null; } })();
+  applyTheme(savedTheme === "light" ? "light" : "dark");
+  const savedThemeRadio = document.querySelector(`input[name="theme"][value="${savedTheme === "light" ? "light" : "dark"}"]`);
+  if (savedThemeRadio) savedThemeRadio.checked = true;
+  document.querySelectorAll('input[name="theme"]').forEach((r) => {
+    r.addEventListener("change", () => { if (r.checked) applyTheme(r.value); });
+  });
 
   // v0.3.22 cont 4: when the user comes back to a background tab,
   // the page may have missed several auto-refresh ticks (browsers
@@ -664,7 +704,7 @@ function init() {
   // doesn't stare at a stale "Обновлено 11:24" status for 30+
   // minutes after switching back.
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && $("autoRefresh").checked) {
+    if (document.visibilityState === "visible" && isAutoRefreshOn()) {
       refresh();
     }
   });

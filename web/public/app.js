@@ -593,8 +593,8 @@ function liveCard(c) {
         </div>
         <!-- v0.3.25f: ULTRA KILL / RAMPAGE HIDDEN — multikill classifier
              degenerated to "always High" on the pro corpus (notes in
-             ml/train.py HEAD_REGISTRY['multikill']).  The heuristic
-             that fills `p.multikill` is a guess; we'd rather not
+             ml/train.py HEAD_REGISTRY[multikill]).  The heuristic
+             that fills p.multikill is a guess; we'd rather not
              surface a number that has no real signal.  Uncomment when
              we have a proper per-slot multikill data source. -->
         <!--

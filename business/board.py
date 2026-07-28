@@ -6,7 +6,7 @@ Board assembly: turns DLTV series into Kanban cards
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from ._logging import get_logger
 from .accuracy import record_prediction
@@ -635,11 +635,32 @@ def _live_card(series: Dict, event_title: str) -> Dict:
             if "dire_score" in cached_state:
                 m["dire_score"] = cached_state["dire_score"]
             if cached_state.get("game_time") is not None:
-                m["game_time"] = cached_state["game_time"]
+                # v0.3.25m (re-applied): legacy cache entries (pre-
+                # v0.3.25m `_extract_score_from_text`) store
+                # game_time as a "MM:SS" string.  The live card
+                # frontend expects int seconds — anything non-numeric
+                # becomes "—" on render.  Normalise here so a stale
+                # cache entry still lights up the clock.
+                m["game_time"] = _parse_clock_seconds(cached_state["game_time"])
+            elif cached_state.get("duration") is not None:
+                # v0.3.25n (re-applied): the dltv_browser cache
+                # layer sometimes stores the elapsed-time field as
+                # `duration` (matching the Steam
+                # `scoreboard.duration` name and the older DLTV v1
+                # API) instead of `game_time`.  Treat that as a
+                # synonym so the live clock renders instead of
+                # staying "—".
+                m["game_time"] = _parse_clock_seconds(cached_state["duration"])
             if cached_state.get("radiant_networth") is not None:
                 m["radiant_networth"] = cached_state["radiant_networth"]
             if cached_state.get("dire_networth") is not None:
                 m["dire_networth"] = cached_state["dire_networth"]
+            # v0.3.25l (re-applied): signed gold lead from the
+            # socket.io hook.  The live card uses this when raw
+            # per-side networth isn't available (DLTV's CSS only
+            # ships `Math.abs(lead)`).
+            if cached_state.get("gold_lead_radiant") is not None:
+                m["gold_lead_radiant"] = cached_state["gold_lead_radiant"]
         except Exception as exc:
             log.debug("match-state overlay failed for %s: %s", series_id, exc)
 
@@ -732,7 +753,21 @@ def _live_card(series: Dict, event_title: str) -> Dict:
         # v0.3.24g: elapsed game time in seconds (int), or None if the
         # cache doesn't carry it (older DLTV layouts).  The frontend
         # formats as MM:SS.
-        "game_time": m.get("game_time"),
+        # v0.3.25m (re-applied on top of v0.3.25k): normalise here too —
+        # `m["game_time"]` may have come from a non-overlay path
+        # (live board fields, watchlist `/live/{id}.json` adapter)
+        # that hasn't run through `_parse_clock_seconds` yet.
+        # v0.3.25n (re-applied on top of v0.3.25k): the watchlist
+        # path (Steam `scoreboard.duration`) and the dltv v1
+        # `/live/{id}.json` adapter both store the elapsed-time
+        # field as `m["duration"]`, not `m["game_time"]`.  Without
+        # this fallback the live clock stays "—" for every match
+        # that doesn't have a DLTV coverage URL — which is exactly
+        # the low-tier / amateur match path that's most likely to
+        # need a clock.
+        "game_time": _parse_clock_seconds(
+            m.get("game_time") if m.get("game_time") is not None else m.get("duration")
+        ),
         # v0.3.24g: current networth (in-game gold) per side, plus
         # the signed lead for the RADIANT side (positive = radiant
         # is ahead).  All three are None if the cache didn't include
@@ -1010,3 +1045,47 @@ def build_board(event_ids: List[int], watch_ids: Optional[List[int]] = None) -> 
     postmatch.sort(key=lambda c: c.get("ended_at") or "", reverse=True)
 
     return {"prematch": prematch, "live": live, "postmatch": postmatch}
+
+
+def _parse_clock_seconds(value: Any) -> Optional[int]:
+    """Coerce a possibly-string `game_time` to int seconds.
+
+    Three acceptable input shapes:
+      - int (already seconds)        -> returned as-is (or None if < 0)
+      - str "MM:SS"                  -> parsed to mm*60 + ss
+      - str of digits ("1815")       -> treated as seconds
+
+    Anything else returns None.  Used by the live-card build path
+    to normalise game_time coming from:
+      1. dltv_browser's `_extract_score_from_text` (legacy "MM:SS"
+         string, was the source of every "⏱ —" before v0.3.25m)
+      2. dltv_browser's `_read_live_state_from_scoreboard` (int
+         seconds from the socket.io hook or from the new DOM
+         parser)
+      3. The watchlist `/live/{id}.json` adapter (dltv_client.py
+         already returns int seconds for finished maps but the
+         value passes through here as a defensive last step).
+
+    Re-applied on top of v0.3.25k after the v0.3.25l-t block
+    (which fixed this AND added the socket.io hook AND the
+    TBD / 0-picks filters — the latter two the user did not
+    want) was rolled back.
+    """
+    if isinstance(value, bool):  # bool is an int subclass — guard against True/False sneaking through
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return None
+        if ":" in s:
+            mm, _, ss = s.partition(":")
+            if mm.isdigit() and ss.isdigit():
+                m_int, s_int = int(mm), int(ss)
+                if 0 <= m_int <= 180 and 0 <= s_int < 60:
+                    return m_int * 60 + s_int
+            return None
+        if s.isdigit():
+            return int(s)
+    return None

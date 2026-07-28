@@ -658,6 +658,128 @@ def _read_heroes_from_window(page) -> Dict[str, Dict[str, Any]]:
     return out
 
 
+def _install_socket_hook(context) -> None:
+    """Install a JS init-script that intercepts DLTV's socket.io events.
+
+    DLTV ships live match data via socket.io (`__nd2_match_{steam_id}`
+    channel).  The payload is the same `result` object the page itself
+    uses to update `.head__duration strong`, `.team__score strong`,
+    `.team__networth strong` etc.  We wrap socket.io's Manager so
+    every match-related callback ALSO copies the payload to
+    `window.__dltv_lastResult` (and bumps `__dltv_resultCount`).
+
+    Why this exists (v0.3.25l): the previous extractor relied on
+    CSS classes like `.info__duration[data-game-time]`,
+    `.team__networth .networth > span` and `.team__scores-kills`.
+    DLTV keeps changing the markup — those classes have all been
+    renamed/removed (current: `.head__duration strong`,
+    `.team__score strong`, `.team__networth` with `Math.abs(lead)`).
+    Reading from the socket payload is independent of any CSS
+    choice on DLTV's part and is therefore stable.
+
+    Must be called on the `BrowserContext` BEFORE
+    `context.new_page()` so the init-script runs in every page
+    the context produces.
+    """
+    try:
+        context.add_init_script(
+            r"""
+            (() => {
+                if (window.__dltv_hookInstalled) return;
+                window.__dltv_hookInstalled = true;
+                window.__dltv_lastResult = null;
+                window.__dltv_resultCount = 0;
+                const store = (data) => {
+                    try {
+                        window.__dltv_lastResult = data;
+                        window.__dltv_resultCount++;
+                    } catch (e) { /* ignore */ }
+                };
+                const tryWrap = () => {
+                    if (window.io && window.io.Manager) {
+                        const proto = window.io.Manager.prototype;
+                        if (proto.__dltv_onPatched) return;
+                        const orig = proto.on;
+                        proto.on = function(...args) {
+                            try {
+                                const ev = String(args[0] || '');
+                                if (/match|game|live|nd2/i.test(ev)) {
+                                    const cb = args[args.length - 1];
+                                    if (typeof cb === 'function') {
+                                        const wrapped = function(data) {
+                                            store(data);
+                                            return cb.apply(this, arguments);
+                                        };
+                                        args[args.length - 1] = wrapped;
+                                    }
+                                }
+                            } catch (e) { /* fall through */ }
+                            return orig.apply(this, args);
+                        };
+                        proto.__dltv_onPatched = true;
+                    } else {
+                        setTimeout(tryWrap, 100);
+                    }
+                };
+                tryWrap();
+                // Some DLTV builds expose a global handler instead.
+                // Wrap any of the common names so we still capture
+                // the payload if socket.io wrapping missed it.
+                ['handleGame', 'onResult', 'onGameUpdate', 'handleUpdate'].forEach((n) => {
+                    try {
+                        const orig = window[n];
+                        if (typeof orig === 'function' && !orig.__dltv_patched) {
+                            window[n] = function(r) {
+                                store(r);
+                                return orig.apply(this, arguments);
+                            };
+                            window[n].__dltv_patched = true;
+                        }
+                    } catch (e) { /* ignore */ }
+                });
+            })();
+            """
+        )
+    except Exception as exc:  # pragma: no cover — defensive
+        log.debug("dltv_browser: install_socket_hook failed: %s", exc)
+
+
+def _read_hooked_socket_result(page) -> Dict[str, Any]:
+    """Read the last socket.io payload captured by `_install_socket_hook`.
+
+    Returns a flat dict with whatever numeric fields we care about;
+    missing fields are `None` so the caller can fall through to a
+    DOM extractor for them.
+    """
+    out: Dict[str, Any] = {}
+    try:
+        data = page.evaluate(
+            """() => {
+                const r = window.__dltv_lastResult;
+                if (!r || typeof r !== 'object') return null;
+                const get = (k) => (typeof r[k] === 'number' && Number.isFinite(r[k])) ? r[k] : null;
+                return {
+                    radiant_score: get('radiant_score'),
+                    dire_score:    get('dire_score'),
+                    game_time:     get('game_time'),
+                    radiant_lead:  get('radiant_lead'),
+                    radiant_networth: get('radiant_networth'),
+                    dire_networth:    get('dire_networth'),
+                    is_picks_ended:    r.is_picks_ended === true,
+                    count: window.__dltv_resultCount || 0,
+                };
+            }"""
+        )
+    except Exception as exc:
+        log.debug("dltv_browser: read_hooked_socket_result failed: %s", exc)
+        return out
+    if not isinstance(data, dict):
+        return out
+    for k, v in data.items():
+        out[k] = v
+    return out
+
+
 def _read_live_state_from_scoreboard(page) -> Dict[str, Any]:
     """Read picks, bans, scores, time, teams from the live scoreboard
     and the page's own `radiant_picks` / `dire_picks` JS state.
@@ -684,6 +806,17 @@ def _read_live_state_from_scoreboard(page) -> Dict[str, Any]:
     The function is called via `page.evaluate()` and returns a plain
     JSON-serialisable dict, so we get the data at the same speed the
     page is rendering it.
+
+    v0.3.25l: DLTV renamed the CSS classes used in v0.3.24 (the
+    `.info__duration[data-game-time]`, `.team__networth .networth > span`,
+    `.team__scores-kills` selectors are all gone).  The new layout
+    uses `.head__duration strong` for the clock (rendered MM:SS text),
+    `.team__score strong` for kills, and `.team__networth` with
+    `Math.abs(result.radiant_lead)` for the gold lead.  Rather than
+    chase the CSS every release, we read straight from the socket.io
+    payload via `_read_hooked_socket_result` (installed by
+    `_install_socket_hook`).  DOM is only the fallback for fields the
+    hook didn't deliver.
     """
     out: Dict[str, Any] = {
         "picks": {"radiant": [], "dire": []},
@@ -692,7 +825,23 @@ def _read_live_state_from_scoreboard(page) -> Dict[str, Any]:
         "radiant_score": None,
         "dire_score": None,
         "game_time": None,
+        "radiant_networth": None,
+        "dire_networth": None,
+        "gold_lead_radiant": None,
     }
+    # v0.3.25l: prefer the socket.io payload.  It is independent of
+    # any CSS DLTV might use next release, and carries the data in
+    # raw numeric form (seconds for game_time, signed int for lead,
+    # raw ints for networth) — no parsing of rendered MM:SS or
+    # Math.abs strings.
+    hooked = _read_hooked_socket_result(page)
+    if hooked.get("count", 0) > 0:
+        out["radiant_score"] = hooked.get("radiant_score")
+        out["dire_score"] = hooked.get("dire_score")
+        out["game_time"] = hooked.get("game_time")
+        out["radiant_networth"] = hooked.get("radiant_networth")
+        out["dire_networth"] = hooked.get("dire_networth")
+        out["gold_lead_radiant"] = hooked.get("radiant_lead")
     try:
         data = page.evaluate(
             """() => {
@@ -705,60 +854,74 @@ def _read_live_state_from_scoreboard(page) -> Dict[str, Any]:
                     game_time: null,
                     teams: [],
                 };
-                const sb = document.getElementById('live_scoreboard');
-                if (!sb) return null;
-                // Teams: pull from the .team divs (in DOM order —
-                // DLTV puts the left-side team first).
-                const teamEls = Array.from(sb.querySelectorAll('.team')).slice(0, 2);
+                // v0.3.25l: DLTV no longer puts the live state under
+                // #live_scoreboard — the scoreboard lives wherever
+                // the React tree mounts it.  We walk the whole
+                // document and look for the team blocks by their
+                // current class names.
+                const teamEls = Array.from(document.querySelectorAll('.team'))
+                    .filter((t) => t.querySelector('.team__title-name, .team__title, .head__duration'))
+                    .slice(0, 2);
                 const teams = teamEls.map((t) => {
-                    const nameEl = t.querySelector('.team__title-name .name');
-                    const sideEl = t.querySelector('.team__title-name .side');
-                    const killsEl = t.querySelector('.team__scores-kills');
-                    // v0.3.24g: networth (current gold) per team.  DLTV
-                    // renders the value inside `.team__networth > .networth > span`;
-                    // the parent `.networth` also wraps an SVG arrow icon
-                    // (up/down) which we ignore.  The value is a plain
-                    // integer with no thousands separator (e.g. "23888").
-                    // On a finished match the div is empty (the live
-                    // updater stops writing once the map ends) — we
-                    // return `null` in that case so the live card can
-                    // hide the gold lead gracefully.
+                    // v0.3.23 selector: `.team__title-name .name` (split with side sibling).
+                    // v0.3.25l selector: `.team__title .name` (name only, no side sibling).
+                    const nameEl = t.querySelector('.team__title-name .name, .team__title .name, .name');
+                    const sideEl = t.querySelector('.team__title-name .side, .team__title .side, .side');
+                    // v0.3.23 selector: `.team__scores-kills` (int text).
+                    // v0.3.25l selector: `.team__score strong` (int text).
+                    const killsEl = t.querySelector('.team__scores-kills, .team__score strong, .team__score');
+                    // v0.3.25l: `.team__networth strong` carries
+                    // `Math.abs(result.radiant_lead)`.  We can't
+                    // recover the sign from the DOM (the icon class
+                    // encodes direction via CSS), so the value here
+                    // is treated as the absolute lead only when the
+                    // socket hook has NOT already supplied a signed
+                    // value.
+                    const nwEl = t.querySelector('.team__networth strong, .team__networth');
                     let networth = null;
-                    const nwEl = t.querySelector('.team__networth .networth');
                     if (nwEl) {
-                        const nwSpan = nwEl.querySelector('span');
-                        const raw = nwSpan ? nwSpan.textContent : nwEl.textContent;
-                        const n = parseInt((raw || '').trim().replace(/[^\\d-]/g, ''), 10);
+                        const raw = nwEl.textContent || '';
+                        const n = parseInt(raw.replace(/[^\\d]/g, ''), 10);
                         if (!Number.isNaN(n) && n > 0) networth = n;
                     }
-                    // The .side element has CSS classes 'side radiant'
-                    // or 'side dire' — locale-independent.
                     let sideKind = 'unknown';
                     if (sideEl) {
                         if (sideEl.classList.contains('radiant')) sideKind = 'radiant';
                         else if (sideEl.classList.contains('dire')) sideKind = 'dire';
+                    } else if (t.classList.contains('radiant')) {
+                        sideKind = 'radiant';
+                    } else if (t.classList.contains('dire')) {
+                        sideKind = 'dire';
                     }
                     return {
                         name: nameEl ? (nameEl.textContent || '').trim() : '',
                         side_kind: sideKind,
                         kills: killsEl ? parseInt((killsEl.textContent || '0').trim(), 10) || 0 : null,
-                        networth: networth,
+                        networth_abs: networth,
                     };
                 });
                 out.teams = teams;
                 out.team_order = teams.map((t) => t.side_kind);
                 if (teams.length >= 1) out.radiant_score = teams[0].kills;
                 if (teams.length >= 2) out.dire_score = teams[1].kills;
-                // v0.3.24g: also expose networth at the top level so the
-                // board layer doesn't have to walk `teams[]` to find it.
-                if (teams.length >= 1) out.radiant_networth = teams[0].networth;
-                if (teams.length >= 2) out.dire_networth = teams[1].networth;
-                // Game time in seconds (data-game-time is a stable
-                // int on the .info__duration element).
-                const durEl = sb.querySelector('.info__duration');
+                if (teams.length >= 1) out.radiant_networth = teams[0].networth_abs;
+                if (teams.length >= 2) out.dire_networth = teams[1].networth_abs;
+                // v0.3.25l: game time lives in `.head__duration strong`
+                // (rendered MM:SS) or `.info__duration strong` (older
+                // v0.3.24 selector).  Parse the MM:SS back to seconds.
+                const parseClock = (txt) => {
+                    if (!txt) return null;
+                    const m = String(txt).trim().match(/^(\\d{1,2}):(\\d{2})$/);
+                    if (!m) return null;
+                    const mm = parseInt(m[1], 10);
+                    const ss = parseInt(m[2], 10);
+                    if (Number.isNaN(mm) || Number.isNaN(ss)) return null;
+                    return mm * 60 + ss;
+                };
+                const durEl = document.querySelector('.head__duration strong, .info__duration strong');
                 if (durEl) {
-                    const t = durEl.getAttribute('data-game-time');
-                    if (t) out.game_time = parseInt(t, 10) || null;
+                    const parsed = parseClock(durEl.textContent);
+                    if (parsed != null) out.game_time = parsed;
                 }
                 // Picks: read from the page's own globals
                 // (`radiant_picks` / `dire_picks` are populated by
@@ -773,14 +936,14 @@ def _read_live_state_from_scoreboard(page) -> Dict[str, Any]:
                     return 'unknown';
                 };
                 if (typeof radiant_picks !== 'undefined' && Array.isArray(radiant_picks)) {
-                    const rSide = teamEls.length > 0 ? sideMap(teamEls[0].querySelector('.team__title-name .side')?.classList.contains('radiant') ? 'radiant' : 'dire') : 'radiant';
+                    const rSide = teamEls.length > 0 ? sideMap(teamEls[0].querySelector('.team__title-name .side, .team__title .side, .side')?.classList.contains('radiant') ? 'radiant' : 'dire') : 'radiant';
                     out.picks[rSide] = radiant_picks.map((p) => ({
                         hero_id: p.id, steam_id: p.steam_id,
                         name: p.title, slug: p.slug, image: p.image,
                     }));
                 }
                 if (typeof dire_picks !== 'undefined' && Array.isArray(dire_picks)) {
-                    const dSide = teamEls.length > 1 ? sideMap(teamEls[1].querySelector('.team__title-name .side')?.classList.contains('radiant') ? 'radiant' : 'dire') : 'dire';
+                    const dSide = teamEls.length > 1 ? sideMap(teamEls[1].querySelector('.team__title-name .side, .team__title .side, .side')?.classList.contains('radiant') ? 'radiant' : 'dire') : 'dire';
                     out.picks[dSide] = dire_picks.map((p) => ({
                         hero_id: p.id, steam_id: p.steam_id,
                         name: p.title, slug: p.slug, image: p.image,
@@ -797,14 +960,27 @@ def _read_live_state_from_scoreboard(page) -> Dict[str, Any]:
     out["picks"] = data.get("picks") or {"radiant": [], "dire": []}
     out["bans"] = data.get("bans") or {"radiant": [], "dire": []}
     out["team_order"] = data.get("team_order") or []
-    out["radiant_score"] = data.get("radiant_score")
-    out["dire_score"] = data.get("dire_score")
-    out["game_time"] = data.get("game_time")
-    # v0.3.24g: networth per side, exposed as plain ints (or None if the
-    # DLTV page didn't render the `.team__networth .networth > span` for
-    # this fetch — e.g. a cold page render or a finished map).
-    out["radiant_networth"] = data.get("radiant_networth")
-    out["dire_networth"] = data.get("dire_networth")
+    # v0.3.25l: only fall through to DOM values for fields the
+    # socket hook didn't supply.  Hooked values are the source of
+    # truth; DOM is the fallback.  This keeps existing behaviour
+    # (DOM wins when the hook is silent) intact for older DLTV
+    # builds whose socket payload doesn't carry, e.g., networth.
+    for k in ("radiant_score", "dire_score", "game_time",
+              "radiant_networth", "dire_networth"):
+        if out.get(k) is None:
+            v = data.get(k)
+            if v is not None:
+                out[k] = v
+    # v0.3.25l: if the socket hook didn't give us a signed lead
+    # but the DOM has an absolute one, surface that too so the UI
+    # can at least show the magnitude.
+    if out.get("gold_lead_radiant") is None:
+        n = data.get("radiant_networth")
+        if isinstance(n, int) and n > 0:
+            # Without a sign we don't know which side leads; the
+            # frontend treats gold_lead_radiant=None as "abs only"
+            # and just renders the magnitude.  See board._build_live_gold.
+            out["gold_lead_radiant"] = n
     teams = data.get("teams") or []
     out["team_names"] = [(t.get("name") or "") for t in teams]
     out["team_sides"] = [t.get("side_kind") or "unknown" for t in teams]
@@ -995,7 +1171,20 @@ def _extract_score_from_text(page) -> Dict[str, Any]:
     # Game time like "12:35"
     m = re.search(r"\b(\d{1,2}):(\d{2})\b", text)
     if m:
-        out["game_time"] = f"{m.group(1)}:{m.group(2)}"
+        # v0.3.25m: store as int seconds.  The old code returned
+        # the "MM:SS" string here, which the frontend then
+        # rejected (`fmtClock` only handles numbers) — every
+        # legacy cache entry made the live clock render as "—"
+        # even when the text scan found the time.  Returning
+        # int seconds lets the board layer pass the value
+        # through unchanged.
+        try:
+            mm = int(m.group(1))
+            ss = int(m.group(2))
+            if 0 <= mm <= 180 and 0 <= ss < 60:
+                out["game_time"] = mm * 60 + ss
+        except (TypeError, ValueError):
+            pass
     # Score: a pair of digits separated by 2-6 spaces or a tab,
     # near the top of the page (we just look anywhere; it's OK to
     # match multiple times and take the first large one).
@@ -1100,6 +1289,12 @@ def _fetch_match_state_inner(browser, url: str) -> Dict[str, Any]:
     page = None
     try:
         context = browser.new_context()
+        # v0.3.25l: install the socket.io payload interceptor on the
+        # context BEFORE the page is created so the init-script
+        # runs before DLTV's own scripts attach handlers.  Without
+        # this ordering the Manager.prototype.on patch lands after
+        # DLTV has already wired up, and we miss the first event.
+        _install_socket_hook(context)
         page = context.new_page()
         try:
             page.goto(url, timeout=PLAYER_WR_FETCH_TIMEOUT_MS,

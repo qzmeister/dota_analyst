@@ -1,16 +1,16 @@
 {
   "target": "first_15_kills",
   "config": {
-    "name": "ridge_a0.1",
-    "model": "ridge",
+    "name": "hgb_max_depth3",
+    "model": "hgb",
     "params": {
-      "alpha": 0.1
+      "max_depth": 3,
+      "learning_rate": 0.05
     }
   },
-  "n_matches": 529,
-  "n_features": 21,
+  "n_matches": 603,
+  "n_features": 16,
   "feature_columns": [
-    "patch",
     "r_tier",
     "d_tier",
     "r_team_id",
@@ -18,11 +18,7 @@
     "r_hero_enc",
     "d_hero_enc",
     "r_dire_syn",
-    "r_picks",
-    "d_picks",
     "r_top_team",
-    "d_top_team",
-    "side_rad",
     "r_ban_enc",
     "d_ban_enc",
     "r_team_syn",
@@ -33,9 +29,9 @@
     "n_top_players"
   ],
   "metrics_honest": {
-    "mae": 3.887925788838494,
-    "rmse": 4.999149328102274
+    "mae": 3.923833920050453,
+    "rmse": 5.025429600335201
   },
-  "trained_at": 1785272445,
-  "trainer_version": "v2"
+  "trained_at": 1785273421,
+  "trainer_version": "v3-prune"
 }

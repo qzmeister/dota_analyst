@@ -1,0 +1,472 @@
+{
+  "n_matches": 603,
+  "n_features_full": 21,
+  "feature_names": [
+    "patch",
+    "r_tier",
+    "d_tier",
+    "r_team_id",
+    "d_team_id",
+    "r_hero_enc",
+    "d_hero_enc",
+    "r_dire_syn",
+    "r_picks",
+    "d_picks",
+    "r_top_team",
+    "d_top_team",
+    "side_rad",
+    "r_ban_enc",
+    "d_ban_enc",
+    "r_team_syn",
+    "d_team_syn",
+    "gold_adv_5",
+    "gold_adv_10",
+    "days_since_patch",
+    "n_top_players"
+  ],
+  "results": {
+    "kills_total": {
+      "configs": {
+        "ridge_a0.1": {
+          "params": {
+            "alpha": 0.1
+          },
+          "model": "ridge",
+          "mae": 11.87990846962972,
+          "rmse": 15.345828212518
+        },
+        "ridge_a1.0": {
+          "params": {
+            "alpha": 1.0
+          },
+          "model": "ridge",
+          "mae": 11.864093506332804,
+          "rmse": 15.325053216371227
+        },
+        "ridge_a10": {
+          "params": {
+            "alpha": 10.0
+          },
+          "model": "ridge",
+          "mae": 11.801145699590071,
+          "rmse": 15.263264775359755
+        },
+        "hgb_default": {
+          "params": {},
+          "model": "hgb",
+          "mae": 12.52477476433855,
+          "rmse": 16.338354412627744
+        },
+        "hgb_max_depth3": {
+          "params": {
+            "max_depth": 3,
+            "learning_rate": 0.05
+          },
+          "model": "hgb",
+          "mae": 11.897627037361424,
+          "rmse": 15.595028111105444
+        },
+        "hgb_poisson": {
+          "params": {
+            "loss": "poisson"
+          },
+          "model": "hgb",
+          "mae": 12.570699779237595,
+          "rmse": 16.295847489599552
+        },
+        "xgb_reg_sq": {
+          "params": {
+            "objective": "reg:squarederror",
+            "max_depth": 4,
+            "eta": 0.1,
+            "n_estimators": 200
+          },
+          "model": "xgb_reg",
+          "mae": 12.812042999267579,
+          "rmse": 16.46504340463568
+        },
+        "xgb_reg_poisson": {
+          "params": {
+            "objective": "count:poisson",
+            "max_depth": 4,
+            "eta": 0.1,
+            "n_estimators": 200
+          },
+          "model": "xgb_reg",
+          "mae": 12.808660316467286,
+          "rmse": 16.571131074997233
+        }
+      },
+      "best_config": "ridge_a10",
+      "best_mae": 11.801145699590071,
+      "n_samples": 603,
+      "kept_features": [
+        "r_tier",
+        "d_tier",
+        "d_hero_enc",
+        "r_dire_syn",
+        "r_picks",
+        "d_picks",
+        "r_top_team",
+        "d_top_team",
+        "r_ban_enc",
+        "r_team_syn",
+        "d_team_syn",
+        "days_since_patch",
+        "n_top_players"
+      ],
+      "kept_idx": [
+        1,
+        2,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        13,
+        15,
+        16,
+        19,
+        20
+      ],
+      "n_features_pruned": 13
+    },
+    "duration_sec": {
+      "configs": {
+        "ridge_a0.1": {
+          "params": {
+            "alpha": 0.1
+          },
+          "model": "ridge",
+          "mae": 592.4010848392311,
+          "rmse": 787.6546856766406
+        },
+        "ridge_a1.0": {
+          "params": {
+            "alpha": 1.0
+          },
+          "model": "ridge",
+          "mae": 590.7528742771133,
+          "rmse": 785.2915733300247
+        },
+        "ridge_a10": {
+          "params": {
+            "alpha": 10.0
+          },
+          "model": "ridge",
+          "mae": 586.936292877837,
+          "rmse": 779.9806316416616
+        },
+        "hgb_default": {
+          "params": {},
+          "model": "hgb",
+          "mae": 667.8221615902596,
+          "rmse": 879.2185353120428
+        },
+        "hgb_max_depth3": {
+          "params": {
+            "max_depth": 3,
+            "learning_rate": 0.05
+          },
+          "model": "hgb",
+          "mae": 612.538019043782,
+          "rmse": 816.4387000952156
+        },
+        "hgb_poisson": {
+          "params": {
+            "loss": "poisson"
+          },
+          "model": "hgb",
+          "mae": 646.3980469291296,
+          "rmse": 864.7889700565927
+        },
+        "xgb_reg_sq": {
+          "params": {
+            "objective": "reg:squarederror",
+            "max_depth": 4,
+            "eta": 0.1,
+            "n_estimators": 200
+          },
+          "model": "xgb_reg",
+          "mae": 680.16875,
+          "rmse": 892.439625751008
+        },
+        "xgb_reg_quantile_p50": {
+          "params": {
+            "objective": "reg:quantileerror",
+            "quantile_alpha": 0.5,
+            "max_depth": 4,
+            "eta": 0.1,
+            "n_estimators": 200
+          },
+          "model": "xgb_reg",
+          "mae": 623.0425170898437,
+          "rmse": 845.4954435717545
+        }
+      },
+      "best_config": "ridge_a10",
+      "best_mae": 586.936292877837,
+      "n_samples": 603,
+      "kept_features": [
+        "r_tier",
+        "d_tier",
+        "r_hero_enc",
+        "d_hero_enc",
+        "r_picks",
+        "d_picks",
+        "r_top_team",
+        "d_top_team",
+        "r_ban_enc",
+        "d_ban_enc",
+        "r_team_syn",
+        "d_team_syn",
+        "n_top_players"
+      ],
+      "kept_idx": [
+        1,
+        2,
+        5,
+        6,
+        8,
+        9,
+        10,
+        11,
+        13,
+        14,
+        15,
+        16,
+        20
+      ],
+      "n_features_pruned": 13
+    },
+    "first_15_kills": {
+      "configs": {
+        "ridge_a0.1": {
+          "params": {
+            "alpha": 0.1
+          },
+          "model": "ridge",
+          "mae": 3.961844685146429,
+          "rmse": 5.047031646541855
+        },
+        "ridge_a1.0": {
+          "params": {
+            "alpha": 1.0
+          },
+          "model": "ridge",
+          "mae": 3.967852103613737,
+          "rmse": 5.046828863693588
+        },
+        "ridge_a10": {
+          "params": {
+            "alpha": 10.0
+          },
+          "model": "ridge",
+          "mae": 3.9627034854057444,
+          "rmse": 5.036508806677299
+        },
+        "hgb_default": {
+          "params": {},
+          "model": "hgb",
+          "mae": 4.0934675057896275,
+          "rmse": 5.246674285670878
+        },
+        "hgb_max_depth3": {
+          "params": {
+            "max_depth": 3,
+            "learning_rate": 0.05
+          },
+          "model": "hgb",
+          "mae": 3.923833920050453,
+          "rmse": 5.025429600335201
+        },
+        "hgb_poisson": {
+          "params": {
+            "loss": "poisson"
+          },
+          "model": "hgb",
+          "mae": 4.07164674042731,
+          "rmse": 5.204112660355624
+        },
+        "xgb_reg_sq": {
+          "params": {
+            "objective": "reg:squarederror",
+            "max_depth": 4,
+            "eta": 0.1,
+            "n_estimators": 200
+          },
+          "model": "xgb_reg",
+          "mae": 4.0782054424285885,
+          "rmse": 5.322655413019106
+        },
+        "xgb_reg_poisson": {
+          "params": {
+            "objective": "count:poisson",
+            "max_depth": 4,
+            "eta": 0.1,
+            "n_estimators": 200
+          },
+          "model": "xgb_reg",
+          "mae": 4.228893709182739,
+          "rmse": 5.39884643565248
+        }
+      },
+      "best_config": "hgb_max_depth3",
+      "best_mae": 3.923833920050453,
+      "n_samples": 603,
+      "kept_features": [
+        "r_tier",
+        "d_tier",
+        "r_team_id",
+        "d_team_id",
+        "r_hero_enc",
+        "d_hero_enc",
+        "r_dire_syn",
+        "r_top_team",
+        "r_ban_enc",
+        "d_ban_enc",
+        "r_team_syn",
+        "d_team_syn",
+        "gold_adv_5",
+        "gold_adv_10",
+        "days_since_patch",
+        "n_top_players"
+      ],
+      "kept_idx": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        10,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20
+      ],
+      "n_features_pruned": 16
+    },
+    "winner": {
+      "configs": {
+        "logreg_c0.5_l1": {
+          "params": {
+            "C": 0.5,
+            "penalty": "l1",
+            "solver": "liblinear"
+          },
+          "model": "logreg",
+          "accuracy": 0.7530027548209366,
+          "logloss": 0.5489082180152309
+        },
+        "logreg_c1.0_l2": {
+          "params": {
+            "C": 1.0,
+            "penalty": "l2"
+          },
+          "model": "logreg",
+          "accuracy": 0.7082231404958678,
+          "logloss": 0.5782739821004584
+        },
+        "logreg_c2.0_l2": {
+          "params": {
+            "C": 2.0,
+            "penalty": "l2"
+          },
+          "model": "logreg",
+          "accuracy": 0.7148484848484848,
+          "logloss": 0.5789216654805834
+        },
+        "hgb_default": {
+          "params": {},
+          "model": "hgb",
+          "accuracy": 0.731473829201102,
+          "logloss": 0.6776467661858254
+        },
+        "hgb_max_depth3": {
+          "params": {
+            "max_depth": 3,
+            "learning_rate": 0.05
+          },
+          "model": "hgb",
+          "accuracy": 0.7397107438016529,
+          "logloss": 0.5362098219675632
+        },
+        "hgb_max_depth4": {
+          "params": {
+            "max_depth": 4,
+            "learning_rate": 0.1
+          },
+          "model": "hgb",
+          "accuracy": 0.7148484848484848,
+          "logloss": 0.5762810323675424
+        },
+        "xgb_dart": {
+          "params": {
+            "booster": "dart",
+            "max_depth": 4,
+            "eta": 0.1,
+            "n_estimators": 200,
+            "rate_drop": 0.1
+          },
+          "model": "xgb_clf",
+          "accuracy": 0.7396969696969696,
+          "logloss": 0.5485241949558258
+        },
+        "xgb_gbtree": {
+          "params": {
+            "booster": "gbtree",
+            "max_depth": 4,
+            "eta": 0.1,
+            "n_estimators": 200
+          },
+          "model": "xgb_clf",
+          "accuracy": 0.7199035812672177,
+          "logloss": 0.5935890197753906
+        }
+      },
+      "best_config": "logreg_c0.5_l1",
+      "best_accuracy": 0.7530027548209366,
+      "n_samples": 603,
+      "kept_features": [
+        "patch",
+        "r_tier",
+        "d_tier",
+        "r_team_id",
+        "d_team_id",
+        "r_hero_enc",
+        "d_hero_enc",
+        "r_picks",
+        "r_top_team",
+        "d_top_team",
+        "gold_adv_5",
+        "gold_adv_10",
+        "days_since_patch",
+        "n_top_players"
+      ],
+      "kept_idx": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        8,
+        10,
+        11,
+        17,
+        18,
+        19,
+        20
+      ],
+      "n_features_pruned": 14
+    }
+  }
+}

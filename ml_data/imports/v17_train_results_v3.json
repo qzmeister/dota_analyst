@@ -1,0 +1,98 @@
+{
+  "kills_total": {
+    "dir": "C:\\Users\\artka\\.minimax\\workspace\\dota_analyst\\ml_data\\models\\kills_total_v17",
+    "n_features": 13,
+    "kept_features": [
+      "r_tier",
+      "d_tier",
+      "d_hero_enc",
+      "r_dire_syn",
+      "r_picks",
+      "d_picks",
+      "r_top_team",
+      "d_top_team",
+      "r_ban_enc",
+      "r_team_syn",
+      "d_team_syn",
+      "days_since_patch",
+      "n_top_players"
+    ],
+    "metrics": {
+      "mae": 11.801145699590071,
+      "rmse": 15.263264775359755
+    }
+  },
+  "duration_sec": {
+    "dir": "C:\\Users\\artka\\.minimax\\workspace\\dota_analyst\\ml_data\\models\\duration_sec_v17",
+    "n_features": 13,
+    "kept_features": [
+      "r_tier",
+      "d_tier",
+      "r_hero_enc",
+      "d_hero_enc",
+      "r_picks",
+      "d_picks",
+      "r_top_team",
+      "d_top_team",
+      "r_ban_enc",
+      "d_ban_enc",
+      "r_team_syn",
+      "d_team_syn",
+      "n_top_players"
+    ],
+    "metrics": {
+      "mae": 586.936292877837,
+      "rmse": 779.9806316416616
+    }
+  },
+  "first_15_kills": {
+    "dir": "C:\\Users\\artka\\.minimax\\workspace\\dota_analyst\\ml_data\\models\\first_15_kills_v17",
+    "n_features": 16,
+    "kept_features": [
+      "r_tier",
+      "d_tier",
+      "r_team_id",
+      "d_team_id",
+      "r_hero_enc",
+      "d_hero_enc",
+      "r_dire_syn",
+      "r_top_team",
+      "r_ban_enc",
+      "d_ban_enc",
+      "r_team_syn",
+      "d_team_syn",
+      "gold_adv_5",
+      "gold_adv_10",
+      "days_since_patch",
+      "n_top_players"
+    ],
+    "metrics": {
+      "mae": 3.923833920050453,
+      "rmse": 5.025429600335201
+    }
+  },
+  "winner": {
+    "dir": "C:\\Users\\artka\\.minimax\\workspace\\dota_analyst\\ml_data\\models\\winner_v17",
+    "n_features": 14,
+    "kept_features": [
+      "patch",
+      "r_tier",
+      "d_tier",
+      "r_team_id",
+      "d_team_id",
+      "r_hero_enc",
+      "d_hero_enc",
+      "r_picks",
+      "r_top_team",
+      "d_top_team",
+      "gold_adv_5",
+      "gold_adv_10",
+      "days_since_patch",
+      "n_top_players"
+    ],
+    "metrics": {
+      "accuracy": 0.7530027548209366,
+      "logloss": 0.5489082180152309
+    }
+  }
+}

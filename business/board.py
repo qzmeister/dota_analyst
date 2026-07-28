@@ -751,6 +751,58 @@ def _live_card(series: Dict, event_title: str) -> Dict:
                         if ban_entries is not None:
                             m["radiant_bans"] = ban_entries["radiant_bans"]
                             m["dire_bans"]    = ban_entries["dire_bans"]
+                # v0.4.0-bans (fallback): the live socket payload drops
+                # the `bans` arrays the moment the draft is over (we
+                # observed the arrays go empty in the very first frame
+                # after game start).  `dltv_socket.get_cached_bans()`
+                # returns the last non-empty draft we received, so the
+                # bans row stays visible throughout the game.  This is
+                # the same shape as the socket-db lookup above, just
+                # fed from a snapshot rather than the live frame.
+                if not (m.get("radiant_bans") or m.get("dire_bans")) and steam_id_for_lookup is not None:
+                    try:
+                        snap = _ds.get_cached_bans(int(steam_id_for_lookup))
+                    except Exception:
+                        snap = None
+                    if snap is not None and (snap.get("first_bans") or snap.get("second_bans")):
+                        fake_db = {
+                            "first_team": {
+                                "bans": snap.get("first_bans") or [],
+                                "is_radiant": bool(snap.get("first_is_radiant")),
+                            },
+                            "second_team": {
+                                "bans": snap.get("second_bans") or [],
+                                "is_radiant": not bool(snap.get("first_is_radiant")),
+                            },
+                        }
+                        ban_entries = _db_bans_to_map_entries(
+                            fake_db, m, is_watchlist=is_watchlist
+                        )
+                        if ban_entries is not None:
+                            m["radiant_bans"] = ban_entries["radiant_bans"]
+                            m["dire_bans"]    = ban_entries["dire_bans"]
+                # v0.4.0-bans (last-resort): the dltv_browser cache.
+                # If the match was already in-game when the socket
+                # subscribed (no draft-phase payload captured), the
+                # chromium scrape path may have caught the bans via the
+                # socket.io hook / page globals.  We only use this
+                # when (a) socket didn't carry bans, (b) the
+                # draft-snapshot is empty, and (c) the cache actually
+                # has bans — otherwise we keep `m` empty so the UI
+                # hides the row.
+                if not (m.get("radiant_bans") or m.get("dire_bans")):
+                    ms_bans = cached_state.get("bans") or {}
+                    r_ban_cards = _names_to_cards(ms_bans.get("radiant", []))
+                    d_ban_cards = _names_to_cards(ms_bans.get("dire", []))
+                    if r_ban_cards or d_ban_cards:
+                        def _entry(c: Dict, i: int) -> Dict:
+                            return {
+                                "hero_id": c.get("_dltv_id") or c.get("id"),
+                                "order": i,
+                                "_steam_id": c.get("id"),
+                            }
+                        m["radiant_bans"] = [_entry(c, i) for i, c in enumerate(r_ban_cards)]
+                        m["dire_bans"]    = [_entry(c, i) for i, c in enumerate(d_ban_cards)]
             else:
                 # No socket data — fall back to the dltv_browser
                 # cache (with the v0.3.25l-bugfix trust rules).

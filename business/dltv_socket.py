@@ -73,6 +73,20 @@ _state_ts: Dict[int, float] = {}
 _subscriptions: Set[int] = set()
 _lock = threading.RLock()
 
+# v0.4.0-bans: persistent bans cache.  DLTV's live socket.io
+# payload carries `db.{first,second}_team.bans` only during the
+# draft phase.  Once the game starts, the `bans` array goes
+# empty in every subsequent payload (the draft is "done", DLTV
+# doesn't ship historical draft data on the live channel).  We
+# snapshot the last non-empty bans into this dict so the live
+# card can show the full draft (picks + bans) throughout the
+# game.  TTL is much longer than the main `_state` because bans
+# never change mid-game — 4h covers the longest pro match (Bo5
+# with 1+ hour pauses) plus a comfortable margin.
+_BANS_CACHE_TTL_SEC = 4 * 3600.0
+_bans_cache: Dict[int, Dict[str, Any]] = {}
+_bans_ts: Dict[int, float] = {}
+
 # Background runner
 _loop_thread: Optional[threading.Thread] = None
 _loop_started = threading.Event()
@@ -100,6 +114,35 @@ def get_live_state(steam_id: int) -> Optional[Dict[str, Any]]:
         # Return a shallow copy so the caller can't mutate
         # shared state.
         return dict(_state[int(steam_id)])
+
+
+def get_cached_bans(steam_id: int) -> Optional[Dict[str, Any]]:
+    """Return the last non-empty bans for `steam_id` (or None).
+
+    v0.4.0-bans: the live socket payload drops `bans` once the
+    draft is over, but the UI needs to keep showing them.  This
+    cache preserves the last draft-phase payload so the live card
+    can render picks AND bans throughout the game.  Returns
+    `{"first_bans": [...], "second_bans": [...],
+    "first_is_radiant": bool}` or None if we never saw a non-empty
+    draft for this match (e.g. live card rendered between
+    subscription and the first event).
+    """
+    with _lock:
+        ts = _bans_ts.get(int(steam_id))
+        if ts is None:
+            return None
+        if _now() - ts > _BANS_CACHE_TTL_SEC:
+            return None
+        snap = _bans_cache.get(int(steam_id))
+        if snap is None:
+            return None
+        # Return a shallow copy so the caller can't mutate shared state.
+        return {
+            "first_bans": list(snap.get("first_bans") or []),
+            "second_bans": list(snap.get("second_bans") or []),
+            "first_is_radiant": bool(snap.get("first_is_radiant", False)),
+        }
 
 
 def _set_state(steam_id: int, payload: Dict[str, Any]) -> None:
@@ -244,6 +287,30 @@ async def _run_session() -> None:
                                 payload_mid = payload.get("match_id")
                                 if payload_mid is None or int(payload_mid) == sid:
                                     _set_state(sid, payload)
+                                    # v0.4.0-bans: cache the draft-phase
+                                    # bans for as long as the match stays
+                                    # in _state.  The live socket payload
+                                    # drops `db.{first,second}_team.bans`
+                                    # once the draft is over (we observed
+                                    # the array goes empty the moment the
+                                    # game starts), so without this cache
+                                    # the live card's bans row would
+                                    # disappear right when the match is
+                                    # most interesting to watch.
+                                    db = payload.get("db")
+                                    if isinstance(db, dict):
+                                        first = db.get("first_team") or {}
+                                        second = db.get("second_team") or {}
+                                        first_bans = first.get("bans") or []
+                                        second_bans = second.get("bans") or []
+                                        if first_bans or second_bans:
+                                            with _lock:
+                                                _bans_cache[sid] = {
+                                                    "first_bans": list(first_bans),
+                                                    "second_bans": list(second_bans),
+                                                    "first_is_radiant": bool(first.get("is_radiant")),
+                                                }
+                                                _bans_ts[sid] = _now()
                 # Loop exited normally (should_stop)
                 return
         except Exception as exc:

@@ -422,6 +422,16 @@ async def player_wr_browser_loop(interval_sec: float = PLAYER_WR_POLL_INTERVAL_S
                 # the steam id is an alias key so the watchlist path
                 # can find the same data after the tracker is pruned
                 # (which happens immediately when a match ends).
+                #
+                # v0.4.0-bans: also iterate `_by_steam` (Steam-only
+                # matches that never had a dltv URL — usually Chinese
+                # amateur / minor-league games).  For these we
+                # construct a synthetic URL `dltv.org/matches/{steam_id}`
+                # which DLTV usually redirects to the real series
+                # page; if it doesn't, chromium will 404 and we just
+                # skip the row.  Without this branch the live card's
+                # bans row stays empty for the whole game because no
+                # source ever queries the dltv page for the draft.
                 with _tracker._lock:
                     targets = []
                     for sid, m in _tracker._by_series.items():
@@ -440,6 +450,27 @@ async def player_wr_browser_loop(interval_sec: float = PLAYER_WR_POLL_INTERVAL_S
                         except (TypeError, ValueError):
                             steam_id = None
                         targets.append((int(sid), m.get("url"), steam_id))
+                    # Steam-only matches: no dltv URL, but we can try
+                    # a redirect-style URL `dltv.org/matches/{steam_id}`.
+                    for steam_id, m in _tracker._by_steam.items():
+                        if m.get("stage") != "live":
+                            continue
+                        try:
+                            sid_int = int(steam_id)
+                        except (TypeError, ValueError):
+                            continue
+                        # Skip if the dltv cache is already populated
+                        # for this steam id (the dltv_browser lookup
+                        # by steam alias covers this case).
+                        if dltv_browser.get_cached_match_state_by_steam(sid_int) is not None:
+                            continue
+                        url = f"https://dltv.org/matches/{sid_int}"
+                        # Use the steam id as a "series id" stand-in
+                        # so the cache write is keyed consistently;
+                        # the publisher also writes the steam-id
+                        # alias key, so a subsequent board.py lookup
+                        # by either key will find the data.
+                        targets.append((sid_int, url, sid_int))
                 for sid_int, url, steam_id in targets:
                     # v0.3.20: match state is the more important
                     # thing — without it the live card shows empty

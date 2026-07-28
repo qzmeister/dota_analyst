@@ -733,6 +733,24 @@ def _live_card(series: Dict, event_title: str) -> Dict:
                         if socket_entries is not None:
                             m["radiant_picks"] = socket_entries["radiant_picks"]
                             m["dire_picks"]    = socket_entries["dire_picks"]
+                # v0.4.0-bans: socket.io `__nd2_match_{steam_id}` payload
+                # carries the bans inside `db.{first,second}_team.bans`,
+                # the same shape as `/live/{id}.json`.  Without this
+                # overlay, the live card's bans row disappears whenever
+                # the socket is the primary source (it supersedes
+                # dltv_browser cache which used to carry bans via the
+                # socket.io hook).  We only fill bans when the local `m`
+                # doesn't already have them (so we don't clobber a
+                # higher-quality value from `_active_map(series)`).
+                if not (m.get("radiant_bans") or m.get("dire_bans")):
+                    socket_db = socket_state.get("db")
+                    if isinstance(socket_db, dict):
+                        ban_entries = _db_bans_to_map_entries(
+                            socket_db, m, is_watchlist=is_watchlist
+                        )
+                        if ban_entries is not None:
+                            m["radiant_bans"] = ban_entries["radiant_bans"]
+                            m["dire_bans"]    = ban_entries["dire_bans"]
             else:
                 # No socket data — fall back to the dltv_browser
                 # cache (with the v0.3.25l-bugfix trust rules).
@@ -1239,6 +1257,68 @@ def _fast_picks_to_map_entries(
         radiant_entries = [_entry(p, i) for i, p in enumerate(st_picks)]
         dire_entries    = [_entry(p, i) for i, p in enumerate(ft_picks)]
     return {"radiant_picks": radiant_entries, "dire_picks": dire_entries}
+
+
+def _db_bans_to_map_entries(
+    db: Dict,
+    m: Dict,
+    is_watchlist: bool,
+) -> Optional[Dict[str, List[Dict]]]:
+    """Convert `db.first_team.bans` / `db.second_team.bans` from a
+    socket.io payload into the `m["radiant_bans"]` / `m["dire_bans"]`
+    shape the rest of `_live_card` understands.
+
+    Returns `{"radiant_bans": [...], "dire_bans": [...]}` or None if
+    the payload doesn't carry both `first_team` and `second_team`.
+
+    v0.4.0-bans: the socket.io `__nd2_match_{steam_id}` payload
+    carries bans under `db.first_team.bans` (same shape as
+    `/live/{id}.json`).  Each team object has `is_radiant: bool` so we
+    don't need to consult `m` to figure out which side is which.
+    Falls back to a `_first_team_id` / `_second_team_id` lookup if
+    `is_radiant` is missing (older DLTV payload shape).
+    """
+    first = db.get("first_team")
+    second = db.get("second_team")
+    if not isinstance(first, dict) or not isinstance(second, dict):
+        return None
+    first_bans = first.get("bans") or []
+    second_bans = second.get("bans") or []
+    if not first_bans and not second_bans:
+        return None
+
+    def _entry(b: Dict, i: int) -> Dict:
+        # Bans carry `hero.steam_id` (same shape as picks in
+        # `_live_json_to_series`); fall back to `id` for older payloads.
+        hero = b.get("hero") if isinstance(b.get("hero"), dict) else {}
+        return {
+            "hero_id": hero.get("steam_id") or b.get("hero_id"),
+            "order": i,
+            "_steam_id": hero.get("steam_id") or b.get("hero_id"),
+        }
+
+    # Prefer the explicit `is_radiant` flag (DLTV v1 / socket.io);
+    # fall back to first_team_id vs radiant_team_id when missing.
+    first_is_radiant = first.get("is_radiant")
+    if isinstance(first_is_radiant, bool):
+        if first_is_radiant:
+            radiant_bans = [_entry(b, i) for i, b in enumerate(first_bans)]
+            dire_bans    = [_entry(b, i) for i, b in enumerate(second_bans)]
+        else:
+            radiant_bans = [_entry(b, i) for i, b in enumerate(second_bans)]
+            dire_bans    = [_entry(b, i) for i, b in enumerate(first_bans)]
+    else:
+        first_team_id = m.get("_first_team_id_for_disp")
+        radiant_team_id = m.get("radiant_team_id")
+        if first_team_id is None or radiant_team_id is None:
+            return None
+        if first_team_id == radiant_team_id:
+            radiant_bans = [_entry(b, i) for i, b in enumerate(first_bans)]
+            dire_bans    = [_entry(b, i) for i, b in enumerate(second_bans)]
+        else:
+            radiant_bans = [_entry(b, i) for i, b in enumerate(second_bans)]
+            dire_bans    = [_entry(b, i) for i, b in enumerate(first_bans)]
+    return {"radiant_bans": radiant_bans, "dire_bans": dire_bans}
 
 
 def _parse_clock_seconds(value: Any) -> Optional[int]:

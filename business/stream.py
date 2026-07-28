@@ -243,6 +243,24 @@ async def board_publisher_loop(
 
     log.info("sse publisher loop started; interval=%.1fs", interval_sec)
 
+    # v0.4.0-cache: keep the last NON-EMPTY board as a fallback so the UI
+    # never blanks out when the publisher build times out / hangs / returns
+    # an empty payload.  The publisher thread can take 5-9 minutes per cycle
+    # (DLTV scrape + /live/{id}.json enrichment for 30+ live matches); without
+    # this fallback the SSE clients would receive 0/0/0 every 5 seconds
+    # during that window.  We only count a board as "good" if it has at
+    # least one item in `live + prematch + postmatch`.
+    _BOARD_CACHE_TTL_SEC = 300.0
+    _last_good_board: Optional[Dict[str, Any]] = None
+    _last_good_ts: float = 0.0
+
+    def _has_content(b: Dict[str, Any]) -> bool:
+        return bool(
+            (b.get("live") or [])
+            or (b.get("prematch") or [])
+            or (b.get("postmatch") or [])
+        )
+
     _stop = _threading.Event()
 
     def _build_loop() -> None:
@@ -253,8 +271,39 @@ async def board_publisher_loop(
                 board = build_board([], [])
                 if "engine" not in board:
                     board["engine"] = get_default_engine().name
-                _app._latest_auto_board = board
-                _app._latest_auto_board_ts = _t.monotonic()
+                if _has_content(board):
+                    _app._latest_auto_board = board
+                    _app._latest_auto_board_ts = _t.monotonic()
+                    # Only refresh the fallback when we have something
+                    # non-empty to fall back to.  Stale-but-non-empty is
+                    # better than empty.
+                    global _last_good_board, _last_good_ts
+                    _last_good_board = board
+                    _last_good_ts = _t.monotonic()
+                else:
+                    # Empty build — try the fallback if it's fresh enough.
+                    if (
+                        _last_good_board is not None
+                        and (_t.monotonic() - _last_good_ts) < _BOARD_CACHE_TTL_SEC
+                    ):
+                        age = _t.monotonic() - _last_good_ts
+                        log.info(
+                            "sse publisher: empty build, serving cached board "
+                            "(age=%.1fs, live=%d, prematch=%d, postmatch=%d)",
+                            age,
+                            len(_last_good_board.get("live") or []),
+                            len(_last_good_board.get("prematch") or []),
+                            len(_last_good_board.get("postmatch") or []),
+                        )
+                        # Bump the timestamp so the UI's "обновлено HH:MM"
+                        # counter keeps moving — better UX than a stuck clock.
+                        _app._latest_auto_board = _last_good_board
+                        _app._latest_auto_board_ts = _t.monotonic()
+                    else:
+                        # No fallback (or it's too old) — publish the empty
+                        # board so the UI at least knows the publisher is alive.
+                        _app._latest_auto_board = board
+                        _app._latest_auto_board_ts = _t.monotonic()
                 log.info(
                     "sse publisher: build_board done in %.2fs (live=%d)",
                     _t.monotonic() - t0,

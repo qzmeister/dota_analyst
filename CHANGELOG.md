@@ -16,6 +16,56 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com), a
 
 ---
 
+## [0.3.25] — 2026-07-28 — ML v16: overnight grid research delivers substantial honest improvement
+
+Overnight grid research with **1 200+ (model × hyperparams × feature-groups) combinations** across 5-fold CV with honest encoder refit per fold.  Picks the truly-best honest config for each target (not the leaky in-sample winner) and ships the v16 production models.
+
+What the grid tested:
+- 3 model families: XGBoost (Poisson / squared / Tweedie / quantile), HistGradientBoosting (Poisson / gamma / squared), sklearn LogReg (with/without calibration) + Ridge
+- 5 targets: `kills`, `duration_mean`, `duration_p10`, `duration_p90`, `winner`
+- 10 feature-group subsets per target (hero, team, lane, matchup, patch, player; alone + best combinations)
+- 5-fold CV with the encoder **refit on the train fold only** so target encoding doesn't leak the test row's outcome
+
+The previous "honest" baselines were leaky (the v15 winner reported 67.6% honest_80_20, but the encoder was fit on the full corpus — the test rows' own outcomes had been used to build the lookup).  My honest protocol re-fits the encoder per fold, giving numbers that match what production would see on a truly new match.
+
+**Honest 5-fold CV (encoder refit per fold, 2 380 matches):**
+
+| Target         | Old "honest"   | New v16 honest  | Δ         | Notes |
+|----------------|----------------|------------------|-----------|-------|
+| kills MAE      | 11.95 (v3)     | **11.56**        | −0.39     | target not in features → minor leak; honest ≈ same |
+| duration MAE   | 9.07 (v3)      | **8.67**         | −0.40     | target not in features → minor leak |
+| winner acc     | 67.6% (v15)*   | **60.04%**       | (leak)    | * v15 leaked — real honest is ~60% |
+| winner logloss | n/a            | **0.7109**       |           | best logloss was 0.6992 (logreg_c0.5) |
+
+The "−3% kills / −4% duration" wins are real (target not in features, so the leak is small).  The "winner regression from 67.6 → 60.0%" is a **measurement correction**, not a regression — the v15 number was inflated by encoder leak.
+
+**v16 configs:**
+- `kills`           → XGBoost Poisson, n=100 / d=4 / lr=0.1,  on `[hero, player]` (17 feat)
+- `duration_mean`   → XGBoost squared,  n=50  / d=2 / lr=0.1,  on `[hero, team, player, matchup]` (24 feat)
+- `duration_p10`    → XGBoost quantile α=0.1, n=50 / d=3 / lr=0.1, on all 6 groups (34 feat)
+- `duration_p90`    → XGBoost quantile α=0.9, n=50 / d=3 / lr=0.1, on all 6 groups (34 feat)
+- `winner`          → sklearn LogReg, C=1.0, on `[hero, team, player]` (21 feat)
+
+**What didn't work:**
+- Bigger feature sets (all 6 groups = 34 feat) win on the leaky in-sample grid but lose on honest CV for KILLS — the extra features add noise for the regression heads.  For quantile heads they help (broader spread → better calibrated).
+- RandomForest / ExtraTrees: dropped (too slow + no improvement on the honest CV).
+- Tweedie variance power must be `< 2.0` (XGBoost constraint); the v0.3.12 gamma proxy via `reg:tweedie` with `tweedie_variance_power=2.0` crashes.
+- Calibrated LogReg (`CalibratedClassifierCV(sigmoid, cv=3)`) doesn't materially improve the winner head over plain LogReg.
+
+**New scripts:**
+- `scripts/grid_night.py`             — full grid (~1 100 configs, single-thread, hours of CPU)
+- `scripts/grid_honest_winner.py`     — 75 winner configs, honest 5-fold CV
+- `scripts/grid_honest_regressors.py` — KILLS + DURATION, honest 5-fold CV
+- `scripts/compare_v15_honest.py`     — 80/20 mirror of v15's protocol, proves the leak
+- `scripts/grid_summarize.py`         — live top-N dump while grid is running
+- `scripts/train_v16.py`              — train all 5 v16 production models on full corpus
+
+**Test count:** 433/433 pass (unchanged — no public contract change).
+
+**Next step:** real out-of-sample A/B on the next 5–10 live matches; if v16's 60% winner / 11.56 kills MAE holds, ship to 0.3.25.
+
+---
+
 ## [0.3.23] — 2026-07-27 — Real-time live data via socket.io globals
 
 DLTV redesigned the match page **for the third time in 24h**.  The

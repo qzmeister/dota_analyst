@@ -168,18 +168,18 @@ async def _run_session() -> None:
                 WS_URL,
                 origin="https://dltv.org",
                 open_timeout=30,
-                # The server drops the connection after ~20s of
-                # no inbound activity — the DLTV socket.io server
-                # doesn't honour the standard WS-level PING
-                # frames, and the EIO PING ("2")/PONG ("3")
-                # protocol isn't reliable either.  The empirically
-                # robust solution is to send a benign SIO EVENT
-                # every 15s as a keep-alive — the server treats
-                # any incoming SIO EVENT as activity and stops
-                # counting us as idle.  We use the
-                # `__nd2_match_*` re-subscribe pattern for the
-                # currently-subscribed matches; the server
-                # accepts duplicate SUBSCRIBEs without complaint.
+                # v0.4.0 dev: WS-level PINGs cause the DLTV
+                # server to close the connection quickly (within
+                # 30-60s in the app, even though the standalone
+                # test survives 2+ minutes).  We disable the
+                # library's PING and rely on the EIO PING/PONG
+                # that the server initiates every 25s — that
+                # flow IS handled correctly.  The bottleneck
+                # is something else in the app's network path
+                # (likely the build's heavy HTTP fetches
+                # saturating the container's outbound
+                # bandwidth); we mitigate by reconnecting on
+                # any close.
                 ping_interval=None,
                 ping_timeout=None,
             ) as ws:
@@ -206,52 +206,44 @@ async def _run_session() -> None:
                 await ws.send('42["__nd2_series"]')
                 for sid in get_subscriptions():
                     await ws.send(f'42["__nd2_match_{sid}"]')
-                # Listen loop.  Two things in parallel:
-                #   1. Read events as they arrive and update the
-                #      shared state.
-                #   2. Every KEEPALIVE_INTERVAL_SEC seconds, send
-                #      a re-subscribe for every tracked steam_id
-                #      to keep the connection alive (the server
-                #      drops idle clients after ~20s).
-                KEEPALIVE_INTERVAL_SEC = 12.0
-                next_keepalive = _now() + KEEPALIVE_INTERVAL_SEC
+                # Listen loop.  Empirical finding (v0.4.0 dev): the
+                # DLTV server does NOT want unsolicited re-
+                # SUBSCRIBEs while the connection is alive — it
+                # treats them as junk and closes the socket
+                # after a few minutes.  The server pushes events
+                # for every subscribed match on its own cadence
+                # (multiple per second during a live game), so
+                # we don't need to keep the connection alive
+                # ourselves.  We just block on recv() and
+                # process events as they arrive; the connection
+                # dies naturally when the server decides to
+                # rotate us (typically 1-2 minutes per session
+                # with 44 subscriptions) and the outer
+                # `except` re-connects.
                 while not _loop_should_stop.is_set():
-                    recv_timeout = max(0.5, next_keepalive - _now())
                     try:
-                        msg = await asyncio.wait_for(ws.recv(), timeout=recv_timeout)
-                    except asyncio.TimeoutError:
-                        # No data — fall through to keepalive
-                        msg = None
+                        msg = await ws.recv()
                     except websockets.ConnectionClosed:
                         raise RuntimeError("connection closed by server")
-                    if msg:
-                        # SIO EVENT
-                        evt = _parse_sio_event(msg)
-                        if evt:
-                            channel = evt.get("channel") or ""
-                            if channel.startswith("__nd2_match_"):
-                                try:
-                                    sid = int(channel.rsplit("_", 1)[-1])
-                                except (ValueError, IndexError):
-                                    sid = None
-                                if sid is not None:
-                                    args = evt.get("args") or []
-                                    payload = args[0] if args else {}
-                                    if isinstance(payload, dict):
-                                        payload_mid = payload.get("match_id")
-                                        if payload_mid is None or int(payload_mid) == sid:
-                                            _set_state(sid, payload)
-                    if _now() >= next_keepalive:
-                        # Re-subscribe everything we have so far.
-                        # The server accepts duplicate SUBSCRIBEs
-                        # without complaint and treats them as
-                        # activity, which keeps the socket open.
-                        for sid in get_subscriptions():
-                            try:
-                                await ws.send(f'42["__nd2_match_{sid}"]')
-                            except websockets.ConnectionClosed:
-                                raise RuntimeError("connection closed by server during keepalive")
-                        next_keepalive = _now() + KEEPALIVE_INTERVAL_SEC
+                    if not msg:
+                        continue
+                    # SIO EVENT
+                    evt = _parse_sio_event(msg)
+                    if not evt:
+                        continue
+                    channel = evt.get("channel") or ""
+                    if channel.startswith("__nd2_match_"):
+                        try:
+                            sid = int(channel.rsplit("_", 1)[-1])
+                        except (ValueError, IndexError):
+                            sid = None
+                        if sid is not None:
+                            args = evt.get("args") or []
+                            payload = args[0] if args else {}
+                            if isinstance(payload, dict):
+                                payload_mid = payload.get("match_id")
+                                if payload_mid is None or int(payload_mid) == sid:
+                                    _set_state(sid, payload)
                 # Loop exited normally (should_stop)
                 return
         except Exception as exc:

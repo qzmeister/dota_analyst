@@ -230,7 +230,7 @@ async def _lifespan(app: FastAPI):
         log.info("sse publisher + accuracy scorer + player_wr browser + dltv socket stopped")
 
 
-app = FastAPI(title="Dota Analyst — business", version="0.3.19", lifespan=_lifespan)
+app = FastAPI(title="Dota Analyst — business", version="0.4.0", lifespan=_lifespan)
 
 # CORS: read allowed origins from env. Default to the gateway only.
 # The gateway terminates browser-facing CORS; this is just for direct

@@ -356,41 +356,55 @@ sprint.
 | 0.3.24f  | Live card lag cut from 5-15s to ~6-8s avg: `_wait_for_live_state` replaces fixed 3.5s `wait_for_timeout` with a `wait_for_function` predicate that returns as soon as `#live_scoreboard` scores or `radiant_picks`/`dire_picks` globals are populated (0.5-2s steady state) + drop `MATCH_STATE_TTL_SEC` 30s→8s so the cache refreshes between publisher ticks | ✅ shipped |
 | 0.3.24g  | Live card info parity with DLTV: extract per-team networth (`.team__networth > .networth > span`) → `live_gold: {radiant, dire, lead_radiant}` block + surface `game_time` (MM:SS) + new `towers_over_under` prediction + `liveCard()` renders gold-lead line with green/red arrow + ahead-team name + a/b split, and switches kills/duration/towers predictions to `ТБ`/`ТМ` format (same shape as post-match card). **Does NOT include live destroyed-tower counts** — DLTV only renders those as icons on a small in-game map image, no text/DOM hook; revisit when DLTV redesigns or the socket.io message shape is reverse-engineered | ✅ shipped |
 | 0.3.24h  | Live card stays alive after match end: `MATCH_STATE_TTL_SEC` 8s→1h (post-match picks/score/gold are still useful) + `update_match_state_cache` writes both `s{dltv_id}` and `s{steam_id}` alias keys (watchlist finds data without the tracker) + `_live_json_to_series` carries `_dltv_series_id` from the `/live/{id}.json` response (last-resort cache key for finished matches) + cache overlay applies `game_time` / `radiant_networth` / `dire_networth` even when picks are empty (DLTV's late-game state has empty picks but real time/score) + `liveCard` rewritten as a 3-column DLTV-style layout with 44×56 hero icons under each team name and a partial-gold block for the one-side-known case | ✅ shipped |
-| 0.4.0    | Cookie-based SSE auth + Postgres + auto-retrain + **direct socket.io from Python** (replace chromium page load with a raw websocket connection to `dltv.org`'s `__nd2_match_{steam_id}` channel — drops fetch time to 1-2s, removes the greenlet error + 200MB chromium binary, parallelizes across live matches trivially) + `async_playwright` refactor (the proper fix for the chromium greenlet error if we keep the page-load path) | 🚧 next |
+| 0.3.25   | ML v16 — overnight grid research (1 200+ configs, honest 5-fold CV with encoder refit per fold) → `kills` MAE 11.95→**11.56**, `duration` MAE 9.07→**8.67**, real `winner` honest 60.04% (v15's 67.6% was leaky) | ✅ shipped |
+| 0.3.25e-i | UI honesty (hide towers / Ultra Kill), theme switcher, auto-refresh radio, empty-league filter, bans row, nginx cache-control, JS backtick-in-comment fix | ✅ shipped |
+| 0.3.25k  | Workspace cleanup — 230+ scratch files + NUL + audit_report.txt + .coverage deleted, .gitignore updated | ✅ shipped |
+| 0.3.25l-t | Live card socket.io hook (CSS-rotation robust) + game_time MM:SS normaliser + m[duration] fallback + catch-all publisher + daemon-thread split + TBD/0-picks filters — **all reverted** after user reported "live card disappeared" regression | ↩️ reverted |
+| 0.3.25-rollforward | Rollback to `ec61adb` (v0.3.25k) + minimal patches: v0.3.25t-patch (publisher daemon thread, real bug) + v0.3.25l+m re-applied (hook + clock) + v0.3.25r re-applied (TBD filter) + cache trust + v0.3.25l-bugfix (hook filter by steam_id) | ✅ shipped |
+| **0.4.0** | **Real-time live data via direct socket.io from Python** (`business/dltv_socket.py`, EIO=4 hand-rolled, no chromium) + WS-PING drop (server kills faster with them) + `_last_good_board` fallback (no more 0/0/0 dead-board) + **parallel `/live/{id}.json` enrichment (40-200× build speedup, 200-500s → 0.8-3.5s)** + version bump `0.3.19` → `0.4.0` | ✅ shipped |
+| 0.4.1    | Dual-instance socket redundancy (continuous real-time when one connection drops, ~50 LoC, more complex reconciliation) | 📋 planned |
+| 0.4.2    | Async playwright refactor (the proper fix for the chromium greenlet error if we keep the page-load path for player WR) + Cookie-based SSE auth (browser `EventSource` doesn't support custom headers, public-deploy blocker) | 📋 planned |
+| 0.5.0    | Postgres migration + auto-retrain + observability (Prometheus + Grafana + OTel) | 📋 planned |
 | 1.0.0    | First production-ready release              | 🎯 goal     |
 
 ### Open backlog (any minor)
 
-- [ ] **Direct DLTV socket.io client** — DLTV's live page opens
-      `socket.io` to `https://dltv.org` on `__nd2_match_{steam_id}`,
-      which streams `{picks, score, game_time, gold_lead, ...}`
-      updates in real time.  A Python client (e.g.
-      `python-socketio[asyncio_client]` or a raw websocket with the
-      engine.io handshake) would:
-        * skip chromium entirely → no 200MB browser binary, no
-          greenlet error, no leak risk
-        * cut fetch time from 2-3s (with `_wait_for_live_state`) to
-          ~0.5-1s
-        * trivially parallel across live matches (one asyncio
-          task per match, no single-worker executor)
-        * survive page redesigns (the data shape is in the
-          socket events, not the DOM)
-      Captured here as a 0.4.0 deliverable.  Probe order:
-      (1) inspect what the page sends in
-          `page.evaluate("() => window.io && io.managers")` /
-      (2) confirm the `__nd2_match_{steam_id}` channel name from
-          the page's network tab,
-      (3) sketch a minimal async client that connects, parses
-          the first event, and writes the same `match_state`
-          cache entry the page-load path produces — that lets
-          us A/B compare without touching the consumer.
-- [ ] **Live data fallback chain** — when chromium fetch fails
-      (binary missing, network down, page redesign), currently
-      we just write an empty cache and the live card goes
-      blank.  Layered fallback: direct socket.io → DLTV
-      `/live/{id}.json` (laggy but always works) → Steam
-      `GetLiveLeagueGames` (only team/series data, no picks) →
-      "live state unavailable" with timestamp.
+- [x] **Direct DLTV socket.io client** — ✅ **shipped in 0.4.0**
+      (`business/dltv_socket.py`, EIO=4 hand-rolled, no `python-socketio`
+      dep, no chromium).  Lives 2-3 min ON / 5-30 s OFF in app context
+      (server-side limit).  Real-time when alive, `/live/{id}.json`
+      fallback when dead.  50-channel standalone test survived 120 s+.
+- [x] **`_last_good_board` fallback in publisher thread** — ✅
+      **shipped in 0.4.0** (`b45e46d`).  Empty build serves last
+      non-empty board if < 5 min old.  No more 0/0/0 dead-board
+      during 200-500 s build cycles (which used to happen 1× / cycle).
+- [x] **Parallel `/live/{id}.json` enrichment (40-200× build speedup)**
+      — ✅ **shipped in 0.4.0** (`7c0b178`).  200-500 s → 0.76-3.5 s
+      per cycle.  `ThreadPoolExecutor(max_workers=6)` +
+      `get_live_json` retries=1/timeout=1.5s.  Synthesised
+      `_live_enrich_failed` series so the card stays in the board
+      when the underlying JSON times out.
+- [x] **Live data fallback chain** — ✅ **partially shipped in 0.4.0**.
+      Currently: socket.io (when alive, real-time) → `/live/{id}.json`
+      (cached 5 s, last-good-board fallback if empty) → Steam
+      `GetLiveLeagueGames` (only team/series, no picks) → card with
+      `_live_enrich_failed` flag.  No "live state unavailable" UI
+      surface yet (the card is still rendered, just with empty picks).
+- [ ] **Dual-instance socket redundancy** — DLTV's server-side
+      connection limit is 30-150 s per session.  Run 2 sockets in
+      parallel with round-robin: continuous real-time data even when
+      one connection drops.  ~50 LoC.  Trade-off: more complex
+      reconciliation if both deliver different `live_score` for
+      the same `match_id`.  0.4.1 candidate.
+- [ ] **Async playwright refactor** — the proper fix for the
+      chromium greenlet error that surfaces under load.  Single-worker
+      executor + `_is_browser_alive()` probe only partially mitigate.
+      Real fix is `async_playwright` so greenlets yield properly.
+      Defer until we measure an actual production incident.  0.4.2.
+- [ ] **Cookie-based SSE auth** — `/api/stream/*` is currently
+      unauthed for local use (intentional, see `UNAUTHED_PREFIXES`).
+      0.4.2 = add a real login endpoint + signed cookie + remove
+      from `UNAUTHED_PREFIXES`.  Public deploy is blocked on this.
 - [ ] **Multikill classifier revisit** — discontinued in 0.3.10a
       because the 1111-match pro corpus had zero "Low" matches
       (the model collapsed to "always High").  Needs a bigger
@@ -407,10 +421,6 @@ sprint.
       is intentional in places (per-card loops, ML fallback)
       but a few are masks for real bugs that never got fixed
       because the catch hid them.  Audit before 1.0.
-- [ ] **Cookie-based SSE auth** — `/api/stream/*` is currently
-      unauthed for local use (intentional, see `UNAUTHED_PREFIXES`).
-      0.4.0 = add a real login endpoint + signed cookie + remove
-      from `UNAUTHED_PREFIXES`.  Public deploy is blocked on this.
 
 ¹ Calibration plumbing landed but the empirical run on the
 1111-match corpus showed Platt and isotonic both overfit; the

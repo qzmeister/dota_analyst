@@ -16,6 +16,53 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com), a
 
 ---
 
+## [0.4.0] — 2026-07-28 — Real-time live data via direct socket.io + 40-200× build speedup
+
+The pre-release is now at **0.4.0**: live cards update in real time without a Playwright browser, and the publisher's per-cycle time drops from **200–500 s to 0.8–3.5 s** (a 40–200× speedup).  This sprint is also a "roll-forward after a partial rollback" — the v0.3.25l–t filters had hidden live cards, so we reverted to v0.3.25k and re-applied only the safe bits.
+
+### What's in 0.4.0
+
+| Commit | Area | What |
+|--------|------|------|
+| `c857fc7` | Live data | **`business/dltv_socket.py` — direct WebSocket client to `wss://dltv.org/socket.io/?EIO=4&transport=websocket`**.  Bypasses chromium entirely.  EIO=4 + SIO EVENT protocol implemented by hand (no `python-socketio` dep).  Public API: `get_live_state(steam_id)`, `subscribe()`, `unsubscribe()`, `start_socket_client()`, `stop_socket_client()`.  State in module-level `_state` + `_state_ts` (60 s TTL) under an `RLock`.  Lifespan wired in `app.py`; publisher subscribes every live match after each build.  Real-time data confirmed (KW vs PuckChamp: `live_score 15-24, game_time 1690` matched DLTV's UI). |
+| `a59170a` | Live data | **Drop WS-level PINGs** (`ping_interval=None`).  Standalone test: default `ping_interval=20` survived 120 s+ in isolation, but the app context (uvicorn + publisher builds + dltv_browser scrapes all sharing container bandwidth) hit 30–60 s drops with WS-pings, 2–3 min without.  Server appears to treat WS-level PING frames as activity that rotates the session; rely on EIO PING/PONG (server-initiated) + the `__nd2_series` channel for keepalive. |
+| `b45e46d` | Reliability | **`_last_good_board` fallback in publisher thread** — when `build_board` returns an empty payload (DLTV scrape failure, Steam outage, enrichment timeouts), the publisher serves the last non-empty cached board if it's < 5 min old, and bumps `_latest_auto_board_ts` so the UI's "обновлено HH:MM" counter keeps moving.  Prevents the 0/0/0 dead-board symptom the user reported. |
+| `7c0b178` | Perf | **Parallel `/live/{id}.json` enrichment** (40–200× speedup).  `get_live_json` dropped from `retries=3, timeout=3s, backoff=1+2+4s` to `retries=1, timeout=1.5s, no backoff` (one fast attempt; next 5 s TTL window retries anyway).  `tracker.get_live_and_prematch` fans out enrichment across `ThreadPoolExecutor(max_workers=6)`.  22 matches × 1.5 s / 6 workers ≈ 6 s; observed cold = 3.5 s, warm = 0.76–0.9 s.  Also: when enrichment fails (timeout / 404), synthesise a v1-shaped series with `_live_enrich_failed=True` so the card stays in the board instead of being dropped silently. |
+
+### Roll-forward after rollback (the v0.3.25k → 0.4.0 path)
+
+The user rolled back to `ec61adb` (v0.3.25k) because v0.3.25l–n, r, s had hidden live cards from the UI.  We then re-applied only the safe bits and fixed the regressions:
+
+| Commit | Re-applies / fixes |
+|--------|-------------------|
+| `dbf0c8e` (v0.3.25k-patch) | Re-applies **only** the v0.3.25t publisher daemon-thread fix (without it, v0.3.25k's `asyncio.to_thread` publisher deadlocks). |
+| `2e31936` (v0.3.25l+m) | Re-applies the socket.io hook (`_install_socket_hook`, `_read_hooked_socket_result`, new CSS selectors) + `_parse_clock_seconds()` game_time MM:SS→int normaliser + `m["duration"]` fallback for watchlist matches. |
+| `7b51c2e` (v0.3.25r re-applied + cache trust) | Re-applies the TBD-vs-TBD filter in **both** `_filter_auto_board` (app.py) and `build_board` (board.py).  Plus: when `/live/{id}.json` has real score/time data, trust **it** over the dltv_browser cache (cache wins only for draft-phase cards where adapter returned zeros). |
+| `dbef2a4` (v0.3.25l-bugfix) | **Socket.io hook filter by `expected_steam_id`** — the hook was capturing payloads from neighbouring `__nd2_match_*` events on the page (live ticker / sidebar / chat).  Now extracts the steam_id from the event name and only stores payloads that match.  Without this fix, dltv_browser cache accumulated garbage (50:1, 12:35) for the wrong matches. |
+| `6f4ad5b` (backup branch `backup-v0.3.25t-broken`) | Full v0.3.25l–t + all 30+ diag scripts preserved on a side branch.  `git checkout backup-v0.3.25t-broken -- business/` recovers. |
+
+### What's still open (deferred from 0.4.0)
+
+- **v0.4.0 socket connection instability** — DLTV's server-side limit is 30–150 s per session.  Without WS-PINGs the connection survives 2–3 min in the app context; the 5 min `_BOARD_CACHE_TTL` covers the gap.  Optional next step: dual-instance socket with round-robin (continuous real-time, ~50 LoC, more complex reconciliation).
+- **Cookie-based SSE auth** — `UNAUTHED_PREFIXES` still includes `/api/stream/*` (browser `EventSource` doesn't support custom headers).  Public deploy blocker; planned for 0.4.x.
+- **Async playwright refactor** — proper fix for the chromium greenlet error that surfaces under load.  Single-worker executor + `_is_browser_alive()` probe only partially mitigate.
+- **Towers regressor** — still no per-side tower bitmask in `full_matches`; deferred until data is available (DLTV mini-map icon scraping is the only path).
+- **Multikill classifier** — degenerated to "always High" on the pro corpus; needs an amateur corpus with rare-multikill examples.
+- **Audit P1-15** — `except Exception` sites in business modules that swallow + log without re-raise.
+
+### Test count
+
+433/433 pass (unchanged — v0.4.0 is a perf + reliability sprint, no public contract change).
+
+### Deployment notes
+
+- `version="0.4.0"` in `business/app.py` (was 0.3.19, never bumped through 0.3.x).
+- `business/dltv_socket.py` requires the `websockets` library (already in `requirements.txt` via `transitive` from elsewhere — explicit pin added in 0.4.0).
+- Frontend `?v=0.3.25i` is unchanged — v0.4.0 has no UI changes, so the `index.html` `no-cache, must-revalidate` policy will pick up the new bundle pointers on the next page load without a query-string bump.
+- The `backup-v0.3.25t-broken` branch is safe to delete after the user confirms the roll-forward is stable; kept around for now in case a regression resurfaces.
+
+---
+
 ## [0.3.25] — 2026-07-28 — ML v16: overnight grid research delivers substantial honest improvement
 
 Overnight grid research with **1 200+ (model × hyperparams × feature-groups) combinations** across 5-fold CV with honest encoder refit per fold.  Picks the truly-best honest config for each target (not the leaky in-sample winner) and ships the v16 production models.

@@ -89,13 +89,59 @@ UI-only патчи поверх v0.3.25. Никаких изменений backe
 - 418 → 433 (+15): networth extraction, dual-id picks, partial-gold block, cache alias (steam+dltv ключи), wait_for_function timeout fallback, `towers_over_under` consistency
 - v0.3.25 + e/f/g/h/i/j: 433/433 pass (всё либо ML-внутри, либо UI-only, без изменения public contract)
 
-## Что **не** вошло (запланировано в 0.4.0, зафиксировано в TODO.md)
+---
 
-- **Direct socket.io client** из Python (без chromium вообще, ~1s fetch, снимает greenlet error, parallelizable)
-- **Live data fallback chain**: socket.io → `/live/{id}.json` → Steam `GetLiveLeagueGames` → "unavailable"
-- **Async playwright refactor** (настоящая починка chromium greenlet error)
-- **Cookie-based SSE auth** (разблокирует public deploy)
-- **Postgres** миграция
-- **Multikill classifier** — discontinued (нужен amateur-корпус с редкими multikill-кейсами)
-- **Towers regressor** — discontinued до появления tower bitmask в `full_matches` (или mini-map icon scraping)
-- **Audit P1-15**: `except Exception` sites в business-модулях, которые swallow + log без re-raise
+## v0.3.25 → 0.4.0 (roll-forward + perf + real-time)
+
+Спринт из **8 коммитов** поверх v0.3.25. Два смысловых блока: (1) **roll-forward после частичного rollback'а v0.3.25l-t** (live cards исчезли из UI), (2) **v0.4.0 — direct socket.io + 40-200× build speedup**.
+
+### 1. Roll-forward (v0.3.25k → 0.4.0 base)
+
+Пользователь откатил v0.3.25l-t (живые карточки пропали) к `ec61adb` (v0.3.25k). Затем ре-применили только безопасные куски + починили регрессии:
+
+| Commit | Что |
+|--------|-----|
+| `dbf0c8e` (v0.3.25k-patch) | Re-applies **только** v0.3.25t publisher daemon-thread фикс (без него v0.3.25k падает в `asyncio.to_thread` deadlock). |
+| `2e31936` (v0.3.25l+m) | Re-applies socket.io hook + `_parse_clock_seconds()` game_time MM:SS→int + `m["duration"]` fallback для watchlist матчей. |
+| `7b51c2e` (v0.3.25r re-applied + cache trust) | Re-applies TBD-vs-TBD фильтр в **обоих** местах (`_filter_auto_board` в app.py + `build_board` в board.py) + bypass broken dltv_browser cache когда `/live/{id}.json` имеет реальные данные. |
+| `dbef2a4` (v0.3.25l-bugfix) | **Socket.io hook filter by `expected_steam_id`** — без этого фильтра hook перехватывал payload'ы от соседних матчей (live ticker / sidebar / chat) и кэш забивался мусором (50:1, 12:35) для чужих матчей. |
+| `6f4ad5b` (backup branch `backup-v0.3.25t-broken`) | Полный v0.3.25l-t + 30+ diag-скриптов сохранены на side-branch. `git checkout backup-v0.3.25t-broken -- business/` восстанавливает. |
+
+### 2. v0.4.0 — real-time live data + 40-200× build speedup
+
+| Commit | Что |
+|--------|-----|
+| `c857fc7` | **`business/dltv_socket.py`** — direct WebSocket клиент к `wss://dltv.org/socket.io/?EIO=4&transport=websocket`. EIO=4 + SIO EVENT протокол реализован вручную (без `python-socketio` зависимости). Public API: `get_live_state(steam_id)`, `subscribe()`, `unsubscribe()`, `start_socket_client()`, `stop_socket_client()`. State в module-level `_state` + `_state_ts` (60s TTL) под `RLock`. Lifespan wired в `app.py`; publisher подписывает каждый live-матч после каждого build. **Real-time данные подтверждены**: `live_score 15-24, game_time 1690` совпало с DLTV UI. |
+| `a59170a` | **Drop WS-level PINGs** (`ping_interval=None`). Standalone test: default `ping_interval=20` доживает 120s+ в изоляции, но в app context (uvicorn + publisher builds + dltv_browser scrapes делят bandwidth контейнера) с WS-pings падает в 30-60s, без — 2-3 мин. Сервер, видимо, трактует WS-level PING как активность которая ротирует сессию; полагаемся на EIO PING/PONG (server-initiated) + `__nd2_series` channel для keepalive. |
+| `b45e46d` | **`_last_good_board` fallback в publisher thread** — когда `build_board` возвращает пустой payload (DLTV scrape упал, Steam лежит, enrichment таймауты), publisher отдаёт последний непустой кэшированный board если ему < 5 мин, и бампит `_latest_auto_board_ts` чтобы UI-овские "обновлено HH:MM" продолжали тикать. Чинит 0/0/0 dead-board. |
+| `7c0b178` | **Parallel `/live/{id}.json` enrichment (40-200× speedup)**. `get_live_json` урезан с `retries=3, timeout=3s, backoff=1+2+4s` до `retries=1, timeout=1.5s, no backoff` (одна быстрая попытка; следующий 5s TTL всё равно повторит). `tracker.get_live_and_prematch` фан-аутит enrichment через `ThreadPoolExecutor(max_workers=6)`. 22 матча × 1.5s / 6 workers ≈ 6s; наблюдаемо cold = 3.5s, warm = 0.76-0.9s. Плюс: если enrichment упал (timeout/404), синтезируем v1-shaped series с `_live_enrich_failed=True` — карточка остаётся в board вместо тихого исчезновения. |
+
+### Результаты
+
+**Build time** (логи контейнера):
+```
+17:03:22  build_board done in 3.53s (live=10)   ← cold
+17:03:29  build_board done in 2.30s (live=10)
+17:03:35  build_board done in 0.76s (live=10)   ← warm
+17:03:41  build_board done in 0.91s (live=10)
+17:03:47  build_board done in 0.82s (live=10)
+```
+Было: 200-500 секунд. **40-200× ускорение.**
+
+**Live card** (скриншоты):
+- Real-time score/time/lead для матчей в live (KW vs PuckChamp: 15-24, 28:10)
+- `__nd2_match_{steam_id}` events приходят без chromium (raw WebSocket)
+- При drop'е соединения — fallback на `/live/{id}.json` (5s TTL) + `_last_good_board` (5min TTL)
+
+**Версия** в `business/app.py`:
+- `0.3.19` → `0.4.0` (никогда не бампался через 0.3.x)
+
+## Что **не** вошло (запланировано в 0.4.1+, зафиксировано в TODO.md)
+
+- **Dual-instance socket** — DLTV-овский server-side limit 30-150s на сессию. Run 2 sockets параллельно + round-robin: continuous real-time. ~50 LoC, более сложная реконсиляция. 0.4.1.
+- **Async playwright refactor** — настоящая починка chromium greenlet error (одно-воркер + probe только частично). 0.4.2.
+- **Cookie-based SSE auth** — browser `EventSource` не поддерживает custom headers. Public deploy blocker. 0.4.2.
+- **Postgres** миграция + auto-retrain + observability (Prometheus + Grafana + OTel). 0.5.0.
+- **Multikill classifier** — discontinued (нужен amateur-корпус с редкими multikill-кейсами).
+- **Towers regressor** — discontinued до появления tower bitmask в `full_matches` (или mini-map icon scraping).
+- **Audit P1-15**: `except Exception` sites в business-модулях, которые swallow + log без re-raise.

@@ -128,6 +128,104 @@ UI-only патчи поверх v0.3.25. Никаких изменений backe
 ```
 Было: 200-500 секунд. **40-200× ускорение.**
 
+**Live data flow** (v0.4.0 — direct socket.io, no chromium):
+```
+                         ┌─────────────────────────────────────────┐
+                         │           dltv.org /socket.io            │
+                         │     wss://dltv.org/?EIO=4&transport=ws   │
+                         │  channels: __nd2_match_{steam_id},       │
+                         │           __nd2_series, __nd2_odds_*     │
+                         └───────────────────┬─────────────────────┘
+                                             │  EIO=4 frames
+                                             │  0{json} → 40{sid}
+                                             │  42["ch", args]
+                                             │  2/3 (PING/PONG)
+                                             ▼
+   ┌──────────────────────────────────────────────────────────────────┐
+   │  business/dltv_socket.py (daemon thread, private asyncio loop)   │
+   │                                                                  │
+   │  on connect:  subscribe to __nd2_series + all known match_ids   │
+   │  on event:    extract steam_id from /__nd2_match_(\d+)/         │
+   │               check payload["match_id"] == sid                   │
+   │               if match → _state[sid] = payload, _state_ts[sid]=t │
+   │  on drop:     backoff 1→2→4→8→16→30s, reconnect forever         │
+   │  no WS-PINGs (a59170a) — relies on EIO PING/PONG + series ch    │
+   └──────────────────────────┬───────────────────────────────────────┘
+                              │  module-level state under RLock
+                              │  (publisher thread reads from any thread)
+                              ▼
+   ┌──────────────────────────────────────────────────────────────────┐
+   │  business/board.py — _live_card()  (publisher thread, each build)│
+   │                                                                  │
+   │  overlay = dltv_socket.get_live_state(steam_id)                  │
+   │            └─ if fresh (< 60s TTL):  use it (REAL-TIME)          │
+   │            └─ else:                  fall back to dltv_browser   │
+   │                                       cache (5min TTL) or        │
+   │                                       m["duration"] / m["score"] │
+   │                                       from /live/{id}.json       │
+   └──────────────────────────┬───────────────────────────────────────┘
+                              │  JSON board
+                              ▼
+   ┌──────────────────────────────────────────────────────────────────┐
+   │  business/stream.py — SSE publisher (asyncio half)               │
+   │  publish_if_changed(board) → SSE → EventSource("/api/stream/")   │
+   └──────────────────────────┬───────────────────────────────────────┘
+                              │  data: {...live: [...]} every 5s
+                              ▼
+                          Browser UI
+```
+
+**Live data fallback chain** (если socket.io connection упал):
+```
+  ┌─ request live state for steam_id X ─────────────────────────────┐
+  │                                                                 │
+  │  1. dltv_socket.get_live_state(X)                               │
+  │     └─ fresh? (< 60s) ─── yes ──► use it  (REAL-TIME)           │
+  │                                                                 │
+  │  2. dltv_browser.get_cached_match_state(series_id)              │
+  │     └─ has real data? (radiant_score > 0 OR game_time > 240)    │
+  │         └─ yes ──► use cache  (5min TTL)                        │
+  │                                                                 │
+  │  3. /live/{id}.json (5s TTL in tracker._series_cache)           │
+  │     └─ has picks/score/time?  ── yes ──► use it                 │
+  │                                                                 │
+  │  4. m["radiant_score"] / m["dire_score"] from /live adapter     │
+  │     └─ non-zero?  ── yes ──► trust over cache                   │
+  │                                                                 │
+  │  5. _live_enrich_failed synthesis (v0.4.0-perf)                 │
+  │     └─► render card with empty picks + "Live state unavailable" │
+  │                                                                 │
+  │  ★ _last_good_board (b45e46d) — if entire build is empty,        │
+  │    fall back to last non-empty cached board if < 5min old.       │
+  │    Bumps _latest_auto_board_ts so "обновлено HH:MM" keeps moving│
+  │                                                                 │
+  └─────────────────────────────────────────────────────────────────┘
+```
+
+**Build time before/after** (v0.4.0-perf — parallel enrichment):
+```
+  per-cycle build_board (22 live matches)
+
+  before (v0.3.25l-t):                after (v0.4.0):
+  ─────────────────────               ─────────────────────
+  Steam API        0.7s               Steam API        0.7s
+  DLTV scrape      0.5s               DLTV scrape      0.5s
+  ┌────────────── sequential ──┐      ┌── parallel (6 workers) ──┐
+  │ /live/8918...json  3.7s   │      │ /live/8918...json  1.5s  │
+  │ /live/8918...json  3.7s   │      │ /live/8918...json  1.5s  │
+  │ /live/8918...json  3.7s   │      │ /live/8918...json  1.5s  │
+  │  ... (×22) ...             │      │ /live/8918...json  1.5s  │
+  │ /live/8918...json  3.7s   │      │ /live/8918...json  1.5s  │
+  │                            │      │ /live/8918...json  1.5s  │
+  │ 22 × 3.7s = 81s           │      │ 22 / 6 = ~6s             │
+  └────────────────────────────┘      └──────────────────────────┘
+  ML predict        0.5s               ML predict        0.5s
+  ─────────────────────               ─────────────────────
+  TOTAL:  ~85s cold                   TOTAL:  ~8s cold
+          200-500s observed                   0.76-3.5s observed
+                                                         (40-200×)
+```
+
 **Live card** (скриншоты):
 - Real-time score/time/lead для матчей в live (KW vs PuckChamp: 15-24, 28:10)
 - `__nd2_match_{steam_id}` events приходят без chromium (raw WebSocket)

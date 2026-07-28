@@ -66,6 +66,27 @@ The "−3% kills / −4% duration" wins are real (target not in features, so the
 
 ---
 
+## [0.3.25e–i] — 2026-07-28 — UI honesty + browser-cache fix + bans row
+
+Five follow-up patches on top of the v0.3.25 ML bump. No backend / model change — purely UX and a deploy-pipeline bug.
+
+| Patch | What |
+|-------|------|
+| `3f4e7a9` (v0.3.25e) | **Hide all towers UI** — postmatch stat block, postmatch prediction, live card prediction. The number came from a heuristic (no per-side tower bitmask in `full_matches`), so it was misleading. All three sites commented out with explicit "Uncomment when we have a real per-side tower source" note so nothing is lost. |
+| `db4db38` (v0.3.25f) | **Ultra Kill / Rampage hidden** — multikill classifier degenerated to "always High" on the pro corpus (see `HEAD_REGISTRY['multikill']` in `train.py`). Discontinued, commented out. <br> **Auto-refresh radio** — `Вкл / Выкл` pill group replaces the old checkbox (touch-friendly, only one source of truth for `isAutoRefreshOn()`). <br> **Theme switcher** — `Тёмная / Светлая`, persisted to `localStorage.dota_analyst_theme`, applied to `<html data-theme="…">` to avoid FOUC. Light palette uses GitHub-light colours. <br> **Hide empty leagues** in the picker — `LEAGUES = (d.leagues \|\| []).filter((l) => (l.match_count \|\| 0) > 0)` cuts 60+ leagues to the ~5-10 that actually have matches. |
+| `8e018b5` (v0.3.25g) | **Stale-league-ID auto-reset** — if `localStorage.dota_analyst_leagues` only contains IDs that aren't in the current `/api/leagues` response (after a server-side ID rotation), `loadLeagues()` resets the selection to all current IDs instead of showing an empty board. |
+| `1171cd3` (v0.3.25h) | **JS syntax fix** — stray backticks inside an HTML comment that itself lived inside a backtick template literal (`<!-- that fills \`p.multikill\` is a guess -->`) closed the template literal early, breaking all of `init()`. Replaced with non-backtick comment. **No more backticks in HTML comments inside template literals** — added to personal gotcha list. |
+| `a04bfd1` (v0.3.25i) | **Static bans row under picks** in the live card — 28×28 desaturated (opacity .55, grayscale .7) hero icons with a red diagonal `::after` strike-through + a `BANS` label, always visible (no collapse). Mirrors the DLTV treatment, no extra click. |
+| `3d1217b` (v0.3.25j) | **nginx cache-control** — drop `immutable` from static assets so a `?v=X.Y.Z` query-string bump actually busts the browser cache. `index.html` itself gets `no-cache, must-revalidate` so the latest bundle pointers are always picked up. |
+
+**Test count:** 433/433 pass (unchanged — UI-only).
+
+**Deployment notes:**
+- `app.js` / `style.css` / `index.html` are referenced as `?v=0.3.25i` from `index.html`; bump the query string on every UI deploy.
+- Models in `ml_data/models/{target}_v16/` were deployed with `docker cp` + `docker restart dota-business`. `ModelStorage.latest_version()` does a numeric sort and now picks v16 over v15 automatically.
+
+---
+
 ## [0.3.23] — 2026-07-27 — Real-time live data via socket.io globals
 
 DLTV redesigned the match page **for the third time in 24h**.  The

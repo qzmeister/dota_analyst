@@ -34,13 +34,27 @@ async function loadLeagues() {
     // comes back populated.  We still persist the choice, so
     // a returning user with a saved selection keeps their
     // custom filter.
-    if (SELECTED.size === 0 && LEAGUES.length > 0) {
-      for (const l of LEAGUES) SELECTED.add(l.id);
+    // v0.3.25g: auto-select must also fire when the saved SELECTED
+    // has STALE league IDs — leagues that no longer appear in
+    // /api/leagues (or were dropped by the v0.3.25f empty-league
+    // filter).  Without this, a returning user with old localStorage
+    // sees a fully empty board with "Лиги 30" — looks broken.
+    const leagueIds = new Set(LEAGUES.map((l) => l.id));
+    const hasStaleOnly = SELECTED.size > 0
+      && ![...SELECTED].some((id) => leagueIds.has(id));
+    if ((SELECTED.size === 0 || hasStaleOnly) && LEAGUES.length > 0) {
+      SELECTED = new Set(LEAGUES.map((l) => l.id));
       persist();
     }
     renderLeagueList();
     renderLeagueChips();
     updateLeagueCount();
+    // v0.3.25g: surface a hint when the /api/leagues filter dropped
+    // every league — user otherwise sees a totally empty board and
+    // has no idea why.  Could be a backend hiccup or a quiet day.
+    if (LEAGUES.length === 0 && (d.leagues || []).length > 0) {
+      setStatus("Все лиги пустые (нет запланированных матчей). Попробуй позже.");
+    }
   } catch (e) {
     setStatus("Не удалось загрузить список лиг: " + e.message);
   }

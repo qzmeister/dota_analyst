@@ -21,3 +21,20 @@ ml_data/**
 # OS
 .DS_Store
 Thumbs.db
+
+# Ad-hoc debug / diagnostic scratch scripts (root + recursive)
+# Not part of the project; one-off probes and stack-overflow-style
+# debug code.  Real scripts live in scripts/ and are committed.
+scratch_*.py
+scratch_*.js
+scratch_*.json
+NUL                # Windows reserved name, can't be removed
+
+# Coverage / test caches
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
+# Audit report (regenerated on demand by scripts/audit.py)
+audit_report.txt

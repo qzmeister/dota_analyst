@@ -126,15 +126,27 @@ def _series_bo_int(series: Dict) -> Optional[int]:
     return None
 
 
-def _hero_card(hero: Optional[Dict], hero_id: Optional[int]) -> Dict:
-    if hero:
-        return {
-            "id": hero_id,
-            "name": hero.get("name") or f"#{hero_id}",
-            "image": hero.get("image"),
-            "win_rate": hero.get("win_rate"),
-        }
-    return {"id": hero_id, "name": f"#{hero_id}", "image": None, "win_rate": None}
+def _hero_card(hero: Optional[Dict], hero_id: Optional[int],
+               player_name: Optional[str] = None,
+               player_slug: Optional[str] = None,
+               player_country: Optional[str] = None) -> Dict:
+    out = {
+        "id": hero_id,
+        "name": (hero.get("name") if hero else None) or f"#{hero_id}",
+        "image": hero.get("image") if hero else None,
+        "win_rate": hero.get("win_rate") if hero else None,
+    }
+    # v0.4.0-players: socket.io's `fast_picks[].player.{title,slug}`
+    # gives us the actual player who is on the hero, not the hero
+    # itself.  Surface it on the card so the UI can render "Rylai
+    # (Puck)" instead of just "Puck" — that's how DLTV shows it.
+    if player_name:
+        out["player_name"] = player_name
+    if player_slug:
+        out["player_slug"] = player_slug
+    if player_country:
+        out["player_country"] = player_country
+    return out
 
 
 def _names_to_cards(entries: List[Dict]) -> List[Dict]:
@@ -240,7 +252,12 @@ def _picks_to_heroes(picks: Optional[List[Dict]], use_steam_id: bool = False):
             meta = client.hero_by_dltv_id(did)
             hid = did
         metas.append(meta)
-        cards.append(_hero_card(meta, hid))
+        cards.append(_hero_card(
+            meta, hid,
+            player_name=p.get("_name"),
+            player_slug=p.get("player_slug"),
+            player_country=p.get("player_country"),
+        ))
     return metas, cards
 
 
@@ -992,22 +1009,54 @@ def _build_live_gold(m: Dict) -> Optional[Dict]:
     shows "—" for the lead / missing side instead of the whole
     row.
 
-    Returns:
-        None                            — neither side is known
-        {radiant, dire, lead_radiant}    — both sides known
-        {radiant, dire, lead_radiant=None}  — only one side known
+    v0.4.0-gold: socket.io's `radiant_match_nw` / `dire_match_nw`
+    carry DLTV-computed networths but we observed placeholder
+    values (e.g. `radiant_match_nw: 2` for a 35:26 game) and the
+    raw sides being available only on one team — when that
+    happens the previous code computed `lead = None` and the
+    frontend rendered `0.0k` for the placeholder raw side.  We
+    now:
+      1. Sanity-check raws: any value < 1000 is treated as a
+         placeholder / "not yet ticked" and cleared to None.
+      2. Prefer the DLTV-computed `m["gold_lead_radiant"]`
+         (signed int) when the raws are missing or
+         placeholder-only — DLTV's own subtraction is the
+         trustworthy number.
+      3. Fall back to `rn - dn` only when BOTH raws are real
+         (> 1000) — those are precise to the gold, vs the
+         signed lead which is just `nw_radiant - nw_dire`
+         rounded to whatever DLTV decided.
 
-    The values come from `m["radiant_networth"]` / `m["dire_networth"]`
-    which the `_read_live_state_from_scoreboard` extractor in
-    `dltv_browser.py` pulls from `.team__networth .networth > span`.
+    Returns:
+        None                            — nothing known
+        {radiant, dire, lead_radiant}    — both sides known
+        {radiant, dire, lead_radiant=None}  — only signed lead known
     """
     rn = m.get("radiant_networth")
     dn = m.get("dire_networth")
+    signed = m.get("gold_lead_radiant")
     rn = rn if isinstance(rn, int) else None
     dn = dn if isinstance(dn, int) else None
-    if rn is None and dn is None:
+    signed = signed if isinstance(signed, int) else None
+    # Sanity-check: socket.io occasionally ships a placeholder
+    # like 2 for `radiant_match_nw` (we observed this twice in
+    # 30+ matches).  Real team networths in mid/late game are
+    # 10k-80k; values < 1000 are clearly not a team total.
+    if rn is not None and rn < 1000:
+        rn = None
+    if dn is not None and dn < 1000:
+        dn = None
+    if rn is None and dn is None and signed is None:
         return None
-    lead = (rn - dn) if (rn is not None and dn is not None) else None
+    # Decide the lead.  Prefer the signed int from DLTV when
+    # the raws are missing or placeholder; otherwise compute
+    # from raws (precise).
+    if rn is not None and dn is not None:
+        lead = rn - dn
+    elif signed is not None:
+        lead = signed
+    else:
+        lead = None
     return {
         "radiant": rn,
         "dire": dn,
@@ -1276,11 +1325,26 @@ def _fast_picks_to_map_entries(
         # under `hero_steam_id`; fall back to the dltv id if not.
         hero_steam = p.get("hero_steam_id")
         hero_dltv = p.get("hero_id")
+        # v0.4.0-players: socket.io also carries the actual
+        # player on the hero (not just the hero itself) inside
+        # `player.{title,slug,country}`.  DLTV renders it under
+        # the hero icon in the live card; without it the user
+        # only sees "Puck" instead of "Rylai (Puck)".
+        player = p.get("player") or {}
+        player_title = player.get("title") if isinstance(player, dict) else None
+        player_slug  = player.get("slug")  if isinstance(player, dict) else None
+        # Top-level `country` is the player's country (not the
+        # team's).  DLTV puts it next to the player name.
+        player_country = p.get("country") or (
+            player.get("country") if isinstance(player, dict) else None
+        )
         return {
             "hero_id": hero_dltv,
             "_steam_id": hero_steam if hero_steam is not None else hero_dltv,
             "order": i,
-            "_name": (p.get("player") or {}).get("title"),
+            "_name": player_title,
+            "player_slug": player_slug,
+            "player_country": player_country,
         }
 
     # DLTV's "first_team" is whichever side the series record

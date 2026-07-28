@@ -60,7 +60,15 @@ from .exceptions import DiscoveryError
 log = get_logger(__name__)
 
 WS_URL = "wss://dltv.org/socket.io/?EIO=4&transport=websocket"
-STATE_TTL_SEC = 60.0   # payloads older than this are treated as missing
+# v0.4.0-ttl: bumped 60s -> 5min.  DLTV stops sending fresh
+# events for a match once nothing in it is changing (e.g. mid-
+# game dead-time, or all picks/bans done and only the gold
+# trickle updating).  The publisher build cadence is 5s, but
+# if we lose 3-4 ticks in a row because the server went quiet
+# the previous 60s window dropped the last good values and the
+# live card snapped back to "no data".  5 minutes is still
+# well under "this match is over" so the data stays useful.
+STATE_TTL_SEC = 300.0
 PING_INTERVAL_SEC = 20.0   # backstop — server also pings us at 25s
 RECONNECT_BACKOFF_INITIAL = 1.0
 RECONNECT_BACKOFF_MAX = 30.0

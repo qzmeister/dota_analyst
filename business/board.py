@@ -550,7 +550,14 @@ def _postmatch_card(series: Dict, event_title: str, is_watchlist: bool = False) 
         "winner": winner_name,
         "games": game_details,        # kept for backwards-compat (summary view)
         "games_detailed": games_detailed,
-        "prediction": _postmatch_prediction(series, is_watchlist=is_watchlist),
+        # v0.4.0: dropped series-level "prediction" — the user asked
+        # to focus on per-map predictions (Карта 1/Карта 2 with
+        # "Победитель ✓/✗").  Series-level winner/probability
+        # was rendered as "🤖 Итог серии … 0.5293…%" + "Факт: … ✗ мимо"
+        # which added noise without much signal (we already have
+        # the actual series score at the top of the card).
+        # `games_detailed[*].prediction` is still populated below —
+        # that's where the per-map signal lives.
     }
 
 

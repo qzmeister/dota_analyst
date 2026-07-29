@@ -147,13 +147,28 @@ def test_team_order_is_locale_independent():
     assert out["team_order"] == ["radiant", "dire"]
 
 
-def test_extractor_does_not_call_legacy_selectors():
-    """Sanity: the v0.3.23 extractor must NOT query `.map__finished-v2`
-    (that class no longer exists on the DLTV page as of 2026-07-27).
+def test_extractor_uses_hydrated_dom_when_available():
+    """v0.4.0.1: when the live DLTV page is fully rendered (React
+    hydrated), the extractor reads picks + player names from the
+    `.map__finished-v2__pick .heroes__player` cards.  This supersedes
+    the v0.3.23 `radiant_picks` / `dire_picks` page globals (which DLTV
+    no longer populates) and the v0.3.22 legacy `.team.radiant .pick`
+    selectors (which the post-v0.3.25l layout dropped).
+
+    The page globals are STILL queried as a primary fallback (see
+    `_read_hooked_socket_result` — carries radiant_score, dire_score,
+    game_time, networth) but picks/player info now come from the DOM.
     """
     page = _FakePage(SAMPLE_LIVE)
     _read_live_state_from_scoreboard(page)
-    # The JS body should reference #live_scoreboard but NOT .map__finished-v2
     script = page.last_script
+    # v0.4.0.1: primary path queries the picks chart cards
+    assert "map__finished-v2__pick" in script, (
+        "extractor must query the picks chart cards (DLTV v0.4.0 layout)"
+    )
+    assert "heroes__player" in script, (
+        "extractor must read picks from .heroes__player cards"
+    )
+    # v0.3.25l: still falls back to page globals + #live_scoreboard for
+    # fields the picks chart doesn't carry (kills, gold, time)
     assert "live_scoreboard" in script
-    assert "map__finished-v2" not in script

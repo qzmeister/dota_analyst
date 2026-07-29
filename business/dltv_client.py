@@ -315,6 +315,16 @@ def _live_json_to_series(match_id: int, lj: Dict) -> Optional[Dict]:
     """Convert a /live/{match_id}.json payload into a v1-compatible series dict.
 
     Returns None if the JSON has no usable db.first_team / db.second_team data.
+
+    v0.4.0.1: DLTV's live JSON now carries the picks in TWO places:
+      * `db.first_team.picks[*]` — old location, sometimes empty
+      * `fast_picks.first_team[*]` — new location, has the player
+        nickname throughout the game (not just during draft)
+
+    The fast_picks shape also has `country.image` (the player's
+    country flag) and the player slug.  We prefer fast_picks
+    when it has entries; fall back to db.*.picks for the older
+    endpoint shape.
     """
     db = lj.get("db") or {}
     first = db.get("first_team") or {}
@@ -327,19 +337,82 @@ def _live_json_to_series(match_id: int, lj: Dict) -> Optional[Dict]:
     second_id = second.get("id")
     radiant_is_first = bool(first.get("is_radiant"))
 
-    def _map_pick(p: Dict) -> Dict:
-        # /live picks carry hero.steam_id; we need a hero id usable via hero_by_steam_id
-        hero = p.get("hero") or {}
-        return {"hero_id": hero.get("steam_id"), "order": 0, "_steam_id": hero.get("steam_id")}
+    # v0.4.0.1: try fast_picks first (has player nicknames),
+    # fall back to db.{first,second}_team.picks.  Either way,
+    # each pick is a dict with at least `hero_id` / `_steam_id`
+    # and (if from fast_picks) `_name` / `player_slug` /
+    # `player_country`.
+    fast = lj.get("fast_picks") or {}
+    fast_first = fast.get("first_team") or []
+    fast_second = fast.get("second_team") or []
 
+    # v0.4.0.1: fast_picks entries are at the SAME level as
+    # db.{first,second}_team.picks (i.e. they're already
+    # split by the side that picked first/second, NOT by
+    # radiant/dire).  Use the same is_radiant heuristic to
+    # map first_team/second_team -> radiant/dire.
+    def _map_fast_pick(p: Dict) -> Dict:
+        # fast_picks shape: {hero_id, player: {title, slug},
+        #                   country: {image: <flag_url>},
+        #                   stats, player_stats}
+        player = p.get("player") or {}
+        country = p.get("country") or {}
+        flag = country.get("image") if isinstance(country, dict) else None
+        # country.image looks like /assets/plugins/flag-icon/flags/4x3/ru.svg;
+        # the last path component before .svg is the country code.
+        country_code = None
+        if isinstance(flag, str) and "/" in flag:
+            stem = flag.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+            if len(stem) <= 3:
+                country_code = stem.upper()
+        return {
+            "hero_id":     p.get("hero_id"),
+            "_steam_id":   p.get("hero_id"),
+            "order":       0,  # order is index-based; set after the loop
+            "_name":       player.get("title") if isinstance(player, dict) else None,
+            "player_slug":  player.get("slug") if isinstance(player, dict) else None,
+            "player_country": country_code,
+        }
+
+    def _map_legacy_pick(p: Dict) -> Dict:
+        # db.*.picks shape: {hero: {id, steam_id, title, slug, image, ...}}
+        # No player nickname here.
+        hero = p.get("hero") or {}
+        return {
+            "hero_id":     hero.get("steam_id"),
+            "_steam_id":   hero.get("steam_id"),
+            "order":       0,
+        }
+
+    # Prefer fast_picks when present, fall back to db.*.picks.
+    if fast_first or fast_second:
+        radiant_src = fast_first if radiant_is_first else fast_second
+        dire_src    = fast_second if radiant_is_first else fast_first
+        radiant_picks = [_map_fast_pick(p) for p in radiant_src]
+        dire_picks    = [_map_fast_pick(p) for p in dire_src]
+    else:
+        radiant_picks = [_map_legacy_pick(p) for p in
+                         (first.get("picks", []) if radiant_is_first else second.get("picks", []))]
+        dire_picks    = [_map_legacy_pick(p) for p in
+                         (second.get("picks", []) if radiant_is_first else first.get("picks", []))]
+    # Order is index-based (fast_picks is ordered; db.picks is not,
+    # so legacy picks land in whatever order they were stored).
+    for i, p in enumerate(radiant_picks):
+        p["order"] = i
+    for i, p in enumerate(dire_picks):
+        p["order"] = i
+
+    # v0.4.0.1: bans are still only in `db.*.bans` (fast_picks
+    # doesn't carry them post-draft).  No change to the
+    # legacy _map_ban path.
     def _map_ban(p: Dict) -> Dict:
         hero = p.get("hero") or {}
         return {"hero_id": hero.get("steam_id"), "order": 0, "_steam_id": hero.get("steam_id")}
 
-    radiant_picks = [_map_pick(p) for p in first.get("picks", [])] if radiant_is_first else [_map_pick(p) for p in second.get("picks", [])]
-    dire_picks    = [_map_pick(p) for p in second.get("picks", [])] if radiant_is_first else [_map_pick(p) for p in first.get("picks", [])]
     radiant_bans  = [_map_ban(p) for p in first.get("bans", [])] if radiant_is_first else [_map_ban(p) for p in second.get("bans", [])]
     dire_bans     = [_map_ban(p) for p in second.get("bans", [])] if radiant_is_first else [_map_ban(p) for p in first.get("bans", [])]
+    for i, b in enumerate(radiant_bans): b["order"] = i
+    for i, b in enumerate(dire_bans): b["order"] = i
 
     radiant_team_id = first_id if radiant_is_first else second_id
     dire_team_id    = second_id if radiant_is_first else first_id

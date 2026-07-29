@@ -980,62 +980,146 @@ def _read_live_state_from_scoreboard(page) -> Dict[str, Any]:
                     }));
                 }
 
-                // v0.4.0.1: enrich picks with the player nickname from
-                // the live scoreboard DOM.  The socket.io fast_picks
-                // payload only carries `player.title` DURING the draft
-                // (is_picks_ended = false); once the game starts, the
-                // live socket payload drops the player field.  DLTV's
-                // own UI, however, keeps the nickname rendered under
-                // each hero icon throughout the game, so we can pull
-                // it from the DOM.  We try a handful of common class
-                // names (DLTV has redesigned the scoreboard 3+ times
-                // since 0.3.23) and fall back gracefully — if no
-                // selector matches, `player_name` stays null and the
-                // UI renders the hero name as before.
-                const findPlayerNameFor = (pickIdx, side) => {
-                    // Pick card containers we know DLTV has used.
-                    // Order: newest selectors first.
-                    const cardSelectors = [
-                        // v0.3.25l: per-side pick cards
-                        `.team.${side} .pick`,
-                        `.team.${side} .pick-card`,
-                        `.team.${side} .picks__item`,
-                        `.team.${side} .hero-card`,
-                        `.team.${side === 'radiant' ? 'first' : 'second'} .pick`,
-                        // global: any pick
-                        `.pick:nth-of-type(${pickIdx + 1})`,
-                        `.pick-card:nth-of-type(${pickIdx + 1})`,
-                    ];
-                    for (const sel of cardSelectors) {
-                        const card = document.querySelector(sel);
-                        if (!card) continue;
-                        // Player name lives in a child element with one
-                        // of these classes.  Try a few shapes.
-                        const nameSelectors = [
-                            '.pick__player', '.player-name', '.player__name',
-                            '.nickname', '.name-player', '.player',
-                            'span.player', 'div.player',
-                        ];
-                        for (const ns of nameSelectors) {
-                            const el = card.querySelector(ns);
-                            if (el) {
-                                const t = (el.textContent || '').trim();
-                                if (t && t.length > 0 && t.length < 64) return t;
-                            }
-                        }
-                        // Fallback: `data-player` attribute on the card.
-                        const data = card.getAttribute('data-player')
-                                  || card.getAttribute('data-player-name');
-                        if (data) return data;
-                    }
-                    return null;
+                // v0.4.0.1: enrich picks with the player nickname + country
+                // from the live scoreboard DOM.  Verified 2026-07-29 against
+                // https://dltv.org/matches/427520/... (live page) and
+                // .../427552/... (post-match page) — same structure.
+                //
+                // Per-player card structure (5 per side, DOM order = pick order):
+                //   .map__finished-v2__pick > .heroes > .heroes__player
+                //     .pick[data-tippy-content="<HERO NAME>"]
+                //       .pick__image  (background-image: hero PNG)
+                //       .pick__position  (1..5)
+                //     a.heroes__player-player[href*="/players/<slug>"]
+                //       .heroes__player-player__flag  (bg-image: flag svg)
+                //       .heroes__player-player__name  (text: player nickname)
+                //     .heroes__player-rank  (bg-image: rank icon)
+                //
+                // Side split: the picks chart renders all 10 cards in one
+                // flat .heroes container — the FIRST 5 are radiant, the
+                // next 5 are dire.  This ordering is fixed in DLTV's UI
+                // (radiant on top, dire below in the picks chart) and was
+                // verified on the live 427520 page.  We sanity-check with
+                // the .side.radiant/.side.dire team blocks when available,
+                // but trust the 5+5 split as the primary signal.
+                const parseFlagUrl = (style) => {
+                    if (!style) return null;
+                    const m = style.match(/flags[/]4x3[/]([a-z]{2,3})[.]svg/i);
+                    return m ? m[1].toUpperCase() : null;
                 };
-                for (const side of ['radiant', 'dire']) {
-                    if (out.picks[side]) {
-                        out.picks[side] = out.picks[side].map((p, i) => ({
-                            ...p,
-                            player_name: findPlayerNameFor(i, side),
-                        }));
+                const parsePlayerSlug = (a) => {
+                    if (!a) return null;
+                    const href = a.getAttribute('href') || '';
+                    const m = href.match(/[/]players[/]([^/?#]+)/);
+                    return m ? m[1] : null;
+                };
+                const extractCards = (container) => {
+                    if (!container) return [];
+                    return Array.from(container.querySelectorAll('.heroes__player')).map((card) => {
+                        const pick = card.querySelector('.pick');
+                        const hero = pick ? pick.getAttribute('data-tippy-content') : null;
+                        const nameEl = card.querySelector('.heroes__player-player__name');
+                        const linkEl = card.querySelector('a.heroes__player-player');
+                        const flagEl = card.querySelector('.heroes__player-player__flag');
+                        const posEl = card.querySelector('.pick__position');
+                        return {
+                            hero: hero ? hero.trim() : null,
+                            name: nameEl ? (nameEl.textContent || '').trim() : null,
+                            slug: parsePlayerSlug(linkEl),
+                            country: parseFlagUrl(flagEl ? flagEl.getAttribute('style') : null),
+                            position: posEl ? parseInt((posEl.textContent || '').trim(), 10) || null : null,
+                        };
+                    });
+                };
+                // v0.4.0.1: the picks chart is `.map__finished-v2__pick`
+                // which contains 2 `.heroes` blocks — one per side
+                // (radiant first, then dire).  Each has 5 cards.  We
+                // query all of them with `querySelectorAll` and join in
+                // DOM order.  Side split is the natural document order.
+                const cardsContainer = document.querySelector('.map__finished-v2__pick') || document.querySelector('.picks') || document.body;
+                const allCards = extractCards(cardsContainer);
+                if (allCards.length >= 10) {
+                    // Primary path: 5 radiant + 5 dire in DOM order.
+                    // Override the picks the socket hook may have given
+                    // us with the DOM-rendered hero names + player info.
+                    const radiantCards = allCards.slice(0, 5);
+                    const direCards    = allCards.slice(5, 10);
+                    const toPick = (c) => ({
+                        hero_name: c.hero,
+                        player_name: c.name,
+                        player_slug: c.slug,
+                        player_country: c.country,
+                        position: c.position,
+                    });
+                    out.picks = {
+                        radiant: radiantCards.map(toPick),
+                        dire:    direCards.map(toPick),
+                    };
+                    // Tag the source so the caller can see we hit the DOM.
+                    out.picks_source = 'dom';
+                } else if (allCards.length > 0) {
+                    // Partial DOM: fill what we can, leave the rest
+                    // for the socket hook / fast_picks / _live_json_to_series.
+                    const radiantCards = allCards.slice(0, Math.min(5, allCards.length));
+                    const direCards    = allCards.slice(5, Math.min(10, allCards.length));
+                    const toPick = (c) => ({
+                        hero_name: c.hero,
+                        player_name: c.name,
+                        player_slug: c.slug,
+                        player_country: c.country,
+                        position: c.position,
+                    });
+                    const existing = out.picks || {radiant: [], dire: []};
+                    out.picks = {
+                        radiant: existing.radiant.length ? existing.radiant : radiantCards.map(toPick),
+                        dire:    existing.dire.length    ? existing.dire    : direCards.map(toPick),
+                    };
+                    out.picks_source = 'dom-partial';
+                } else {
+                    // v0.4.0.1 fallback (older DLTV layout).  The
+                    // scoreboard-based DOM selector chain is DLTV's
+                    // original approach (predates the picks chart).
+                    // DLTV redesigned the live page three times since
+                    // 0.3.23; this path stays for pages where the
+                    // picks chart hasn't rendered yet.
+                    const findPlayerNameFor = (pickIdx, side) => {
+                        const cardSelectors = [
+                            `.team.${side} .pick`,
+                            `.team.${side} .pick-card`,
+                            `.team.${side} .picks__item`,
+                            `.team.${side} .hero-card`,
+                            `.team.${side === 'radiant' ? 'first' : 'second'} .pick`,
+                            `.pick:nth-of-type(${pickIdx + 1})`,
+                            `.pick-card:nth-of-type(${pickIdx + 1})`,
+                        ];
+                        for (const sel of cardSelectors) {
+                            const card = document.querySelector(sel);
+                            if (!card) continue;
+                            const nameSelectors = [
+                                '.pick__player', '.player-name', '.player__name',
+                                '.nickname', '.name-player', '.player',
+                                'span.player', 'div.player',
+                            ];
+                            for (const ns of nameSelectors) {
+                                const el = card.querySelector(ns);
+                                if (el) {
+                                    const t = (el.textContent || '').trim();
+                                    if (t && t.length > 0 && t.length < 64) return t;
+                                }
+                            }
+                            const data = card.getAttribute('data-player')
+                                      || card.getAttribute('data-player-name');
+                            if (data) return data;
+                        }
+                        return null;
+                    };
+                    for (const side of ['radiant', 'dire']) {
+                        if (out.picks[side]) {
+                            out.picks[side] = out.picks[side].map((p, i) => ({
+                                ...p,
+                                player_name: findPlayerNameFor(i, side),
+                            }));
+                        }
                     }
                 }
 
@@ -1129,9 +1213,29 @@ def _read_live_state_from_scoreboard(page) -> Dict[str, Any]:
         return out
     if not isinstance(data, dict):
         return out
-    out["picks"] = data.get("picks") or {"radiant": [], "dire": []}
-    out["bans"] = data.get("bans") or {"radiant": [], "dire": []}
-    out["team_order"] = data.get("team_order") or []
+    # v0.4.0.1: be defensive — `data` is the dict the JS block
+    # `return`ed, but legacy tests / fallback paths can hand us a
+    # flat list of image URLs (the `.map__finished-v2` extractor
+    # shape) instead.  Only overwrite `out["picks"]` when the
+    # payload is already in the `{radiant, dire}` dict shape;
+    # otherwise keep the default empty dict so the caller can
+    # detect "no data" instead of crashing on `.get("radiant")`.
+    raw_picks = data.get("picks")
+    if isinstance(raw_picks, dict):
+        out["picks"] = raw_picks
+    raw_bans = data.get("bans")
+    if isinstance(raw_bans, dict):
+        out["bans"] = raw_bans
+    raw_to = data.get("team_order")
+    if isinstance(raw_to, list):
+        out["team_order"] = raw_to
+    # v0.4.0.1: propagate the picks_source tag ('dom' / 'dom-partial' / None)
+    # so callers can see whether picks came from the rendered DOM or the
+    # socket hook / fast_picks payload.  Useful for telemetry on whether
+    # the React page actually hydrated during the scrape.
+    ps = data.get("picks_source")
+    if ps:
+        out["picks_source"] = ps
     # v0.3.25l: only fall through to DOM values for fields the
     # socket hook didn't supply.  Hooked values are the source of
     # truth; DOM is the fallback.  This keeps existing behaviour

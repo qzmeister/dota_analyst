@@ -69,6 +69,16 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_FORMAT=${LOG_FORMAT:-text}
       - MAX_BODY_BYTES=${MAX_BODY_BYTES:-1048576}
+      # v0.4.0.1: emit the `Secure` attribute on the session
+      # cookie.  Set to "1" once the prod edge has TLS; default
+      # "0" so the dev environment (http://localhost) still works.
+      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-0}
+    volumes:
+      # v0.4.0.1: bind-mount ./gateway so cookie / middleware /
+      # auth-endpoint changes take effect on the next container
+      # restart without rebuilding the image.  Same pattern as
+      # the business service (cd352fe).
+      - ./gateway:/app/gateway:rw
     depends_on:
       - business
     networks:

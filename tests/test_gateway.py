@@ -150,19 +150,71 @@ class TestProtectedPaths:
 
 
 # --------------------------------------------------------------------------- #
-# Unauthed paths (SSE)
+# Cookie-authed paths (SSE, v0.4.0.1)
 # --------------------------------------------------------------------------- #
 
-class TestUnauthedSse:
-    """The /api/stream/* prefix bypasses the X-API-Key check.
-
-    This is the 0.3.2 fix for "EventSource cannot send custom
-    headers".  It is a LOCAL-ONLY workaround — for any public
-    deployment, see TODO.md 0.4.0 (cookie-based auth) and remove
-    the entry from `UNAUTHED_PREFIXES`.
+class TestCookieAuthedSse:
+    """The /api/stream/* prefix accepts EITHER the legacy
+    X-API-Key header OR the HMAC-signed `dota_analyst_session`
+    cookie.  This replaces the pre-0.4.0.1 "trust the network
+    boundary" approach so the SSE path can be public-deploy-safe.
     """
 
-    def test_sse_path_passes_without_key(self):
+    def _make_request_with_cookie(
+        self, method: str, path: str, *, cookie: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ) -> Request:
+        headers = []
+        if api_key is not None:
+            headers.append((b"x-api-key", api_key.encode("utf-8")))
+        if cookie is not None:
+            # ASGI cookies are a single header value; we encode
+            # the cookie name + value with a single space.
+            headers.append((
+                b"cookie",
+                f"dota_analyst_session={cookie}".encode("utf-8"),
+            ))
+        scope = {
+            "type": "http", "method": method, "path": path,
+            "raw_path": path.encode("utf-8"), "query_string": b"",
+            "headers": headers,
+            "client": ("127.0.0.1", 12345),
+        }
+        return Request(scope)
+
+    def test_sse_path_with_valid_x_api_key_passes(self):
+        # Legacy path: curl with the dev key still works.
+        record: List[str] = []
+        mw = ApiKeyAuthMiddleware(app=None, expected_key="secret")
+        response = asyncio.run(
+            mw.dispatch(
+                _make_request("GET", "/api/stream/matches", api_key="secret"),
+                _recording_handler(record),
+            )
+        )
+        assert response.status_code == 200
+        assert record == ["/api/stream/matches"]
+
+    def test_sse_path_with_valid_session_cookie_passes(self):
+        # Public-deploy path: browser logged in, has a cookie.
+        from gateway._session import sign_session_token
+        token = sign_session_token("secret", ttl_sec=60)
+        record: List[str] = []
+        mw = ApiKeyAuthMiddleware(app=None, expected_key="secret")
+        response = asyncio.run(
+            mw.dispatch(
+                self._make_request_with_cookie(
+                    "GET", "/api/stream/matches", cookie=token,
+                ),
+                _recording_handler(record),
+            )
+        )
+        assert response.status_code == 200
+        assert record == ["/api/stream/matches"]
+
+    def test_sse_path_with_no_credentials_returns_401(self):
+        # No header, no cookie — the unauthenticated browser
+        # can't reach the SSE path.
         record: List[str] = []
         mw = ApiKeyAuthMiddleware(app=None, expected_key="secret")
         response = asyncio.run(
@@ -171,11 +223,29 @@ class TestUnauthedSse:
                 _recording_handler(record),
             )
         )
-        assert response.status_code == 200
-        assert record == ["/api/stream/matches"]
+        assert response.status_code == 401
+        assert record == []
 
-    def test_sse_path_passes_with_wrong_key_too(self):
-        # We never even CHECK the key on unauthed paths.
+    def test_sse_path_with_tampered_cookie_returns_401(self):
+        # An attacker who guessed a valid expiry:nonce but
+        # not the HMAC must be rejected.
+        record: List[str] = []
+        mw = ApiKeyAuthMiddleware(app=None, expected_key="secret")
+        response = asyncio.run(
+            mw.dispatch(
+                self._make_request_with_cookie(
+                    "GET", "/api/stream/matches", cookie="1234567890:nonce.deadbeef",
+                ),
+                _recording_handler(record),
+            )
+        )
+        assert response.status_code == 401
+        assert record == []
+
+    def test_sse_path_with_wrong_x_api_key_returns_401(self):
+        # Legacy path with a wrong key: 401.  (In pre-0.4.0.1
+        # this was a 200 because the SSE prefix was unauthed.
+        # The test rename is intentional — see class docstring.)
         record: List[str] = []
         mw = ApiKeyAuthMiddleware(app=None, expected_key="secret")
         response = asyncio.run(
@@ -184,27 +254,13 @@ class TestUnauthedSse:
                 _recording_handler(record),
             )
         )
-        assert response.status_code == 200
-        assert record == ["/api/stream/matches"]
-
-    def test_sse_prefix_takes_priority_over_protected(self):
-        # `/api/stream/*` matches both `/api/` (protected) and
-        # `/api/stream/` (unauthed).  The unauthed check runs
-        # first and wins — that's the whole point of the bypass.
-        record: List[str] = []
-        mw = ApiKeyAuthMiddleware(app=None, expected_key="secret")
-        response = asyncio.run(
-            mw.dispatch(
-                _make_request("GET", "/api/stream/something/else", api_key=None),
-                _recording_handler(record),
-            )
-        )
-        assert response.status_code == 200
-        assert record == ["/api/stream/something/else"]
+        assert response.status_code == 401
+        assert record == []
 
     def test_other_api_paths_still_require_key(self):
-        # The bypass is prefix-specific.  `/api/board` is NOT
-        # under the bypass and must still demand a key.
+        # The cookie auth is prefix-specific.  `/api/board` is
+        # NOT in COOKIE_AUTHED_PREFIXES — it must still demand
+        # an X-API-Key (or get 401).
         record: List[str] = []
         mw = ApiKeyAuthMiddleware(app=None, expected_key="secret")
         response = asyncio.run(
@@ -217,8 +273,9 @@ class TestUnauthedSse:
         assert record == []
 
     def test_unauthed_prefixes_constant(self):
-        # Pin the public contract.  Adding a path here is a
-        # security decision; the test fails so the change shows
-        # up in the review diff.
+        # v0.4.0.1: /api/stream/ moved out of UNAUTHED_PREFIXES
+        # and into COOKIE_AUTHED_PREFIXES (cookie OR X-API-Key).
+        # Only the login/status endpoints are fully unauthed.
         from gateway._middleware import ApiKeyAuthMiddleware as M
-        assert M.UNAUTHED_PREFIXES == ("/api/stream/",)
+        assert M.UNAUTHED_PREFIXES == ("/api/auth/login", "/api/auth/status")
+        assert M.COOKIE_AUTHED_PREFIXES == ("/api/stream/",)

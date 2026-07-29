@@ -92,26 +92,39 @@ class BodySizeLimitMiddleware(BaseHTTPMiddleware):
 # ---------------------------------------------------------------------------- #
 
 class ApiKeyAuthMiddleware(BaseHTTPMiddleware):
-    """Validate `X-API-Key` against `DEV_API_KEY` env on protected paths.
+    """Validate credentials on protected paths.
 
-    `PROTECTED_PREFIXES` requires the header.  `UNAUTHED_PREFIXES`
-    is opt-out: paths that match are passed through without any
-    auth check, even if they also start with a protected prefix.
-    This is the SSE stream — `EventSource` in the browser cannot
-    send custom headers, so we trust the network boundary (LAN /
-    firewall) instead of a per-request secret.
+    v0.4.0.x: the SSE stream (`/api/stream/*`) now accepts EITHER
+    the legacy `X-API-Key` header OR the `dota_analyst_session`
+    cookie (HMAC-signed, set by `POST /api/auth/login`).  This
+    unblocks public deploys where the browser's `EventSource`
+    can't send custom headers — the cookie is sent automatically
+    when the EventSource is opened with `withCredentials: true`.
 
-    For production / public deployment, remove SSE from
-    `UNAUTHED_PREFIXES` and switch to cookie-based auth (see
-    the 0.4.0 plan in TODO.md).
+    `UNAUTHED_PREFIXES` is the explicit bypass list (paths that
+    pass through with no auth at all — health checks, etc.).
+    Order matters in `dispatch()`: we test unauthed first, then
+    the SSE cookie-or-header shortcut, then the full X-API-Key
+    check for everything else.
     """
 
     PROTECTED_PREFIXES = ("/api/", "/internal/")
-    # Paths that explicitly bypass the API-key check.  Order
-    # matters in `dispatch()`: we test unauthed first, so a
-    # future `/api/stream/admin` would still be unauthed unless
-    # we add an explicit re-check below.  Keep this list tight.
-    UNAUTHED_PREFIXES = ("/api/stream/",)
+    # Paths that explicitly bypass ALL auth (even the cookie).
+    # Keep tight — anything here is reachable without credentials.
+    # `/api/auth/login` and friends are on this list because the
+    # user has to be able to LOGIN before they can have a session
+    # cookie.  `/api/auth/status` is also unauthed — it just
+    # reports whether the request's cookie is valid; the answer
+    # is `"authenticated": false` for unauthenticated users, which
+    # is a fine public response.
+    UNAUTHED_PREFIXES: tuple = (
+        "/api/auth/login",
+        "/api/auth/status",
+    )
+    # Paths that accept the session cookie as a credential.
+    # Currently the SSE stream; could grow to cover any other
+    # `EventSource`/long-poll endpoint the frontend needs.
+    COOKIE_AUTHED_PREFIXES = ("/api/stream/",)
 
     def __init__(self, app: ASGIApp, expected_key: str):
         super().__init__(app)
@@ -119,9 +132,24 @@ class ApiKeyAuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        # Explicit unauthed pass-through (SSE).
+        # 1. Hard bypass.
         if any(path.startswith(p) for p in self.UNAUTHED_PREFIXES):
             return await call_next(request)
+        # 2. SSE cookie auth.
+        if any(path.startswith(p) for p in self.COOKIE_AUTHED_PREFIXES):
+            # Header path: the X-API-Key check is the legacy / curl
+            # path.  If the browser is using the static-UI nginx
+            # edge that injects the dev key, this still works.
+            provided = request.headers.get("x-api-key", "")
+            if provided and provided == self.expected_key:
+                return await call_next(request)
+            # Cookie path: HMAC-verified, stateless.
+            from ._session import read_session_cookie, verify_session_token
+            token = read_session_cookie(request)
+            if token and verify_session_token(self.expected_key, token):
+                return await call_next(request)
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        # 3. Standard X-API-Key check.
         if any(path.startswith(p) for p in self.PROTECTED_PREFIXES):
             provided = request.headers.get("x-api-key", "")
             if not self.expected_key:

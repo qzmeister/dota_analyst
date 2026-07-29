@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dota Analyst — Draft Board</title>
-  <link rel="stylesheet" href="/style.css?v=0.4.0" />
+  <link rel="stylesheet" href="/style.css?v=0.4.0.1" />
 </head>
 <body>
   <header class="topbar">
@@ -75,6 +75,35 @@
     </section>
   </main>
 
-  <script src="/app.js?v=0.4.0"></script>
+  <!-- v0.4.0.1: cookie-based auth modal.
+       v0.4.0 used the dev-edge-injected X-API-Key for everything,
+       which works on a private LAN but blocks public deploys
+       because the browser's EventSource can't send custom
+       headers.  This modal is the user-facing half of the
+       cookie flow: POST /api/auth/login on submit, the server
+       sets an HttpOnly + SameSite=Lax cookie, the SSE then
+       rides on that cookie.  Hidden by default; shown when
+       /api/auth/status reports authenticated=false on page
+       load. -->
+  <div id="authModal" class="auth-modal hidden">
+    <div class="auth-modal-card">
+      <h3>🔐 Войти в Dota Analyst</h3>
+      <p>Введите API-ключ. Сессия сохраняется в cookie на 7 дней.</p>
+      <input id="authApiKey" type="password" placeholder="API ключ" autocomplete="off" />
+      <div id="authError" class="auth-error hidden"></div>
+      <div class="auth-modal-actions">
+        <button id="authLoginBtn" class="btn primary">Войти</button>
+      </div>
+      <details class="auth-hint">
+        <summary>Что это?</summary>
+        <p>Ключ выдаётся администратором. В dev-окружении (http://localhost)
+           nginx автоматически подставляет dev-ключ, но для EventSource
+           (long-lived SSE) cookie-флоу надёжнее — браузер не умеет
+           слать custom headers с EventSource.</p>
+      </details>
+    </div>
+  </div>
+
+  <script src="/app.js?v=0.4.0.1"></script>
 </body>
 </html>

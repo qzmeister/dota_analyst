@@ -375,6 +375,65 @@ body {
 .live-center .live-gold .gold-neg { color: #e74c3c; font-weight: 700; }
 .live-center .live-gold .gold-team { color: var(--text); font-weight: 600; }
 .live-center .live-gold .gold-split { color: var(--muted); }
+/* v0.4.0.1: destroyed-tower counts (mini-map scrape).  Rendered
+   as a small line under the gold block, with a "🏰" glyph and
+   per-side split (radiant: x/11 / dire: y/11).  Same visual
+   weight as the live-clock line so the eye flows from score →
+   clock → gold → towers.  Hidden entirely when the cache
+   didn't have a mini-map to read (frontend omits the line, not
+   shows "—"). */
+.live-center .live-towers {
+  font-size: 11px; color: var(--muted);
+  text-align: center; letter-spacing: .2px;
+}
+.live-center .live-towers .r { color: #f7a072; font-weight: 600; }
+.live-center .live-towers .d { color: #b288d0; font-weight: 600; }
+
+/* ---------- v0.4.0.1: cookie auth modal ---------- */
+/* Modal backdrop covers the whole page with a semi-transparent
+   dim.  The card sits centred.  The user pastes/types their API
+   key; on submit we POST /api/auth/login.  Hidden by default
+   (the `hidden` class).  The same modal is reused for the
+   "logged out" state and the "invalid key" error message. */
+.auth-modal {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(2px);
+}
+.auth-modal.hidden { display: none; }
+.auth-modal-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px 24px;
+  width: min(420px, 92vw);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+.auth-modal-card h3 { margin: 0 0 8px; font-size: 18px; }
+.auth-modal-card p  { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
+.auth-modal-card input[type="password"] {
+  width: 100%; padding: 10px 12px; box-sizing: border-box;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); color: var(--text); font-size: 14px;
+  font-family: ui-monospace, "Fira Mono", monospace;
+}
+.auth-modal-card input[type="password"]:focus {
+  outline: none; border-color: var(--accent);
+}
+.auth-modal-card .auth-error {
+  margin-top: 10px; padding: 8px 10px;
+  border-radius: 4px; background: #4a1f1f;
+  color: #ff8b8b; font-size: 12px;
+}
+.auth-modal-card .auth-modal-actions {
+  display: flex; gap: 8px; margin-top: 14px; justify-content: flex-end;
+}
+.auth-modal-card .auth-hint {
+  margin-top: 12px; font-size: 12px; color: var(--muted);
+}
+.auth-modal-card .auth-hint summary { cursor: pointer; }
+.auth-modal-card .auth-hint p { margin: 6px 0 0; }
 
 @media (max-width: 700px) {
   .live-header { grid-template-columns: 1fr; }

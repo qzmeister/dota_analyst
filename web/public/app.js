@@ -21,7 +21,7 @@ const $ = (id) => document.getElementById(id);
 // ---------------- League picker ----------------
 async function loadLeagues() {
   try {
-    const r = await fetch(`${API}/api/leagues`);
+    const r = await fetch(`${API}/api/leagues`, { credentials: "same-origin" });
     const d = await r.json();
     // v0.3.25f: drop leagues with no scheduled matches — the old
     // picker listed every DatDota league (60+), most of them empty
@@ -268,7 +268,7 @@ async function refresh() {
     const ids = [...SELECTED].join(",");
     const watch = WATCHLIST.map(w => w.id).join(",");
     const url = `${API}/api/board?events=${ids}&watch=${watch}`;
-    const r = await fetch(url);
+    const r = await fetch(url, { credentials: "same-origin" });
     const d = await r.json();
     renderColumn("prematch", d.prematch, prematchCard);
     renderColumn("live", d.live, liveCard);
@@ -567,6 +567,41 @@ function liveCard(c) {
       goldLine = `<div class="live-gold"><span class="gold-split">${sym} ${fmtGold(val)} ${name}</span></div>`;
     }
   }
+  // v0.4.0.1: destroyed-tower counts from the dltv_browser
+  // mini-map scrape.  DLTV doesn't expose this in the socket
+  // payload; the only source is the rendered mini-map icons
+  // (standing = full color, destroyed = greyscale).  We render
+  // a small "Башни: 3 / 11 ☀ / 🌙 5 / 11" line under the gold
+  // block — when the cache didn't have a mini-map to read, the
+  // whole line is omitted (not "—").  Two shapes:
+  //   1. side split:
+  //      {radiant_destroyed, dire_destroyed,
+  //       radiant_standing,  dire_standing}
+  //   2. no side split:
+  //      {standing, total, note}
+  let towerLine = "";
+  const dt = c.destroyed_towers;
+  if (dt && (typeof dt.radiant_destroyed === "number" || typeof dt.dire_destroyed === "number")) {
+    // Side split.  Convention: each side has 11 towers in a
+    // standard map (3 T1 + 2 mid T1 + 2 T2 + 4 barracks = 11;
+    // T3 = 2 ancient towers but DLTV only counts the 11
+    // "lane/barracks" towers for the destroyed stat).
+    const rD = dt.radiant_destroyed;
+    const dD = dt.dire_destroyed;
+    const rS = dt.radiant_standing;
+    const dS = dt.dire_standing;
+    const fmt = (destroyed, standing) => {
+      const tot = (destroyed != null && standing != null)
+        ? destroyed + standing : 11;
+      return `${destroyed ?? "—"}/${tot}`;
+    };
+    towerLine = `<div class="live-towers" title="Снесено башен: radiant ${rD ?? "—"}, dire ${dD ?? "—"}">🏰 Башни: <span class="r">${fmt(rD, rS)}</span> ☀ / 🌙 <span class="d">${fmt(dD, dS)}</span></div>`;
+  } else if (dt && (typeof dt.standing === "number" || typeof dt.total === "number")) {
+    const tot = dt.total ?? 22;
+    const std = dt.standing ?? 0;
+    const dst = Math.max(0, tot - std);
+    towerLine = `<div class="live-towers" title="Всего: ${tot}, стоит: ${std}">🏰 Башни: ${dst}/${tot} (всего)</div>`;
+  }
   // v0.3.24h: per-team side block — team name + row of 5 big hero
   // icons.  This is the DLTV layout: name on top, hero icons
   // underneath, player names below the icons.  We don't have
@@ -610,6 +645,7 @@ function liveCard(c) {
           <div class="live-score"><span class="r">${c.live_score.radiant}</span><span class="sep">:</span><span class="d">${c.live_score.dire}</span></div>
           <div class="live-clock">⏱ ${fmtClock(c.game_time)}</div>
           ${goldLine}
+          ${towerLine}
           <div class="live-series-score">серия ${c.series_score_a}–${c.series_score_b}</div>
         </div>
         ${sideBlock(c.dire_team, draft.dire_picks, draft.dire_bans, "dire")}
@@ -667,6 +703,97 @@ function liveCard(c) {
 function setStatus(msg) {
   $("status").textContent = msg;
 }
+
+// ---------------- Auth (v0.4.0.1: cookie session) ----------------
+//
+// The browser's `EventSource` cannot send custom HTTP headers, so
+// the SSE path needs a credential the browser WILL send.  Cookies
+// work — the browser attaches them automatically when the
+// EventSource is opened with `withCredentials: true` (or even by
+// default for same-origin requests).  We POST the user's api_key
+// to /api/auth/login, the server mints an HMAC-signed session
+// cookie, and every subsequent call to /api/stream/* rides on
+// that cookie.  The X-API-Key header is still accepted as a
+// fallback so curl / the dev-edge-injected dev-key keep working.
+
+async function checkAuthStatus() {
+  try {
+    const r = await fetch(`${API}/api/auth/status`, { credentials: "same-origin" });
+    if (!r.ok) return false;
+    const d = await r.json();
+    return !!d.authenticated;
+  } catch (e) {
+    return false;
+  }
+}
+
+function showAuthModal(errorMsg) {
+  const modal = $("authModal");
+  const errEl = $("authError");
+  if (errorMsg) {
+    errEl.textContent = errorMsg;
+    errEl.classList.remove("hidden");
+  } else {
+    errEl.classList.add("hidden");
+  }
+  modal.classList.remove("hidden");
+  // Focus the input so the user can paste/type immediately.
+  setTimeout(() => $("authApiKey").focus(), 0);
+}
+
+function hideAuthModal() {
+  $("authModal").classList.add("hidden");
+}
+
+async function doLogin() {
+  const apiKey = ($("authApiKey").value || "").trim();
+  if (!apiKey) {
+    showAuthModal("Введите API ключ");
+    return;
+  }
+  const btn = $("authLoginBtn");
+  btn.disabled = true;
+  btn.textContent = "Входим…";
+  try {
+    const r = await fetch(`${API}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ api_key: apiKey }),
+    });
+    if (r.status === 200) {
+      hideAuthModal();
+      setStatus("Вход выполнен");
+      // Re-fetch the board with the new cookie; SSE will pick
+      // up the cookie on its next reconnect (we restart it
+      // explicitly to surface any auth errors right away).
+      stopSSE();
+      await refresh();
+      startSSE();
+    } else if (r.status === 401) {
+      showAuthModal("Неверный API ключ");
+    } else if (r.status === 429) {
+      showAuthModal("Слишком много попыток. Подождите минуту.");
+    } else {
+      showAuthModal(`Ошибка ${r.status}`);
+    }
+  } catch (e) {
+    showAuthModal(`Сеть: ${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Войти";
+  }
+}
+
+async function doLogout() {
+  try {
+    await fetch(`${API}/api/auth/logout`, {
+      method: "POST", credentials: "same-origin",
+    });
+  } catch (e) { /* ignore — we still want to show the modal */ }
+  stopSSE();
+  showAuthModal();
+}
 function setupAutoRefresh() {
   if (refreshTimer) clearInterval(refreshTimer);
   if (isAutoRefreshOn()) {
@@ -693,7 +820,15 @@ const SSE_RECONNECT_MS = 5000;
 function startSSE() {
   if (sseSource) return;  // already connected
   try {
-    sseSource = new EventSource(`${API}/api/stream/matches`);
+    // v0.4.0.1: withCredentials=true tells the browser to send
+    // the dota_analyst_session cookie on the long-lived stream.
+    // EventSource doesn't let you set custom headers, so the
+    // cookie is the only way to authenticate.  Same-origin
+    // requests would attach the cookie by default, but
+    // withCredentials is the explicit, future-proof form
+    // (in case the static UI is served from a different
+    // subdomain in the future).
+    sseSource = new EventSource(`${API}/api/stream/matches`, { withCredentials: true });
   } catch (e) {
     scheduleSSEReconnect();
     return;
@@ -743,6 +878,11 @@ function init() {
     if (e.key === "Enter") { e.preventDefault(); addWatch($("watchInput").value); $("watchInput").value = ""; }
   };
   $("refreshBtn").onclick = refresh;
+  // v0.4.0.1: cookie auth modal — login flow wiring.
+  $("authLoginBtn").onclick = doLogin;
+  $("authApiKey").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); doLogin(); }
+  });
   // v0.3.25f: auto-refresh is now a radio group (name="autoRefresh"),
   // not the old checkbox.  Hook the change at the group level.
   document.querySelectorAll('input[name="autoRefresh"]').forEach((r) => {
@@ -778,9 +918,20 @@ function init() {
   });
 
   renderWatchList();
-  loadLeagues().then(refresh);
-  setupAutoRefresh();
-  startSSE();
+  // v0.4.0.1: cookie-auth gate.  If the user has no valid session
+  // cookie, show the login modal.  In dev (nginx injects the dev
+  // key) the X-API-Key path will still work for /api/board and
+  // /api/stream/* (the middleware accepts EITHER), but the
+  // explicit login is what makes the public-deploy path clean.
+  checkAuthStatus().then((authed) => {
+    if (!authed) {
+      showAuthModal();
+      return;
+    }
+    loadLeagues().then(refresh);
+    setupAutoRefresh();
+    startSSE();
+  });
 }
 
 init();

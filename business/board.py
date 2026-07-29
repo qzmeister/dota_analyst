@@ -186,6 +186,15 @@ def _names_to_cards(entries: List[Dict]) -> List[Dict]:
                     caller passed one in), so downstream
                     consumers can re-construct the pick dict
                     in the right format for `_picks_to_heroes`.
+
+    v0.4.0.1: also carries `player_name` (and the slug/country
+    trio when present) so the live card can render the player
+    nickname under each hero icon.  The DOM extractor in
+    `dltv_browser._read_live_state_from_scoreboard` writes
+    `player_name` on the per-pick dict during a live scrape;
+    socket.io's `fast_picks` only carries it DURING the draft
+    (see `business.dltv_socket._fast_picks_to_map_entries`),
+    so the DOM path is the post-draft source.
     """
     out: List[Dict] = []
     for e in entries or []:
@@ -195,11 +204,22 @@ def _names_to_cards(entries: List[Dict]) -> List[Dict]:
         steam_id = e.get("steam_id")
         hero_id = e.get("hero_id")
         dltv_id = hero_id  # original DLTV internal id
+        # v0.4.0.1: pull the player nickname (and any related
+        # metadata) from the source so it survives the resolve
+        # → overlay → live-card pipeline.
+        player_name = e.get("player_name")
+        player_slug = e.get("player_slug")
+        player_country = e.get("player_country")
         if steam_id:
             try:
                 meta = client.hero_by_steam_id(int(steam_id))
                 if meta:
-                    card = _hero_card(meta, int(steam_id))
+                    card = _hero_card(
+                        meta, int(steam_id),
+                        player_name=player_name,
+                        player_slug=player_slug,
+                        player_country=player_country,
+                    )
                     if dltv_id is not None:
                         card["_dltv_id"] = int(dltv_id)
                     out.append(card)
@@ -208,7 +228,12 @@ def _names_to_cards(entries: List[Dict]) -> List[Dict]:
                 pass
         if hero_id:
             meta = client.hero_by_dltv_id(int(hero_id)) or client.hero_by_steam_id(int(hero_id))
-            card = _hero_card(meta, int(hero_id))
+            card = _hero_card(
+                meta, int(hero_id),
+                player_name=player_name,
+                player_slug=player_slug,
+                player_country=player_country,
+            )
             card["_dltv_id"] = int(hero_id)
             out.append(card)
         elif name:
@@ -216,18 +241,26 @@ def _names_to_cards(entries: List[Dict]) -> List[Dict]:
             try:
                 for h in client.get_heroes() or []:
                     if (h.get("title") or "").strip().lower() == name.strip().lower():
-                        card = _hero_card(h, h.get("id"))
+                        card = _hero_card(
+                            h, h.get("id"),
+                            player_name=player_name,
+                            player_slug=player_slug,
+                            player_country=player_country,
+                        )
                         # We didn't get a dltv id from the input; keep
                         # the looked-up hero's id as a best effort.
                         card["_dltv_id"] = h.get("id")
                         out.append(card)
                         break
                 else:
-                    out.append({"id": None, "name": name, "image": None, "win_rate": None, "_dltv_id": None})
+                    out.append({"id": None, "name": name, "image": None, "win_rate": None,
+                                "player_name": player_name, "_dltv_id": None})
             except Exception:
-                out.append({"id": None, "name": name, "image": None, "win_rate": None, "_dltv_id": None})
+                out.append({"id": None, "name": name, "image": None, "win_rate": None,
+                            "player_name": player_name, "_dltv_id": None})
         else:
-            out.append({"id": None, "name": "", "image": None, "win_rate": None, "_dltv_id": None})
+            out.append({"id": None, "name": "", "image": None, "win_rate": None,
+                        "player_name": player_name, "_dltv_id": None})
     return out
 
 
@@ -511,10 +544,44 @@ def _postmatch_card(series: Dict, event_title: str, is_watchlist: bool = False) 
         }
 
         # team_a = first, team_b = second (always, for consistent verdict labels)
-        pred_verdict = analyze_map_with_verdict(
-            first, second, heroes_a, heroes_b, actual,
-            engine=get_default_engine(),
-        )
+        if _V17_ENABLED:
+            # v0.4.0.1: v17 ↔ legacy hybrid for per-map predictions.
+            # v17 owns winner / kills / duration / first_15; legacy
+            # keeps towers / multikill / first_blood.  See
+            # business/v17_predict.py:hybrid_predict for the full
+            # merge contract.  Falls back to pure legacy on MLError
+            # (e.g. team_id missing for a steam-only match).
+            try:
+                pred_verdict = v17_predict.hybrid_predict(
+                    engine=get_default_engine(),
+                    team_a=first, team_b=second,
+                    heroes_a=heroes_a, heroes_b=heroes_b,
+                    actual=actual,
+                    radiant_team_id=m.get("radiant_team_id"),
+                    dire_team_id=m.get("dire_team_id"),
+                    radiant_picks=[h.get("hero_id") for h in r_picks
+                                   if isinstance(h, dict) and h.get("hero_id") is not None],
+                    dire_picks=[h.get("hero_id") for h in d_picks
+                                 if isinstance(h, dict) and h.get("hero_id") is not None],
+                    radiant_bans=[b.get("hero_id") for b in (m.get("radiant_bans") or [])
+                                  if isinstance(b, dict) and b.get("hero_id") is not None],
+                    dire_bans=[b.get("hero_id") for b in (m.get("dire_bans") or [])
+                                if isinstance(b, dict) and b.get("hero_id") is not None],
+                    start_time=m.get("start_time"),
+                    patch=m.get("patch"),
+                )
+            except Exception as _exc:  # noqa: BLE001 — keep the card alive
+                log.warning("v17 hybrid_predict failed for map %s: %s; falling back to legacy",
+                            m.get("id"), _exc)
+                pred_verdict = analyze_map_with_verdict(
+                    first, second, heroes_a, heroes_b, actual,
+                    engine=get_default_engine(),
+                )
+        else:
+            pred_verdict = analyze_map_with_verdict(
+                first, second, heroes_a, heroes_b, actual,
+                engine=get_default_engine(),
+            )
 
         games_detailed.append({
             "game": i,
@@ -710,10 +777,19 @@ def _live_card(series: Dict, event_title: str) -> Dict:
                 # broke the non-watchlist path (hero_by_dltv_id
                 # was called with a steam id).
                 def _entry(c: Dict, i: int) -> Dict:
+                    # v0.4.0.1: pass the player nickname through to
+                    # `_picks_to_heroes` via the `_name` slot.  The
+                    # DOM extractor (`_names_to_cards` upstream) puts
+                    # `player_name` on each card; the legacy
+                    # `fast_picks` path also writes `_name`.  Both
+                    # are equivalent at the `_hero_card` boundary.
                     return {
                         "hero_id": c.get("_dltv_id") or c.get("id"),
                         "order": i,
                         "_steam_id": c.get("id"),
+                        "_name": c.get("player_name") or c.get("_name"),
+                        "player_slug": c.get("player_slug"),
+                        "player_country": c.get("player_country"),
                     }
                 m = {
                     "radiant_picks": [_entry(c, i) for i, c in enumerate(r_pick_cards)],
@@ -954,6 +1030,19 @@ def _live_card(series: Dict, event_title: str) -> Dict:
         ):
             if m.get(k_m) is None and cached_state.get(k_cache) is not None:
                 m[k_m] = cached_state[k_cache]
+        # v0.4.0.1: destroyed-tower counts from the dltv_browser
+        # mini-map scrape.  DLTV doesn't expose this in the
+        # socket.io payload or in the /live/{id}.json endpoint —
+        # the only source is the rendered mini-map icons
+        # (standing = full color, destroyed = greyscale).  The
+        # DOM extractor in `dltv_browser._read_live_state_from
+        # _scoreboard` writes `destroyed_towers` as
+        # `{radiant_destroyed, dire_destroyed, ...}` when it
+        # finds a mini-map.  We pass it through to the card so
+        # the frontend can show "Башни: 5 / 11" or similar.
+        dt = cached_state.get("destroyed_towers")
+        if isinstance(dt, dict) and dt:
+            m["destroyed_towers"] = dt
 
     # figure out which side each team is on this map
     radiant_is_first = m.get("radiant_team_id") == first_id
@@ -1066,6 +1155,14 @@ def _live_card(series: Dict, event_title: str) -> Dict:
         # hasn't seen).  Frontend renders these next to the live
         # score, like DLTV's own display.
         "live_gold": _build_live_gold(m),
+        # v0.4.0.1: destroyed-tower counts from the dltv_browser
+        # mini-map scrape.  Optional — only present when the cache
+        # had a mini-map to read.  Shape (when present):
+        #   {radiant_destroyed: N, dire_destroyed: N,
+        #    radiant_standing: N, dire_standing: N}
+        # or (no side split):
+        #   {standing: N, total: N, note: "no side split; combined"}
+        "destroyed_towers": m.get("destroyed_towers"),
         "draft": {
             "radiant_picks": r_cards,
             "dire_picks": d_cards,

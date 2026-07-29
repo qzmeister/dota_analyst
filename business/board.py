@@ -1363,6 +1363,58 @@ def build_board(event_ids: List[int], watch_ids: Optional[List[int]] = None) -> 
     prematch.sort(key=lambda c: c.get("start_time") or "")
     postmatch.sort(key=lambda c: c.get("ended_at") or "", reverse=True)
 
+    # v0.4.0-dedup: DLTV often returns the same BO3 series twice —
+    # once as a finished postmatch card (series_score 0:2) and once
+    # as an in-progress live card that the next build tick still
+    # classifies as postmatch (series_score 0:1) because the score
+    # is non-zero.  The UI then shows two cards for the same teams.
+    # We dedup by (radiant_team_id, dire_team_id) — keep the one
+    # with the most games played (i.e. completed > in-progress) and
+    # break ties by ended_at (more recent).
+    seen_team_pairs: set = set()
+    deduped_postmatch: List[Dict] = []
+    for c in postmatch:
+        rtid = (c.get("radiant_team") or {}).get("id")
+        dtid = (c.get("dire_team") or {}).get("id")
+        if not rtid or not dtid:
+            deduped_postmatch.append(c)
+            continue
+        key = (int(rtid), int(dtid))
+        if key in seen_team_pairs:
+            log.debug(
+                "postmatch dedup: dropping %s (dup of earlier card for teams %s vs %s)",
+                c.get("series_id") or c.get("match_id"), rtid, dtid,
+            )
+            continue
+        seen_team_pairs.add(key)
+        deduped_postmatch.append(c)
+    # Within each team-pair keep the most-complete (most games played).
+    # Above we kept the first encountered — after sort, the first
+    # encountered is the most-recent `ended_at` of that pair, which
+    # is usually the more-complete one (DLTV updates the older one
+    # last).  But for the in-progress vs finished case the live
+    # tracker writes a fresh row with a higher ended_at, so re-sort
+    # the surviving list by (ended_at desc, score_total desc).
+    def _score_total(c: Dict) -> int:
+        return int((c.get("series_score_a") or 0) + (c.get("series_score_b") or 0))
+    # Re-group keeping the most-complete per team pair
+    final_postmatch: List[Dict] = []
+    final_seen: set = set()
+    for c in sorted(
+        deduped_postmatch,
+        key=lambda c: (c.get("ended_at") or "", _score_total(c)),
+        reverse=True,
+    ):
+        rtid = (c.get("radiant_team") or {}).get("id")
+        dtid = (c.get("dire_team") or {}).get("id")
+        if rtid and dtid:
+            key = (int(rtid), int(dtid))
+            if key in final_seen:
+                continue
+            final_seen.add(key)
+        final_postmatch.append(c)
+    postmatch = final_postmatch
+
     return {"prematch": prematch, "live": live, "postmatch": postmatch}
 
 

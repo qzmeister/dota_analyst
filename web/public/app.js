@@ -918,19 +918,72 @@ function init() {
   });
 
   renderWatchList();
-  // v0.4.0.1: cookie-auth gate.  If the user has no valid session
-  // cookie, show the login modal.  In dev (nginx injects the dev
-  // key) the X-API-Key path will still work for /api/board and
-  // /api/stream/* (the middleware accepts EITHER), but the
-  // explicit login is what makes the public-deploy path clean.
-  checkAuthStatus().then((authed) => {
-    if (!authed) {
+  // v0.4.0.1: cookie-auth gate.  Two modes, distinguished by
+  // the `X-Edge-Mode` response header that nginx emits on
+  // every response (default "dev", "prod" when PROD_MODE=1):
+  //
+  //   * dev: the nginx edge injects the dev X-API-Key into
+  //     every /api/* call (see web/nginx.conf
+  //     `effective_api_key` map).  The cookie is OPTIONAL.
+  //     The static UI works out of the box — no login modal
+  //     on page load.  Ctrl+L still shows it for users who
+  //     want to log in explicitly (e.g. to test the auth
+  //     flow).
+  //
+  //   * prod: the nginx edge does NOT inject the dev key.
+  //     The only way to authenticate is a session cookie
+  //     from POST /api/auth/login.  We probe
+  //     /api/auth/status on init; if the answer is "no",
+  //     we show the login modal.
+  //
+  // We probe X-Edge-Mode via a lightweight HEAD-style fetch
+  // on the index.html.  The header is set on EVERY nginx
+  // response (incl. static assets), so the first
+  // index.html fetch is enough.  In dev we optimistically
+  // start the board refresh; if the edge is misconfigured
+  // (X-Edge-Mode not set at all), the very first /api/board
+  // will 401 and the user sees an empty board.  They can
+  // hit Ctrl+L to enter the dev key manually.
+  fetch(`${API}/index.html?v=0.4.0.1`, { method: "HEAD", credentials: "same-origin" })
+    .then((r) => {
+      const mode = r.headers.get("X-Edge-Mode") || "dev";
+      window.__EDGE_MODE__ = mode;
+      if (mode === "prod") {
+        return checkAuthStatus().then((authed) => {
+          if (!authed) {
+            showAuthModal();
+            return;
+          }
+          loadLeagues().then(refresh);
+          setupAutoRefresh();
+          startSSE();
+        });
+      } else {
+        // dev: skip the modal, rely on the nginx-injected key.
+        loadLeagues().then(refresh);
+        setupAutoRefresh();
+        startSSE();
+      }
+    })
+    .catch(() => {
+      // HEAD probe failed (network blip, old nginx without
+      // X-Edge-Mode).  Fall back to dev behavior — show the
+      // board.  If auth is actually missing, /api/board
+      // returns 401 and the user can hit Ctrl+L to log in.
+      window.__EDGE_MODE__ = "dev";
+      loadLeagues().then(refresh);
+      setupAutoRefresh();
+      startSSE();
+    });
+
+  // v0.4.0.1: Ctrl+L re-shows the auth modal.  Useful in dev
+  // (where the modal is hidden by default) and in prod (where
+  // the user might want to switch accounts without reloading).
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "l") {
+      e.preventDefault();
       showAuthModal();
-      return;
     }
-    loadLeagues().then(refresh);
-    setupAutoRefresh();
-    startSSE();
   });
 }
 

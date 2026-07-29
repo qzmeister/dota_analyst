@@ -100,6 +100,13 @@ services:
       # ml_data is large (200+ MB) and gitignored. Mount it from the host
       # so rebuilds don't redownload and the data survives container death.
       - ./ml_data:/app/ml_data:rw
+      # v0.4.0-v17: bind-mount ./business so iterative code changes
+      # (dltv_socket.py, v17_predict.py, board.py, ...) take effect on
+      # the next container restart without rebuilding the image.
+      # The image's /app/business/ files are still copied in by the
+      # Dockerfile, but the host mount takes precedence at runtime.
+      - ./business:/app/business:rw
+      - ./business:/usr/local/lib/python3.12/site-packages/business:rw
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/healthz', timeout=3).read()"]
       interval: 30s

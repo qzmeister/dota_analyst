@@ -293,6 +293,24 @@ async def _run_session() -> None:
                         raise RuntimeError("connection closed by server")
                     if not msg:
                         continue
+                    # v0.4.0.1: EIO PING (server → client) → reply with
+                    # EIO PONG (`"3"`).  The previous code passed `"2"`
+                    # through `_parse_sio_event` which returns None for
+                    # non-SIO frames, so we silently dropped the ping.
+                    # After 2 missed pings (~50s with the default
+                    # `pingInterval=25`) the server closes the WS, which
+                    # is why our sessions used to die every 30-90 s and
+                    # the publisher had to wait for the 5-min
+                    # `_BOARD_CACHE_TTL` to recover.  The docstring at
+                    # the top of this module already promised this
+                    # behaviour ("We reply with PONG (`3`)") — this is
+                    # the code change that makes it true.
+                    if msg == "2":
+                        try:
+                            await ws.send("3")
+                        except websockets.ConnectionClosed:
+                            raise RuntimeError("connection closed by server")
+                        continue
                     # SIO EVENT
                     evt = _parse_sio_event(msg)
                     if not evt:

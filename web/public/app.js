@@ -27,7 +27,18 @@ async function loadLeagues() {
     // picker listed every DatDota league (60+), most of them empty
     // for our use case, which just made the dropdown noisy.
     // match_count is the "would appear in /api/board right now" count.
-    LEAGUES = (d.leagues || []).filter((l) => (l.match_count || 0) > 0);
+    // v0.4.0.1: fallback to `is_active` when the strict `match_count>0`
+    // filter would have dropped every league.  The `/api/leagues` v1
+    // join can lag for a few seconds after the page loads, which used
+    // to leave the user with an empty picker and a 0/0/0 board —
+    // looks broken, makes them reload.  `is_active` is the DLTV's
+    // own "this league is currently running" flag and is on the
+    // `events` row, so it doesn't depend on the v1 series join.
+    const allLeagues = d.leagues || [];
+    const strictActive = allLeagues.filter((l) => (l.match_count || 0) > 0);
+    LEAGUES = strictActive.length > 0
+      ? strictActive
+      : allLeagues.filter((l) => l.is_active || (l.match_count || 0) > 0);
     // v0.3.21: first-load UX.  An empty SELECTED set used to leave
     // the user staring at an empty board even though every league
     // has cards.  Auto-pick everything so the first /api/board
@@ -39,12 +50,30 @@ async function loadLeagues() {
     // /api/leagues (or were dropped by the v0.3.25f empty-league
     // filter).  Without this, a returning user with old localStorage
     // sees a fully empty board with "Лиги 30" — looks broken.
+    // v0.4.0.1: re-fire the auto-select on EVERY call, not just init.
+    // If the first call landed during a /api/leagues empty-window
+    // (DLTV v1 join lag, server hiccup, network blip), the user was
+    // stuck with `SELECTED.size === 0` and an empty board until a
+    // full page reload.  Now any subsequent loadLeagues() — which
+    // the auto-refresh loop already calls every 5s via the
+    // `refreshAll()` chain in some code paths — gets a second /
+    // third / N-th chance to populate the picker.
     const leagueIds = new Set(LEAGUES.map((l) => l.id));
+    const hadNone = SELECTED.size === 0;
     const hasStaleOnly = SELECTED.size > 0
       && ![...SELECTED].some((id) => leagueIds.has(id));
-    if ((SELECTED.size === 0 || hasStaleOnly) && LEAGUES.length > 0) {
+    if ((hadNone || hasStaleOnly) && LEAGUES.length > 0) {
       SELECTED = new Set(LEAGUES.map((l) => l.id));
       persist();
+      // v0.4.0.1: if we transitioned from "nothing selected" to
+      // "everything selected", the next /api/board will actually
+      // have data — kick a refresh so the user doesn't have to wait
+      // for the next auto-refresh tick.  `refresh` is defined later
+      // in this file; safe to call here because `loadLeagues`
+      // itself is only invoked from already-initialised code paths.
+      if (hadNone) {
+        try { refresh(); } catch (e) { /* refresh not yet bound — ignore */ }
+      }
     }
     renderLeagueList();
     renderLeagueChips();

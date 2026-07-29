@@ -35,6 +35,17 @@ services:
       - gateway
     networks:
       - frontend
+    volumes:
+      # v0.4.0.1: bind-mount the host's `web/public` over the image's
+      # nginx document root so frontend changes (app.js / index.html /
+      # style.css) take effect on the next container recreate without
+      # rebuilding the image.  Without this, every frontend tweak
+      # required `docker build` (~30 s) + container recreate + a
+      # manual `docker cp` hack, which broke the v0.4.0-deploy
+      # "edit-on-host, see-in-browser" loop.  The image's COPY'd
+      # files still serve as the bootstrap content (a stale
+      # `app.js` is the worst-case fallback if the host is empty).
+      - ./web/public:/usr/share/nginx/html:rw
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/healthz"]
       interval: 30s

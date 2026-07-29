@@ -619,6 +619,16 @@ def _live_card(series: Dict, event_title: str) -> Dict:
                     break
         if series_id is None and series_id_raw.isdigit():
             series_id = int(series_id_raw)
+    # v0.4.0.1: initialise `cached_state` BEFORE the gated if-block below
+    # so the gold-overlay read at the bottom of this function doesn't
+    # hit `UnboundLocalError: cannot access local variable 'cached_state'`
+    # when the if-block is skipped (i.e. `m` already has picks — the
+    # watchlist / v0.4.0 path).  Same class of bug as the
+    # `_force_reconnect_flag` global in dltv_socket.py (fixed in
+    # v0.4.0-fix / bc792fb).  Empty dict is falsy, so the gold-overlay
+    # block at the bottom of this function is a no-op when there's
+    # nothing to overlay.
+    cached_state: Dict[str, Any] = {}
     if series_id is not None and not (m.get("radiant_picks") or m.get("dire_picks")):
         # v0.3.24: when the row came from the watchlist / steam fallback
         # (string id like "watch-8916384577") the steam match id is NOT
@@ -1264,6 +1274,21 @@ def build_board(event_ids: List[int], watch_ids: Optional[List[int]] = None) -> 
             log.warning("skip prematch scraper %s: %s", m.get('series_id'), exc, exc_info=True)
 
     # Add discovery live (synthetic series from /live/{id}.json)
+    # v0.4.0.1: precompute the title fallback for the live filter
+    # below.  Steam-only live matches (no `_scraper_event_id`) used
+    # to be dropped from the filtered board because the strict
+    # `int(ws_eid) in allowed_events` check couldn't classify them.
+    # Build a lower-cased set of titles from the user's allowed
+    # leagues so the title-based fallback can decide "this match
+    # belongs to the user's selection even though we have no id".
+    # The set is empty (and the fallback is a no-op) when no filter
+    # is active.
+    allowed_titles: Set[str] = set()
+    if has_filter and allowed_events:
+        for eid in allowed_events:
+            t = (events.get(int(eid)) or "").strip().lower()
+            if t:
+                allowed_titles.add(t)
     for ws in live_series:
         maps = ws.get("maps") or []
         steam_id = maps[0].get("steam_id") if maps else None
@@ -1291,17 +1316,21 @@ def build_board(event_ids: List[int], watch_ids: Optional[List[int]] = None) -> 
         title = title or "Live match"
         # Filter live cards by selected leagues.  When the user has
         # narrowed the board to a specific set of leagues, we apply
-        # the filter strictly — including matches with no resolvable
-        # event_id (steam-only / minor tournaments).  Earlier we let
-        # those pass through "in case they're a minor league the
-        # user cares about", but in practice that just leaks the
-        # user's selected set: a Russian Esports live match would
-        # show up next to the EPL matches the user actually asked
-        # for.  Watchlist cards are unaffected — they have their own
-        # filter logic that uses `allowed_events` symmetrically.
+        # the filter strictly — but a steam-only live match with no
+        # resolvable `event_id` gets a title-based fallback so it
+        # still surfaces if the user has selected the league it
+        # actually belongs to (the scraper's `_scraper_event` /
+        # v1 event map / steam_league_id mapping above gave us the
+        # title even when the id is missing).  Without the title
+        # fallback, every "Lunar Horse Trophy 8" live match from a
+        # steam-only path got dropped from the filtered board, and
+        # the user saw an empty live column whenever they had any
+        # league selected.
         if has_filter:
             if ws_eid is None or int(ws_eid) not in allowed_events:
-                continue
+                ws_title_norm = (title or "").strip().lower()
+                if not ws_title_norm or ws_title_norm not in allowed_titles:
+                    continue
         stage = client.classify_stage(ws)
         try:
             if stage == "live":

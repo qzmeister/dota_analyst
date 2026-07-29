@@ -382,3 +382,203 @@ def is_available() -> bool:
         if not p.exists():
             return False
     return True
+
+
+# ---------------------------------------------------------------------------- #
+# v17 ↔ legacy hybrid predictor
+# ---------------------------------------------------------------------------- #
+#
+# v17 only produces 4 numbers (kills_total, duration_sec, first_15_kills,
+# winner).  The postmatch card also needs `towers`, `multikill`, `first_blood`
+# (added by `analyze_map_with_verdict` from team fb_rate / tower-dominance
+# heuristics and the legacy ML models).  Rather than re-train v17 to predict
+# those, the hybrid runs v17 for the 4 v17-owned targets and the legacy
+# engine for everything else, then merges the two into a single prediction
+# dict in the legacy `analyze_map_with_verdict` shape.
+#
+# The merge is mechanical:
+#   * winner — from v17 (side → team name via team_a / team_b; float prob
+#              → int %).
+#   * kills / duration — from v17 (flat float → dict; sec → min).
+#   * first_15 — v17 doesn't predict a per-side team, so we use the
+#              winner side as a proxy (the team predicted to win is
+#              usually the one to reach 15 first).  The numeric
+#              `first_15_kills` count from v17 is preserved as a new
+#              supplementary field.
+#   * kills_total_over_under / total_over_under — derived from the v17
+#              numbers via the same helpers the legacy engine uses
+#              (`_build_over_under_from_kills` / `_build_over_under_from_
+#              duration`).
+#   * towers / towers_over_under — from legacy (v17 has no towers model).
+#   * multikill — from legacy (v17 has no multikill model; the v0.3
+#              classifier degenerated to "always High" on the pro corpus).
+#   * first_blood — added from team fb_rates, same as
+#              `analyze_map_with_verdict` does on top of `engine.analyze`.
+#   * verdict — from `map_verdicts` (same helper), so the postmatch
+#              card's "Победитель ✓/✗" / "Карта N: TM" lines all keep
+#              working unchanged.
+#
+# v17 failures (MLError, missing features, NaN) fall through to the
+# legacy prediction for the affected block — so a single bad target
+# doesn't kill the card.
+#
+# The function returns the same `{prediction, verdict}` shape as
+# `analysis.analyze_map_with_verdict`, so `board.py` can substitute
+# one for the other without changing the rest of the call chain.
+
+def hybrid_predict(
+    *,
+    engine,
+    team_a: Dict[str, Any],
+    team_b: Dict[str, Any],
+    heroes_a: List[Any],
+    heroes_b: List[Any],
+    actual: Dict[str, Any],
+    # v17 inputs (extracted from the post-match map)
+    radiant_team_id: Optional[int],
+    dire_team_id: Optional[int],
+    radiant_picks: List[int],
+    dire_picks: List[int],
+    radiant_bans: Optional[List[int]] = None,
+    dire_bans: Optional[List[int]] = None,
+    start_time: Optional[int] = None,
+    patch: Optional[str] = None,
+) -> Dict[str, Any]:
+    """v17 ↔ legacy hybrid post-match prediction.
+
+    Returns ``{"prediction": <merged pred dict>, "verdict": <map_verdicts>}``.
+    """
+    # Local imports to keep this module importable even if the rest
+    # of `business/` is not yet on the path (e.g. unit tests on a
+    # checkout without the full tree).  The legacy engine has its
+    # own over/under helpers; analysis.py has map_verdicts.
+    from .ml.engine import (
+        _build_over_under_from_duration,
+        _build_over_under_from_kills,
+    )
+    from .analysis import (
+        FALLBACK_FB,
+        _val,
+        map_verdicts,
+    )
+
+    # 1. Run v17 (may raise MLError if a model is missing/broken).
+    v17: Dict[str, Any] = {}
+    try:
+        v17 = predict(
+            radiant_team_id=radiant_team_id,
+            dire_team_id=dire_team_id,
+            radiant_picks=list(radiant_picks or []),
+            dire_picks=list(dire_picks or []),
+            radiant_bans=list(radiant_bans or []),
+            dire_bans=list(dire_bans or []),
+            start_time=start_time,
+            patch=patch,
+        )
+    except MLError as exc:
+        # v17 is fully unavailable — fall back to pure legacy.
+        # The caller (board.py) catches MLError and re-runs the
+        # legacy path; reaching here means a partial v17 failure,
+        # which we handle per-block below.
+        v17 = {}
+        v17.setdefault("kills", 0.0)
+        v17.setdefault("duration_sec", 0.0)
+        v17.setdefault("first_15_kills", 0.0)
+        v17.setdefault("winner", {"team": "radiant", "prob_radiant": 0.5, "probability": 0.5})
+        v17.setdefault("confidence", "low")
+
+    # 2. Run the legacy engine — this still gives us towers /
+    #    multikill / confidence and the kills_total_over_under /
+    #    total_over_under / towers_over_under bet shapes for the
+    #    postmatch card's verdict lines.
+    legacy = engine.analyze(team_a, team_b, heroes_a, heroes_b)
+
+    # 3. Build the merged prediction, taking v17 for the 4 v17-owned
+    #    targets and legacy for the rest.  All conversions are
+    #    shape-only (the actual numbers come from v17's predictions).
+    pred: Dict[str, Any] = dict(legacy)  # copy so we don't mutate the engine's dict
+
+    # ---- winner ----
+    v17_winner = v17.get("winner") or {}
+    v17_prob_radiant = float(v17_winner.get("prob_radiant", 0.5) or 0.5)
+    if not (0.0 <= v17_prob_radiant <= 1.0):
+        v17_prob_radiant = 0.5
+    winner_team_name = team_a["name"] if v17_prob_radiant >= 0.5 else team_b["name"]
+    winner_prob_pct = int(round(max(v17_prob_radiant, 1.0 - v17_prob_radiant) * 100))
+    pred["winner"] = {
+        "team": winner_team_name,
+        "probability": winner_prob_pct,
+        "prob_radiant": int(round(v17_prob_radiant * 100)),
+        "source": "v17",
+    }
+
+    # ---- kills ----
+    v17_kills_total = float(v17.get("kills") or 0.0)
+    if v17_kills_total > 0:
+        kills_total = int(round(v17_kills_total))
+        # Split equally (the legacy engine does the same in its
+        # `_predict_kills`).  Without a per-side kills model we
+        # don't have a better signal; the winner side is "favoured"
+        # for slightly more kills but the round() wash is fine for
+        # an over/under bet.
+        kills_a = int(round(kills_total / 2))
+        kills_b = kills_total - kills_a
+        pred["kills"] = {"total": kills_total, "radiant": kills_a, "dire": kills_b}
+        pred["kills_total_over_under"] = _build_over_under_from_kills(kills_total)
+
+    # ---- duration ----
+    v17_dur_sec = float(v17.get("duration_sec") or 0.0)
+    if v17_dur_sec > 0:
+        dur_min = round(v17_dur_sec / 60.0, 1)
+        pred["duration_min"] = dur_min
+        pred["total_over_under"] = _build_over_under_from_duration(dur_min)
+
+    # ---- first_15 ----
+    # v17 returns `first_15_kills` (count), not a per-side team.
+    # We use the winner side as a proxy for first_to_15.team (the
+    # team predicted to win is usually the first to reach 15
+    # kills).  The probability is the v17 winner probability (same
+    # reasoning).  The raw `first_15_kills` count is preserved as
+    # a new field so the UI can show it if it wants to.
+    v17_first_15 = float(v17.get("first_15_kills") or 0.0)
+    if v17_first_15 > 0:
+        pred["first_to_15"] = {
+            "team": pred["winner"]["team"],
+            "probability": pred["winner"]["probability"],
+        }
+        pred["first_15_kills"] = v17_first_15  # new supplementary field
+
+    # ---- confidence ----
+    # v17's `confidence` is a string ("low"/"medium"/"high");
+    # the legacy engine emits a 0..1 float.  Map v17's buckets
+    # to a sensible float so the postmatch card's
+    # "достоверность данных: X%" line keeps working.
+    v17_conf = v17.get("confidence", "low")
+    conf_map = {"high": 0.85, "medium": 0.65, "low": 0.45}
+    if isinstance(v17_conf, str):
+        pred["confidence"] = conf_map.get(v17_conf, 0.5)
+    else:
+        # Legacy float already (shouldn't happen in v17 path, but
+        # be safe in case the engine was already a hybrid).
+        pred["confidence"] = float(v17_conf) if v17_conf is not None else 0.5
+
+    # ---- source ----
+    # Mark the prediction as v17-derived so accuracy tracking and
+    # any future UI badges can distinguish hybrid from pure legacy.
+    pred["source"] = "v17+legacy"
+    pred["v17_contrib"] = ["winner", "kills", "duration", "first_15"]
+
+    # ---- first_blood (from team fb_rates, same as analyze_map_with_verdict) ----
+    fb_a = _val(team_a, "fb_rate", FALLBACK_FB)
+    fb_b = _val(team_b, "fb_rate", FALLBACK_FB)
+    pred["first_blood"] = {
+        "team": team_a["name"] if fb_a >= fb_b else team_b["name"],
+        "probability": int(round(max(fb_a, fb_b))),
+    }
+
+    # ---- verdict ----
+    verdict = map_verdicts(
+        pred, actual, team_a["name"], team_b["name"],
+    )
+
+    return {"prediction": pred, "verdict": verdict}

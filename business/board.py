@@ -16,11 +16,14 @@ from .dltv_client import client, _parse_dt
 from .exceptions import AccuracyError, DotaAnalystError, MLError
 from .ml.engine import get_default_engine
 
+log = get_logger(__name__)
+
 # v17 trained-model predictor (opt-in via V17_PREDICT=1).
 # Loads `ml_data/models/<target>_v17/` 4 production models trained on
 # 603 OpenDota pro matches from top-30 teams (270-day window, 21
 # features, threshold-pruned per target).  Backtest: 73.8% winner
 # accuracy on 599 matches.  Falls back to legacy engine on MLError.
+_V17_ENABLED = False
 if os.environ.get("V17_PREDICT", "0") == "1":
     try:
         from . import v17_predict
@@ -28,14 +31,8 @@ if os.environ.get("V17_PREDICT", "0") == "1":
             _V17_ENABLED = True
         else:
             log.warning("V17_PREDICT=1 but models missing; falling back to legacy engine")
-            _V17_ENABLED = False
     except Exception as _exc:  # noqa: BLE001
         log.warning("V17_PREDICT=1 but import failed: %s", _exc)
-        _V17_ENABLED = False
-else:
-    _V17_ENABLED = False
-
-log = get_logger(__name__)
 
 BO_LABELS = {1: "BO1", 2: "BO2", 3: "BO3", 5: "BO5"}
 
@@ -916,14 +913,30 @@ def _live_card(series: Dict, event_title: str) -> Dict:
                     )
                     if (map_gt is None or map_gt == 0) and cache_dur is not None:
                         m["game_time"] = cache_dur
-                if cached_state.get("radiant_networth") is not None:
-                    m["radiant_networth"] = cached_state["radiant_networth"]
-                if cached_state.get("dire_networth") is not None:
-                    m["dire_networth"] = cached_state["dire_networth"]
-                if cached_state.get("gold_lead_radiant") is not None:
-                    m["gold_lead_radiant"] = cached_state["gold_lead_radiant"]
         except Exception as exc:
             log.debug("match-state overlay failed for %s: %s", series_id, exc)
+
+    # v0.4.0-gold: ALWAYS overlay networth / lead from the
+    # dltv_browser cache when the socket didn't provide them
+    # (or provided them as a placeholder < 1000).  DLTV is
+    # spotty: it pushes `radiant_match_nw` / `dire_match_nw`
+    # only on live frames with real-time tickers, but the
+    # chromium scrape (dltv_browser) reads the rendered DOM
+    # which has the snapshot even when the socket goes quiet
+    # (e.g. 0 viewers, stream paused, anti-spam throttling).
+    # The cache is a slow but always-available fallback.
+    # Done OUTSIDE the inner if-block above so it runs even when
+    # `m` already has picks (the inner block is gated on
+    # `not (m.get("radiant_picks") or m.get("dire_picks"))`,
+    # and we want gold regardless).
+    if cached_state:
+        for k_cache, k_m in (
+            ("radiant_networth", "radiant_networth"),
+            ("dire_networth",    "dire_networth"),
+            ("gold_lead_radiant", "gold_lead_radiant"),
+        ):
+            if m.get(k_m) is None and cached_state.get(k_cache) is not None:
+                m[k_m] = cached_state[k_cache]
 
     # figure out which side each team is on this map
     radiant_is_first = m.get("radiant_team_id") == first_id

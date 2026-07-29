@@ -211,6 +211,7 @@ def _parse_sio_event(msg: str) -> Optional[Dict[str, Any]]:
 
 async def _run_session() -> None:
     """A single session: connect, subscribe, listen, raise on failure."""
+    global _force_reconnect_flag, _last_force_reconnect_ts
     backoff = RECONNECT_BACKOFF_INITIAL
     while not _loop_should_stop.is_set():
         try:
@@ -272,6 +273,20 @@ async def _run_session() -> None:
                 # with 44 subscriptions) and the outer
                 # `except` re-connects.
                 while not _loop_should_stop.is_set():
+                    # Cooperative force-reconnect: the publisher
+                    # may have added new live matches to the
+                    # subscription set after we connected.  DLTV
+                    # rejects mid-session SUBSCRIBE packets so we
+                    # have to drop and re-open to pick them up.
+                    # We do this lazily: we don't poll aggressively
+                    # (would burn CPU), we check on every recv (≤1
+                    # per second) and at most every `_FORCE_RECONNECT_MIN_SEC`.
+                    if _force_reconnect_flag and (now := _now()) - _last_force_reconnect_ts > _FORCE_RECONNECT_MIN_SEC:
+                        with _lock:
+                            _force_reconnect_flag = False
+                            _last_force_reconnect_ts = now
+                        log.info("dltv_socket: force_reconnect requested — dropping session")
+                        raise RuntimeError("force_reconnect requested")
                     try:
                         msg = await ws.recv()
                     except websockets.ConnectionClosed:
@@ -352,6 +367,29 @@ def _thread_main() -> None:
             loop.close()
         except Exception:
             pass
+
+
+_force_reconnect_flag: bool = False
+_last_force_reconnect_ts: float = 0.0
+# Throttle: don't honor `force_reconnect()` more than once per N
+# seconds.  Reconnect takes ~3-5s (TCP+TLS+SIO CONNECT), so a
+# 30s minimum is a safe lower bound — fast enough to keep
+# subscriptions fresh, slow enough that a chatty publisher
+# doesn't pin us in reconnect loops.
+_FORCE_RECONNECT_MIN_SEC = 30.0
+
+
+def force_reconnect() -> None:
+    """Request the socket loop to drop the current session and reconnect.
+
+    The DLTV server is picky: it treats unsolicited SUBSCRIBE packets
+    on an alive connection as junk and closes the socket after a few
+    minutes.  So the only way to refresh the subscription set is to
+    drop and re-open the WebSocket — which we do on demand from
+    `stream.board_publisher_loop` after the live card set changes.
+    """
+    global _force_reconnect_flag
+    _force_reconnect_flag = True
 
 
 def start_socket_client() -> threading.Thread:

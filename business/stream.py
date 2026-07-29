@@ -320,11 +320,28 @@ async def board_publisher_loop(
                 # way the user follows that match).
                 try:
                     from . import dltv_socket as _ds
+                    _prev_subs = _ds.get_subscriptions()
                     for col in ("live", "prematch"):
                         for c in (board.get(col) or []):
                             mid = c.get("match_id")
                             if mid is not None:
                                 _ds.subscribe(int(mid))
+                    # v0.4.0-fix: DLTV rejects mid-session SUBSCRIBE
+                    # packets.  If the subscription set grew since the
+                    # last reconnect (a new live match appeared, or an
+                    # old one left the board), the new steam_ids will
+                    # not get any events until the socket reconnects
+                    # naturally (~45-90 s).  Request a cooperative
+                    # reconnect so the new picks/bans/lead show up on
+                    # the live card within ~5 s.  `force_reconnect()`
+                    # throttles itself to once per 30 s.
+                    _new_subs = _ds.get_subscriptions()
+                    if _new_subs - _prev_subs:
+                        _ds.force_reconnect()
+                        log.info(
+                            "sse publisher: %d new live match(es), requested socket reconnect",
+                            len(_new_subs - _prev_subs),
+                        )
                 except Exception as exc:  # never let socket bugs kill the publisher
                     log.debug("dltv_socket subscribe failed: %s", exc)
             except (BoardBuildError, MLError, DiscoveryError, UpstreamError, InfraError) as exc:

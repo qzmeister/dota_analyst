@@ -63,6 +63,95 @@ The user rolled back to `ec61adb` (v0.3.25k) because v0.3.25l–n, r, s had hidd
 
 ---
 
+## [0.4.0-deploy] — 2026-07-29 — Deploy polish + 0.4.0.1 patches (rolled back)
+
+A short polish sprint on top of 0.4.0, then a quick round of follow-up patches (`v0.4.0.1-livecard`, `v0.4.0.1-socket-pong`, `v0.4.0.1-leagues`) that the user **asked to roll back** because they wanted the 12:42 state (the last known-good before the patch series went sideways).  This section documents what shipped, what was reverted, and what the current known-regressions are at HEAD `634d064`.
+
+### Polish: what landed and stayed
+
+| Commit | Area | What |
+|--------|------|------|
+| `01c3778` | Live data | **`business/dltv_socket.py` — extract bans from `db.{first,second}_team.bans` socket.io payload**.  Socket.io pushes `bans: [{hero_id, team:0/1}, ...]` alongside `picks`; was previously dropped.  Now surfaces in the live card under the hero row. |
+| `c04bb53` | Live data | **Persistent bans cache (4 h TTL)**.  Steam-only live matches have no socket.io hook; for those we hit DLTV's `/live/{id}.json` once and cache bans in `_BAN_CACHE` (LRU, max 256, 4 h TTL).  When the 5-min `get_live_json` retry returns 404, the cached bans stay.  Also added: chromium fetch for steam-only matches without `/live/{id}.json` data. |
+| `c698471` | Live data + ML | **Player name extraction + gold lead fix + corpus pipeline scripts**.  `business/dltv_socket.py` now reads `fast_picks[*].player.title` to attach per-pick player name.  Gold overlay (`if cached_state:`) lifted out of the gated if-block so it always renders when state is present.  Bundled: `scripts/collect_v17_data.py`, `normalize_v17.py`, `train_v17_v2.py`, `train_v17_v3_prune.py`. |
+| `8dee00c` | UI | **Frontend polish: player name under hero icon**.  `web/public/app.js` renders the player nick as a 10px label under each hero portrait (in draft + live cards).  Cache-bust query `?v=0.4.0` added to `index.html` so the old `?v=0.3.25i` bundle doesn't shadow the new layout. |
+| `cd352fe` | Deploy | **Bind-mount `./business` into `dota-business` container**.  `docker-compose.yml` now has `volumes: - ./business:/app/business:rw - ./business:/usr/local/lib/python3.12/site-packages/business:rw - ./ml_data:/app/ml_data:rw`.  No more `docker build` after every business change — restart the container and it picks up the host's working tree. |
+| `bc792fb` | Reliability | **`force_reconnect()` in `dltv_socket.py` + gold overlay fix**.  After a `_BOARD_CACHE_TTL` (5 min) gap with 0 fresh payloads, call `force_reconnect()` (throttled 1/30 s) to drop the stale WS subscription and resubscribe to the new match set.  Also: gold overlay moved out of the gated if-block in `_live_card` (this fix was later lost in 634d064 — see "Known regressions" below). |
+| `722f660` | Dedup | **Postmatch dedup by team pair**.  When the same BO3 shows up via both v1 API (`/events/{id}/series`) and the scraper (`dltv.org/matches`), keep the one with the higher `score_a + score_b`; ties → more recent `ended_at`.  Eliminates the "two identical postmatch cards stacked" symptom. |
+| `634d064` | UI | **Drop series-level `prediction` from postmatch card**.  Per-map predictions are still rendered, but the per-series rollup at the top (often wrong because it averages the wrong games) is gone.  Cards now read "Map 1 ✓ / Map 2 ✗" instead of "Predicted 2-1 (lost 1-2)". |
+
+### 0.4.0.1 patches: created and rolled back
+
+After the polish shipped, three follow-up patches were authored to fix regressions noticed in the 12:42 state.  The user asked to roll them all back to keep HEAD at 12:42.  They are **not in the current tree** but are listed here for traceability.
+
+| Patch (commit) | What it fixed | Why rolled back |
+|----------------|---------------|------------------|
+| `v0.4.0.1-livecard` (`81238f6`) | **`UnboundLocalError: cannot access local variable 'cached_state'`** in `business/board.py:_live_card` line 939.  The `try` block at line 663-934 is gated on `m` having no picks; for v0.4.0 watchlist matches `m` already has picks, the try-block is skipped, and `if cached_state:` on line 939 reads an unbound name.  Fix: `cached_state: Dict[str, Any] = {}` before the gated if-block.  Same class of bug as the `_force_reconnect_flag` global in `dltv_socket.py` (fixed in `bc792fb`). | User asked to roll back to 12:42 state; the bug is back at `634d064`.  Fix kept on a personal branch in case the user wants to re-apply. |
+| `v0.4.0.1-socket-pong` (`921bb02`) | **EIO PING/PONG handling in `dltv_socket.py:_run_session`**.  `_parse_sio_event()` returns `None` for non-SIO messages; the EIO PING (`"2"`) was silently dropped.  After 2 missed pings (~25 s each), DLTV's server closes the WS.  Fix: explicit `if msg == "2": await ws.send("3"); continue` before the SIO parse.  Also added bind-mount for `./web/public` in `docker-compose.yml` so the new `app.js` would persist across web container recreates. | Same: user asked to roll back.  PONG response is back to missing; sessions die every 30-90 s.  The 5-min `_BOARD_CACHE_TTL` masks the gap. |
+| `v0.4.0.1-leagues` (`ade5fd1`) | **Live filter too strict + league picker empty race**.  Two issues: (1) `board.py:1302-1304` filters live cards by `int(ws_eid) in allowed_events`; steam-discovered matches have `ws_eid=None` and are dropped from the filtered board.  Fix: title-based fallback — if `ws_eid` is unknown, compare `ws_title` against `allowed_titles` built from `events.get(int(eid))`.  (2) `app.js:loadLeagues()` runs once on init; if `/api/leagues` returns 0 active (DLTV v1 join lag), `LEAGUES` is empty, auto-select condition fails, user is stuck with 0 selected + empty picker.  Fix: re-fire auto-select on every call, fallback to `is_active || match_count > 0`, immediate `refresh()` after auto-select. | Same: user asked to roll back.  Live column empties when strict filter is active; picker can deadlock. |
+
+### Known regressions at HEAD `634d064` (the 12:42 state)
+
+These are the regressions the user is choosing to live with for now (rolled-back patches above are the fixes):
+
+1. **Live cards disappear intermittently** — `_live_card` crashes with `UnboundLocalError` on the discovery path (`steam-...` matches from `dltv.org/matches`).  v1-API live cards still render.  Symptom: `WARNING business.board: skip discovery live steam-8919... (live): cannot access local variable 'cached_state'` in `docker logs dota-business`.
+2. **`dltv_socket` sessions die every 30-90 s** — server closes WS because we never reply to EIO PING.  The 5-min `_BOARD_CACHE_TTL` masks the gap (next build repopulates), but real-time updates are intermittent between sessions.
+3. **Live filter too strict** — when the user has ≥1 league selected, all steam-discovered live matches (no event_id) are dropped.  Workaround: clear the league filter.
+4. **League picker can deadlock** — if `/api/leagues` returns 0 active on init (DLTV v1 join lag), the picker stays empty.  Workaround: hard-refresh after a few seconds.
+5. **v17 ML models not loaded** — `V17_PREDICT=0` in `.env` (UnboundLocalError in the v17 import block at `board.py:30-33` otherwise), and the v17 model dirs were moved out of the bind-mount path to bypass the `FEATURE_GROUPS` mismatch (the v17 winner model was trained on `patch/r_tier/d_tier/r_team_id/d_team_id` which the 634d064 features don't include — those groups were added in `190f1e1` which is after 634d064).  Models preserved at `C:\tmp\v17-models-backup2\` for re-deployment once 0.4.0.x ships.
+6. **Web container serves image-built frontend** — `docker-compose.yml` at 634d064 has no bind-mount for `./web/public`; the image was built Jul 26 with the v0.3.25i `app.js` (simplified form, has TOWERS + Ultra Kill, no player names, no bans row).  Workaround: `docker cp web/public/{app.js,index.html,style.css} dota-web:/usr/share/nginx/html/` after every web change.
+
+### Container state at 12:42
+
+- `dota-business` — `Up (healthy)`.  Live cards via v1 API render; discovery live cards crash (regression #1).  Prematch list is currently 0 in the unfiltered view because `leagues_with_status()` returns 0 active (the `active_ids` set built from discovery has no matches with v1-known `event_id`); the user can pin leagues manually.
+- `dota-web` — `Up (unhealthy)` (the healthcheck pings `/api/board` through the gateway, which is healthy, but the web container's own healthcheck is failing — known, doesn't block UX).
+- `dota-gateway` — `Up (healthy)`.  nginx proxy fine.
+
+### Test count
+
+433/433 pass (unchanged from 0.4.0 — no public contract change in the polish sprint; the 0.4.0.1 patches were additive bug-fixes with no test changes either).
+
+### What 0.4.0.1 should be when we ship it
+
+The 3 rolled-back patches are a coherent 0.4.0.1 release.  To ship them:
+
+1. Re-apply the 3 commits in order (livecard → socket-pong → leagues).
+2. Add a `tests/test_livecard_unbound.py` regression test for the `cached_state` UnboundLocalError.
+3. Add a `tests/test_socket_pong.py` test that mocks a 25-s PING interval and asserts a PONG is sent.
+4. Add a `tests/test_leagues_picker.py` test for the empty-API race.
+5. Move v17 model dirs back into `ml_data/models/`, set `V17_PREDICT=1`, add the `FEATURE_GROUPS` for `patch/r_tier/d_tier/r_team_id/d_team_id` in `business/ml/features.py`, re-train on the 603-match corpus (the v17 feature schema is preserved in `ml_data/imports/v17_grid_v3.json`).
+6. Bump `version="0.4.0.1"` in `business/app.py`.
+7. Add the `./web/public` bind-mount to `docker-compose.yml` (was in the rolled-back `921bb02`).
+8. Re-run 433/433 tests, manual smoke on 1 live + 1 prematch + 1 postmatch, then push to remote.
+
+### Commits rolled back (preserved for reference)
+
+```
+81238f6 v0.4.0.1-livecard:   init cached_state before gated try-block
+921bb02 v0.4.0.1-socket-pong: EIO PING→PONG + web/public bind-mount
+ade5fd1 v0.4.0.1-leagues:    title-based live filter + picker re-fire
+```
+
+### Files touched in the polish sprint
+
+| Path | Why |
+|------|-----|
+| `business/dltv_socket.py` | bans extraction, fast_picks.player, force_reconnect, PING (later rolled back) |
+| `business/board.py` | `_live_card` gold overlay, postmatch dedup, drop series-level prediction |
+| `business/discovery.py` | bans cache lookup, persistent cache key |
+| `business/v17_predict.py` | opt-in predictor (see v0.4.0-v17 section) |
+| `web/public/app.js` | player-name label, cache-bust, league picker (later rolled back) |
+| `web/public/index.html` | `?v=0.4.0` cache-bust |
+| `docker-compose.yml` | `./business` bind-mount (cd352fe); later also `./web/public` (rolled back) |
+| `.env` | `V17_PREDICT=0` to bypass the v17 import-block UnboundLocalError |
+| `scripts/collect_v17_data.py` | OpenDota 7-phase pipeline |
+| `scripts/normalize_v17.py` | utf-8 read fix |
+| `scripts/train_v17_v2.py` | 21 features |
+| `scripts/train_v17_v3_prune.py` | threshold pruning |
+| `scripts/fix_v17_metadata.py` | backfill legacy fields into v17 metadata.json |
+
+---
+
 ## [0.4.0-v17] — 2026-07-28 — ML v17: pro-corpus trained models for kills / duration / first-15 / winner
 
 User request: walk the public Dota 2 stats sites (liquipedia, dotabuff, stratz, opendota, datdota), build a local knowledge base of pro matches/players/heroes/picks/meta/lanes/matchups for the **top-30 teams by OpenDota rating** over the **current and two previous patches**, then normalise (drop outliers), train 4 prediction models for **kills / duration / first-15 / winner**, with recency weights (recent matches weigh more) and team-tier weights (premium tier weighs more).  Then grid-research and prune to the significant features.

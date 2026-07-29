@@ -979,6 +979,148 @@ def _read_live_state_from_scoreboard(page) -> Dict[str, Any]:
                         name: p.title, slug: p.slug, image: p.image,
                     }));
                 }
+
+                // v0.4.0.1: enrich picks with the player nickname from
+                // the live scoreboard DOM.  The socket.io fast_picks
+                // payload only carries `player.title` DURING the draft
+                // (is_picks_ended = false); once the game starts, the
+                // live socket payload drops the player field.  DLTV's
+                // own UI, however, keeps the nickname rendered under
+                // each hero icon throughout the game, so we can pull
+                // it from the DOM.  We try a handful of common class
+                // names (DLTV has redesigned the scoreboard 3+ times
+                // since 0.3.23) and fall back gracefully — if no
+                // selector matches, `player_name` stays null and the
+                // UI renders the hero name as before.
+                const findPlayerNameFor = (pickIdx, side) => {
+                    // Pick card containers we know DLTV has used.
+                    // Order: newest selectors first.
+                    const cardSelectors = [
+                        // v0.3.25l: per-side pick cards
+                        `.team.${side} .pick`,
+                        `.team.${side} .pick-card`,
+                        `.team.${side} .picks__item`,
+                        `.team.${side} .hero-card`,
+                        `.team.${side === 'radiant' ? 'first' : 'second'} .pick`,
+                        // global: any pick
+                        `.pick:nth-of-type(${pickIdx + 1})`,
+                        `.pick-card:nth-of-type(${pickIdx + 1})`,
+                    ];
+                    for (const sel of cardSelectors) {
+                        const card = document.querySelector(sel);
+                        if (!card) continue;
+                        // Player name lives in a child element with one
+                        // of these classes.  Try a few shapes.
+                        const nameSelectors = [
+                            '.pick__player', '.player-name', '.player__name',
+                            '.nickname', '.name-player', '.player',
+                            'span.player', 'div.player',
+                        ];
+                        for (const ns of nameSelectors) {
+                            const el = card.querySelector(ns);
+                            if (el) {
+                                const t = (el.textContent || '').trim();
+                                if (t && t.length > 0 && t.length < 64) return t;
+                            }
+                        }
+                        // Fallback: `data-player` attribute on the card.
+                        const data = card.getAttribute('data-player')
+                                  || card.getAttribute('data-player-name');
+                        if (data) return data;
+                    }
+                    return null;
+                };
+                for (const side of ['radiant', 'dire']) {
+                    if (out.picks[side]) {
+                        out.picks[side] = out.picks[side].map((p, i) => ({
+                            ...p,
+                            player_name: findPlayerNameFor(i, side),
+                        }));
+                    }
+                }
+
+                // v0.4.0.1: destroyed-tower counts from the mini-map.
+                // DLTV renders the live map with tower icons; standing
+                // towers are full-color, destroyed ones are greyscale
+                // (or have a `.destroyed` / `.dead` / `.fallen` class).
+                // We count both, knowing each side has 11 towers in a
+                // standard map (3 tier-1 + 2 mid + 2 tier-2 + 2 tier-3
+                // + 4 barracks = 11) — `destroyed = 11 - standing`.
+                // We try several selector shapes because the mini-map
+                // CSS has changed across DLTV releases.
+                const minimapSelectors = [
+                    '.minimap', '.mini-map', '.map-container',
+                    '[class*="minimap"]', '[class*="mini_map"]',
+                    '.map', '.live-map',
+                ];
+                let minimap = null;
+                for (const sel of minimapSelectors) {
+                    const el = document.querySelector(sel);
+                    if (el) { minimap = el; break; }
+                }
+                if (minimap) {
+                    // Find all tower-like elements.  DLTV uses different
+                    // classes; try a few and union the results.
+                    const towerSel = [
+                        '[class*="tower"]', 'img[alt*="tower" i]',
+                        'svg.tower', '.tower', '.icon-tower',
+                    ].join(',');
+                    const towers = Array.from(minimap.querySelectorAll(towerSel));
+                    if (towers.length > 0) {
+                        // Standing tower heuristics:
+                        //   - opacity > 0.5 (full color vs greyscale)
+                        //   - or no `destroyed`/`dead`/`fallen` class
+                        //   - or `data-state` = standing
+                        const isStanding = (el) => {
+                            const cs = el.classList;
+                            if (cs.contains('destroyed') || cs.contains('dead')
+                                || cs.contains('fallen') || cs.contains('broken')) {
+                                return false;
+                            }
+                            const state = el.getAttribute('data-state');
+                            if (state && /destroy|dead|fallen|broken/i.test(state)) return false;
+                            const op = parseFloat(window.getComputedStyle(el).opacity || '1');
+                            if (!Number.isNaN(op) && op < 0.5) return false;
+                            return true;
+                        };
+                        // Split by side.  Without a clear "radiant"/"dire"
+                        // marker, we just sum standing vs total and let
+                        // the caller decide.  If side markers exist
+                        // (`.radiant .tower`, `.dire .tower`), use them.
+                        let radiantStanding = 0, direStanding = 0;
+                        let radiantTotal = 0, direTotal = 0;
+                        const rTowers = minimap.querySelectorAll('.radiant [class*="tower"], .first [class*="tower"]');
+                        const dTowers = minimap.querySelectorAll('.dire [class*="tower"], .second [class*="tower"]');
+                        if (rTowers.length > 0 || dTowers.length > 0) {
+                            for (const t of rTowers) {
+                                radiantTotal++;
+                                if (isStanding(t)) radiantStanding++;
+                            }
+                            for (const t of dTowers) {
+                                direTotal++;
+                                if (isStanding(t)) direStanding++;
+                            }
+                            out.destroyed_towers = {
+                                radiant_destroyed: radiantTotal - radiantStanding,
+                                dire_destroyed:    direTotal - direStanding,
+                                radiant_standing:  radiantStanding,
+                                dire_standing:     direStanding,
+                            };
+                        } else {
+                            // No side split available.  Sum across both
+                            // teams (each side has 11 towers → 22 total).
+                            let standing = 0, total = towers.length;
+                            for (const t of towers) {
+                                if (isStanding(t)) standing++;
+                            }
+                            out.destroyed_towers = {
+                                standing: standing,
+                                total: total,
+                                note: 'no side split; count is combined',
+                            };
+                        }
+                    }
+                }
                 return out;
             }"""
         )

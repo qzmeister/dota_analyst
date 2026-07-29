@@ -1,0 +1,59 @@
+{
+  "target": "kills_total",
+  "config": {
+    "name": "ridge_a10",
+    "model": "ridge",
+    "params": {
+      "alpha": 10.0
+    }
+  },
+  "n_matches": 603,
+  "n_features": 13,
+  "feature_columns": [
+    "r_tier",
+    "d_tier",
+    "d_hero_enc",
+    "r_dire_syn",
+    "r_picks",
+    "d_picks",
+    "r_top_team",
+    "d_top_team",
+    "r_ban_enc",
+    "r_team_syn",
+    "d_team_syn",
+    "days_since_patch",
+    "n_top_players"
+  ],
+  "metrics_honest": {
+    "mae": 11.801145699590071,
+    "rmse": 15.263264775359755
+  },
+  "trained_at": 1785273420,
+  "trainer_version": "v3-prune",
+  "name": "kills",
+  "version": "17",
+  "sklearn_version": "1.9.0",
+  "numpy_version": "2.5.1",
+  "python_version": "3.14.3",
+  "feature_names": [
+    "r_tier",
+    "d_tier",
+    "d_hero_enc",
+    "r_dire_syn",
+    "r_picks",
+    "d_picks",
+    "r_top_team",
+    "d_top_team",
+    "r_ban_enc",
+    "r_team_syn",
+    "d_team_syn",
+    "days_since_patch",
+    "n_top_players"
+  ],
+  "metrics": {
+    "mae": 11.801145699590071,
+    "rmse": 15.263264775359755
+  },
+  "train_data": {},
+  "encoder": {}
+}

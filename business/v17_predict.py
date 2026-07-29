@@ -52,7 +52,11 @@ class MLError(Exception):
 
 
 def _model_path(target: str) -> Path:
-    return MODELS_DIR / f"{target}_v17"
+    # v17 models live under `_v17_<target>/` (underscore prefix) so the
+    # legacy `ModelStorage` scan in `business/ml/storage.py` doesn't
+    # pick them up — the legacy `FEATURE_GROUPS` schema doesn't match
+    # v17's 21-feature schema and would raise RuntimeError.
+    return MODELS_DIR / f"_v17_{target}"
 
 
 def _load_model(target: str) -> Tuple[Any, Dict[str, Any]]:

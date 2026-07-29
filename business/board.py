@@ -413,13 +413,24 @@ def _postmatch_prediction(series: Dict, is_watchlist: bool = False) -> Optional[
         # to render a card without predictions or skip the series.
         return None
     winner_info = pred.get("winner") or {}
+    # v17_predict returns kills as a flat float; legacy engine used
+    # a nested dict {"total": N}.  Support both shapes.
+    kills_v = pred.get("kills")
+    if isinstance(kills_v, dict):
+        kills_total = kills_v.get("total")
+    else:
+        kills_total = kills_v
+    # v17_predict returns duration in seconds; legacy used "duration_min".
+    dur_v = pred.get("duration_sec")
+    if dur_v is None:
+        dur_v = pred.get("duration_min")
     return {
-        "winner_team": winner_info.get("team"),
-        "winner_probability": winner_info.get("probability"),
-        "prob_radiant": winner_info.get("prob_radiant"),
+        "winner_team": winner_info.get("team") if isinstance(winner_info, dict) else None,
+        "winner_probability": winner_info.get("probability") if isinstance(winner_info, dict) else None,
+        "prob_radiant": winner_info.get("prob_radiant") if isinstance(winner_info, dict) else None,
         "confidence": pred.get("confidence"),
-        "kills_total": (pred.get("kills") or {}).get("total"),
-        "duration_min": pred.get("duration_min"),
+        "kills_total": kills_total,
+        "duration_min": dur_v,
     }
 
 

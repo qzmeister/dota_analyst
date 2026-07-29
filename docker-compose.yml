@@ -89,6 +89,10 @@ services:
       # v0.3.15+: scraper is on by default.  Set to 0 in low-bandwidth
       # environments where dltv.org shouldn't be polled.
       - DLTV_SCRAPER_ENABLED=${DLTV_SCRAPER_ENABLED:-1}
+      # v0.4.0-v17: opt-in v17 trained models (4 production models on
+      # 603-match OpenDota pro corpus).  "1" routes _postmatch_prediction
+      # through business/v17_predict.py instead of the legacy ml.engine.
+      - V17_PREDICT=${V17_PREDICT:-0}
     networks:
       - backend
       - external

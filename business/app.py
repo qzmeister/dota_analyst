@@ -215,6 +215,16 @@ async def _lifespan(app: FastAPI):
     dltv_socket.start_socket_client()
     log.info("dltv socket client started (background thread)")
 
+    # 6. v0.4.0.3: OpenDota `/api/live` poller.  Third live-state
+    #    source, alongside the DLTV socket and the dltv_browser
+    #    cache.  OpenDota is the only source that works for
+    #    Steam-only minor/pro matches (DLTV doesn't know them;
+    #    dltv_browser is Cloudflare-blocked).  Background thread,
+    #    5s polling, no auth.
+    from . import opendota_live
+    opendota_live.start_poller()
+    log.info("opendota_live poller started (background thread)")
+
     try:
         yield
     finally:
@@ -227,7 +237,12 @@ async def _lifespan(app: FastAPI):
             except asyncio.CancelledError:
                 pass
         dltv_socket.stop_socket_client(timeout=3.0)
-        log.info("sse publisher + accuracy scorer + player_wr browser + dltv socket stopped")
+        try:
+            from . import opendota_live
+            opendota_live.stop_poller(timeout=3.0)
+        except Exception:
+            pass
+        log.info("sse publisher + accuracy scorer + player_wr browser + dltv socket + opendota_live stopped")
 
 
 app = FastAPI(title="Dota Analyst — business", version="0.4.0", lifespan=_lifespan)

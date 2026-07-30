@@ -27,18 +27,31 @@ async function loadLeagues() {
     // picker listed every DatDota league (60+), most of them empty
     // for our use case, which just made the dropdown noisy.
     // match_count is the "would appear in /api/board right now" count.
-    // v0.4.0.1: fallback to `is_active` when the strict `match_count>0`
-    // filter would have dropped every league.  The `/api/leagues` v1
-    // join can lag for a few seconds after the page loads, which used
-    // to leave the user with an empty picker and a 0/0/0 board —
-    // looks broken, makes them reload.  `is_active` is the DLTV's
-    // own "this league is currently running" flag and is on the
-    // `events` row, so it doesn't depend on the v1 series join.
+    //
+    // v0.4.0.2: include any league that is `is_active` on DLTV, even
+    // if our internal `_latest_auto_board.match_count` is still 0.
+    // The user-reported symptom: "1win has live matches right now but
+    // it's missing from the picker".  Cause: the SSE publisher hasn't
+    // finished its first build yet (DLTV v1 events call is slow,
+    // 17-36s), so `_latest_auto_board` is empty and `match_count` is
+    // 0 for every league — even though DLTV's own `is_active` flag
+    // already says "1win Essence 2 is currently running".  The
+    // previous code's `match_count>0` strict filter dropped 1win from
+    // the picker for the first 20-30s of every page load, then the
+    // `is_active` fallback *should* have re-added it but only fires
+    // when strictActive is empty (and 1win eventually appears there
+    // as soon as one match lands in the auto-board).  Effectively
+    // 1win flickers in and out of the picker for the first minute.
+    //
+    // Fix: trust DLTV's `is_active` as the primary signal and ALSO
+    // keep any league that has at least one card in our auto-board
+    // (so a postmatch league with is_active=false still appears).
+    // This matches the user-stated rule: "hide only leagues that
+    // have no scheduled DLTV matches — the rest belong in the list".
     const allLeagues = d.leagues || [];
-    const strictActive = allLeagues.filter((l) => (l.match_count || 0) > 0);
-    LEAGUES = strictActive.length > 0
-      ? strictActive
-      : allLeagues.filter((l) => l.is_active || (l.match_count || 0) > 0);
+    LEAGUES = allLeagues.filter(
+      (l) => l.is_active || (l.match_count || 0) > 0
+    );
     // v0.3.21: first-load UX.  An empty SELECTED set used to leave
     // the user staring at an empty board even though every league
     // has cards.  Auto-pick everything so the first /api/board

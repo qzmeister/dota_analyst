@@ -832,21 +832,26 @@ class _DiscoveryTracker:
                     if not prev.get("start_time") and s.get("started_at"):
                         prev["start_time"] = s.get("started_at")
 
-        # Subscribe + force-reconnect OUTSIDE the lock.  The
-        # dltv_socket server doesn't accept mid-session SUBSCRIBE
-        # packets (it closes the connection a few minutes later);
-        # the only reliable way to pick up new live matches is to
-        # drop the WS and re-open with the fresh subscription set.
-        # `force_reconnect()` is throttled to once per 30s so a
-        # chatty publisher can't pin us in reconnect loops.
+        # Subscribe OUTSIDE the lock.  We do NOT call
+        # `force_reconnect()` here — the publisher's build loop
+        # (stream.py:_build_loop) compares prev/new subscription
+        # sets and triggers the reconnect itself on the *next*
+        # build.  Triggering the reconnect twice in quick
+        # succession (here + in the publisher) hits a race: the
+        # socket reconnects with the freshly-added IDs, but
+        # before the publisher has a chance to add the rest of
+        # the live set, so the WS opens with "subscribing to 0
+        # channels" for a few seconds.  The publisher's own
+        # force_reconnect (next build, ~5s later) is the right
+        # place to drop+reconnect because by then the full set
+        # is in place.
         if new_subs:
             try:
                 from . import dltv_socket as _ds
                 for sid in new_subs:
                     _ds.subscribe(int(sid))
-                _ds.force_reconnect()
             except Exception as exc:
-                log.debug("dltv_socket subscribe/reconnect failed: %s", exc)
+                log.debug("dltv_socket subscribe failed: %s", exc)
 
     # ---- probing /live/{id}.json for upcoming matches ---- #
 

@@ -118,6 +118,16 @@ _lock = threading.RLock()
 _loop_thread: Optional[threading.Thread] = None
 _loop_started = threading.Event()
 _loop_should_stop = threading.Event()
+# v0.4.0.3: backoff after HTTP 429.  OpenDota's anonymous
+# rate limit is per-IP and tighter than the documented 60/min
+# in practice (we hit 429 with a steady 6 req/min poll + 30
+# player fetches per cycle).  When we get a 429 we stop
+# polling for BACKOFF_BASE_SEC and double the backoff on
+# each subsequent 429, capping at BACKOFF_MAX_SEC.
+_backoff_sec: float = 0.0
+_BACKOFF_BASE_SEC = 60.0
+_BACKOFF_MAX_SEC = 600.0
+_lock_backoff = threading.Lock()
 
 
 def _now() -> float:
@@ -250,7 +260,13 @@ def _normalize_match(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def fetch_live() -> List[Dict[str, Any]]:
-    """GET /api/live and return a list of normalised live matches."""
+    """GET /api/live and return a list of normalised live matches.
+
+    v0.4.0.3: detects HTTP 429 and increments a backoff so the
+    poller doesn't keep hammering OpenDota while we're being
+    rate-limited.  Successful fetches clear the backoff.
+    """
+    global _backoff_sec
     req = urllib.request.Request(
         OPENDOTA_LIVE_URL,
         headers={"User-Agent": "dota-analyst/0.4 (research; contact via GitHub)"},
@@ -258,16 +274,35 @@ def fetch_live() -> List[Dict[str, Any]]:
     try:
         with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as r:
             data = json.loads(r.read())
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            with _lock_backoff:
+                _backoff_sec = min(_backoff_sec * 2 if _backoff_sec else _BACKOFF_BASE_SEC,
+                                   _BACKOFF_MAX_SEC)
+            log.warning(
+                "opendota_live: /api/live -> 429, backing off %.0fs",
+                _backoff_sec,
+            )
+            return []
+        log.warning("opendota_live: /api/live fetch failed: %s", exc)
+        return []
     except (OSError, UpstreamError) as exc:
-        log.debug("opendota_live: /api/live fetch failed: %s", exc)
+        log.warning("opendota_live: /api/live fetch failed: %s", exc)
         return []
     if not isinstance(data, list):
+        log.warning("opendota_live: /api/live returned non-list payload: %r", type(data).__name__)
         return []
+    # Successful fetch — clear any backoff.
+    if _backoff_sec:
+        with _lock_backoff:
+            log.info("opendota_live: /api/live recovered from 429, clearing backoff")
+            _backoff_sec = 0.0
     out: List[Dict[str, Any]] = []
     for raw in data:
         norm = _normalize_match(raw)
         if norm is not None:
             out.append(norm)
+    log.info("opendota_live: /api/live -> %d live matches", len(out))
     return out
 
 
@@ -298,7 +333,24 @@ def fetch_player_info(account_id: int) -> Optional[Dict[str, str]]:
 def _ingest_live(rows: List[Dict[str, Any]]) -> Set[int]:
     """Replace `_state` with the latest snapshot, returning the
     set of match_ids we just refreshed.
+
+    v0.4.0.3: critical race fix.  When `fetch_live` returns an
+    empty list (e.g. OpenDota rate-limited us with HTTP 429),
+    the previous code did `_state.clear(); _state.update({})`
+    which dropped the entire 100-match snapshot we had
+    accumulated in the last 10 seconds.  The poller would
+    then keep retrying every 10s and the state would oscillate
+    between "full" (after a successful poll) and "empty" (after
+    a 429), giving the board ~50% MISS rate on every match.
+
+    We now treat an empty `rows` as a transient failure: keep
+    the prior state in place.  The TTL layer (LIVE_TTL_SEC)
+    still expires stale entries naturally, so matches that
+    genuinely ended will fall out of the cache within 15s of
+    a successful poll confirming the drop.
     """
+    if not rows:
+        return set()
     seen: Set[int] = set()
     new_state: Dict[int, Dict[str, Any]] = {}
     for row in rows:
@@ -404,16 +456,25 @@ def _poll_once() -> Set[int]:
 
 
 def _poller_loop() -> None:
-    """Background poller: runs until `_loop_should_stop` is set."""
+    """Background poller: runs until `_loop_should_stop` is set.
+
+    v0.4.0.3: when `_backoff_sec > 0` (we hit 429), we wait
+    that long before the next poll instead of the regular
+    `POLL_INTERVAL_SEC`.  A successful `_poll_once` clears
+    the backoff via the success path in `fetch_live`.
+    """
     log.info("opendota_live: poller started, interval=%.1fs", POLL_INTERVAL_SEC)
     while not _loop_should_stop.is_set():
         try:
             _poll_once()
         except Exception as exc:  # noqa: BLE001
             log.warning("opendota_live: poll cycle failed: %s", exc, exc_info=False)
-        # Sleep with cancellable semantics.
+        # Sleep with cancellable semantics.  Length depends on
+        # whether we're in 429 backoff or not.
+        with _lock_backoff:
+            sleep_for = _backoff_sec if _backoff_sec > 0 else POLL_INTERVAL_SEC
         slept = 0.0
-        while slept < POLL_INTERVAL_SEC and not _loop_should_stop.is_set():
+        while slept < sleep_for and not _loop_should_stop.is_set():
             time.sleep(0.5)
             slept += 0.5
     log.info("opendota_live: poller stopped")

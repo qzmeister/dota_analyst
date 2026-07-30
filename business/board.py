@@ -987,146 +987,6 @@ def _live_card(series: Dict, event_title: str) -> Dict:
                             }
                         m["radiant_bans"] = [_entry(c, i) for i, c in enumerate(r_ban_cards)]
                         m["dire_bans"]    = [_entry(c, i) for i, c in enumerate(d_ban_cards)]
-
-            # v0.4.0.3: OpenDota `/api/live` is the third live-state
-            # source, sitting between the DLTV socket (best for
-            # DLTV-visible matches) and the dltv_browser cache (best
-            # for picks, but Cloudflare-blocked on match pages).
-            # OpenDota is public, no auth, no Cloudflare — works for
-            # the Steam-only minor/pro matches that are most of the
-            # live pool we actually have.
-            opendota_state = None
-            try:
-                from . import opendota_live as _od
-                if steam_id_for_lookup is not None:
-                    opendota_state = _od.get_live_state(int(steam_id_for_lookup))
-            except Exception:
-                opendota_state = None
-            if opendota_state is not None:
-                # Score / game time: OpenDota is the canonical
-                # source — DLTV's `radiant_score` is integer kills
-                # and OpenDota's is too.  We only fill the gap
-                # when the socket didn't already have a value
-                # (OpenDota polling is 5s, the socket is real-time
-                # for DLTV-visible matches).
-                if m.get("radiant_score") is None:
-                    rs_od = _coerce_int(opendota_state.get("radiant_score"))
-                    if rs_od is not None:
-                        m["radiant_score"] = rs_od
-                if m.get("dire_score") is None:
-                    ds_od = _coerce_int(opendota_state.get("dire_score"))
-                    if ds_od is not None:
-                        m["dire_score"] = ds_od
-                if m.get("game_time") is None:
-                    gt_od = _coerce_int(opendota_state.get("game_time"))
-                    if gt_od is not None:
-                        m["game_time"] = gt_od
-                # v0.4.0.3: gold lead (signed int).  OpenDota's
-                # `radiant_lead` is a server-computed difference
-                # (rounded to whatever GC sends), while DLTV's
-                # `radiant_match_nw`/`dire_match_nw` are raw
-                # team networths.  We don't have the raws from
-                # OpenDota, so the only gold-side value we can
-                # overlay is the lead itself.  We DO NOT clobber
-                # a value the socket already gave us — if the
-                # socket is alive it has the better number.
-                if m.get("gold_lead_radiant") is None:
-                    rl_od = _coerce_int(opendota_state.get("radiant_lead"))
-                    if rl_od is not None:
-                        m["gold_lead_radiant"] = rl_od
-                # v0.4.0.3: destroyed-tower counts.  DLTV's
-                # socket doesn't ship this; the only DLTV source
-                # is the dltv_browser mini-map scrape, which is
-                # Cloudflare-blocked.  OpenDota's `building_state`
-                # is a bitmask — we parsed it into
-                # `{radiant, dire}` in `opendota_live._normalize_match`.
-                # Only set when the local value is missing, to
-                # not clobber a higher-quality Playwright scrape.
-                if not m.get("destroyed_towers"):
-                    dt_od = opendota_state.get("destroyed_towers")
-                    if isinstance(dt_od, dict) and dt_od:
-                        m["destroyed_towers"] = dt_od
-                # v0.4.0.3: player nicknames.  OpenDota gives us
-                # `account_id` per (team, hero).  We look each
-                # one up in the player_info cache (populated by
-                # the opendota_live poller).  This is the
-                # primary `player_name` source for Steam-only
-                # matches; the DLTV DOM-extractor is the primary
-                # source for DLTV-visible matches, but it
-                # frequently misses the player slug/country
-                # (the .map__finished-v2__pick path is best-effort).
-                # The overlay only fills fields that are
-                # currently None — never clobbers a value the
-                # higher-priority source gave us.
-                try:
-                    od_players = opendota_state.get("players") or []
-                    if od_players:
-                        _od_live = _od  # keep reference
-                        # Build a quick lookup: (team, hero_id) -> player info
-                        # We tolerate multiple players on the same hero
-                        # (rare) by taking the first match.
-                        od_lookup: Dict[Tuple[int, int], Dict[str, str]] = {}
-                        for op in od_players:
-                            try:
-                                aid = int(op.get("account_id"))
-                                hid = int(op.get("hero_id"))
-                                team = int(op.get("team", 0))
-                            except (TypeError, ValueError):
-                                continue
-                            info = _od_live.get_player_info(aid)
-                            if info is None:
-                                continue
-                            key = (team, hid)
-                            if key not in od_lookup:
-                                od_lookup[key] = info
-                        if od_lookup:
-                            def _overlay_player(pick: Dict) -> None:
-                                # Picks use `_steam_id` (the hero's
-                                # steam id) or `hero_id` (the dltv
-                                # id).  For overlay we use
-                                # `_steam_id` because OpenDota
-                                # returns hero steam ids, not dltv.
-                                # When `_steam_id` is missing we
-                                # fall back to `hero_id` and look
-                                # it up via the heroes index.
-                                try:
-                                    sid = int(pick.get("_steam_id") or 0)
-                                except (TypeError, ValueError):
-                                    sid = 0
-                                if not sid:
-                                    return
-                                # team 0 = radiant, 1 = dire in
-                                # our overlay; OpenDota uses the
-                                # same encoding.
-                                # The pick's `order` field gives
-                                # us its position, but we don't
-                                # have a direct team marker on the
-                                # pick dict here — caller passed it
-                                # in.  We default to "unknown"
-                                # and let the loop above assign
-                                # teams via the (radiant_picks,
-                                # dire_picks) split.
-                                return
-                            # Per-pick overlay: we know whether
-                            # we're iterating radiant or dire from
-                            # the call site; do it inline below.
-                            for side_key, team in (("radiant_picks", 0), ("dire_picks", 1)):
-                                for pick in (m.get(side_key) or []):
-                                    try:
-                                        sid = int(pick.get("_steam_id") or 0)
-                                    except (TypeError, ValueError):
-                                        sid = 0
-                                    if not sid:
-                                        continue
-                                    info = od_lookup.get((team, sid))
-                                    if not info:
-                                        continue
-                                    if not pick.get("player_name") and info.get("personaname"):
-                                        pick["player_name"] = info["personaname"]
-                                    if not pick.get("player_country") and info.get("loccountrycode"):
-                                        pick["player_country"] = info["loccountrycode"].upper()
-                except Exception as exc:  # noqa: BLE001
-                    log.debug("opendota player_name overlay failed: %s", exc)
             else:
                 # No socket data — fall back to the dltv_browser
                 # cache (with the v0.3.25l-bugfix trust rules).
@@ -1203,6 +1063,126 @@ def _live_card(series: Dict, event_title: str) -> Dict:
         dt = cached_state.get("destroyed_towers")
         if isinstance(dt, dict) and dt:
             m["destroyed_towers"] = dt
+
+    # v0.4.0.3: OpenDota `/api/live` is the third live-state
+    # source, sitting between the DLTV socket (best for
+    # DLTV-visible matches) and the dltv_browser cache (best
+    # for picks, but Cloudflare-blocked on match pages).
+    # OpenDota is public, no auth, no Cloudflare — works for
+    # the Steam-only minor/pro matches that are most of the
+    # live pool we actually have.
+    #
+    # v0.4.0.3: this overlay lives OUTSIDE both the inner
+    # `if series_id is not None and not (...picks...)` block
+    # and the `if socket_state is not None` block, so it runs
+    # for every live match regardless of where the picks came
+    # from.  Previous version was nested inside the picks
+    # block, which meant cards whose picks came from the
+    # socket-state overlay never got gold_lead, destroyed_towers
+    # or player_name from OpenDota — exactly the regression
+    # the user reported.
+    opendota_state = None
+    try:
+        from . import opendota_live as _od
+        if steam_id_for_lookup is not None:
+            opendota_state = _od.get_live_state(int(steam_id_for_lookup))
+    except Exception:
+        opendota_state = None
+    if opendota_state is not None:
+        # Score / game time: fill the gap when no other source
+        # gave us a value.  OpenDota's polling is 10s, so its
+        # score is a touch stale compared to the DLTV socket,
+        # but for Steam-only matches it's the only source.
+        if m.get("radiant_score") is None:
+            rs_od = _coerce_int(opendota_state.get("radiant_score"))
+            if rs_od is not None:
+                m["radiant_score"] = rs_od
+        if m.get("dire_score") is None:
+            ds_od = _coerce_int(opendota_state.get("dire_score"))
+            if ds_od is not None:
+                m["dire_score"] = ds_od
+        if m.get("game_time") is None:
+            gt_od = _coerce_int(opendota_state.get("game_time"))
+            if gt_od is not None:
+                m["game_time"] = gt_od
+        # v0.4.0.3: gold lead (signed int).  OpenDota's
+        # `radiant_lead` is a server-computed difference
+        # (rounded to whatever GC sends), while DLTV's
+        # `radiant_match_nw`/`dire_match_nw` are raw team
+        # networths.  We don't have the raws from OpenDota, so
+        # the only gold-side value we can overlay is the lead
+        # itself.  We DO NOT clobber a value the socket already
+        # gave us — if the socket is alive it has the better
+        # number.
+        if m.get("gold_lead_radiant") is None:
+            rl_od = _coerce_int(opendota_state.get("radiant_lead"))
+            if rl_od is not None:
+                m["gold_lead_radiant"] = rl_od
+        # v0.4.0.3: destroyed-tower counts.  DLTV's socket
+        # doesn't ship this; the only DLTV source is the
+        # dltv_browser mini-map scrape, which is
+        # Cloudflare-blocked.  OpenDota's `building_state` is
+        # a bitmask — we parsed it into `{radiant, dire}` in
+        # `opendota_live._normalize_match`.  Only set when the
+        # local value is missing, to not clobber a
+        # higher-quality Playwright scrape.
+        if not m.get("destroyed_towers"):
+            dt_od = opendota_state.get("destroyed_towers")
+            if isinstance(dt_od, dict) and dt_od:
+                m["destroyed_towers"] = dt_od
+        # v0.4.0.3: player nicknames.  OpenDota gives us
+        # `account_id` per (team, hero).  We look each one up
+        # in the player_info cache (populated by the
+        # opendota_live poller).  This is the primary
+        # `player_name` source for Steam-only matches; the
+        # DLTV DOM-extractor is the primary source for
+        # DLTV-visible matches, but it frequently misses the
+        # player slug/country.  The overlay only fills fields
+        # that are currently None — never clobbers a value the
+        # higher-priority source gave us.
+        try:
+            od_players = opendota_state.get("players") or []
+            if od_players:
+                from . import opendota_live as _od_live
+                # Build a quick lookup: (team, hero_id) -> player info
+                # We tolerate multiple players on the same hero
+                # (rare) by taking the first match.
+                od_lookup: Dict[Tuple[int, int], Dict[str, str]] = {}
+                for op in od_players:
+                    try:
+                        aid = int(op.get("account_id"))
+                        hid = int(op.get("hero_id"))
+                        team = int(op.get("team", 0))
+                    except (TypeError, ValueError):
+                        continue
+                    info = _od_live.get_player_info(aid)
+                    if info is None:
+                        continue
+                    key = (team, hid)
+                    if key not in od_lookup:
+                        od_lookup[key] = info
+                if od_lookup:
+                    # Per-pick overlay: we know which side the
+                    # pick is on by the dict key (radiant_picks
+                    # or dire_picks) — OpenDota's `team` field
+                    # uses the same 0/1 encoding.
+                    for side_key, team in (("radiant_picks", 0), ("dire_picks", 1)):
+                        for pick in (m.get(side_key) or []):
+                            try:
+                                sid = int(pick.get("_steam_id") or 0)
+                            except (TypeError, ValueError):
+                                sid = 0
+                            if not sid:
+                                continue
+                            info = od_lookup.get((team, sid))
+                            if not info:
+                                continue
+                            if not pick.get("player_name") and info.get("personaname"):
+                                pick["player_name"] = info["personaname"]
+                            if not pick.get("player_country") and info.get("loccountrycode"):
+                                pick["player_country"] = info["loccountrycode"].upper()
+        except Exception as exc:  # noqa: BLE001
+            log.debug("opendota player_name overlay failed: %s", exc)
 
     # figure out which side each team is on this map
     radiant_is_first = m.get("radiant_team_id") == first_id

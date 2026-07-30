@@ -257,6 +257,147 @@ class TestParseTeamPair:
 
 
 # ========================================================================== #
+# v0.4.0.3: fetch_steam_live() filters Steam-only minor leagues
+#
+# Steam API's GetLiveLeagueGames returns every match in the pro
+# tier, but for minor third-party events the team_name fields
+# are empty ("TBD vs TBD").  We drop them at the source so the
+# rest of the pipeline (tracker merge, live enrichment, board
+# build, socket subscription, picker UI) doesn't spend any
+# resources on them.
+# ========================================================================== #
+
+class TestFetchSteamLiveFilter:
+    """Pin the v0.4.0.3 minor-league drop in `fetch_steam_live`.
+
+    Steam API's `GetLiveLeagueGames` does NOT return `"TBD"` for
+    minor leagues — it returns a team dict with `team_name: None`
+    or no `team_name` key at all (verified 2026-07-30 against
+    the real API).  We drop them by checking truthiness of the
+    name, so any falsy value (None, "", missing) is filtered.
+    """
+
+    def _patch_steam(self, monkeypatch, games):
+        """Stub the HTTP layer so we can drive fetch_steam_live
+        with a synthetic `result.games` payload."""
+        from business import discovery
+        monkeypatch.setattr(
+            discovery, "STEAM_API_KEY", "fakekey1234567890abcdef",
+        )
+        monkeypatch.setattr(
+            discovery, "_http_json",
+            lambda *a, **kw: {"result": {"games": games}},
+        )
+
+    def test_keeps_match_with_both_team_names(self, monkeypatch):
+        from business import discovery
+        self._patch_steam(monkeypatch, [
+            {
+                "match_id": "100", "league_id": 9999,
+                "radiant_team": {"team_name": "ProTeam A"},
+                "dire_team": {"team_name": "ProTeam B"},
+                "scoreboard": {"radiant": {"score": 5}, "dire": {"score": 3}},
+                "radiant_series_wins": 1, "dire_series_wins": 0,
+            },
+        ])
+        out = discovery.fetch_steam_live()
+        assert len(out) == 1
+        assert out[0]["team_a"]["name"] == "ProTeam A"
+        assert out[0]["team_b"]["name"] == "ProTeam B"
+
+    def test_drops_match_with_both_team_names_none(self, monkeypatch):
+        # Real Steam API shape for minor leagues: team_name is
+        # present in the dict but is None.
+        from business import discovery
+        self._patch_steam(monkeypatch, [
+            {
+                "match_id": "200", "league_id": 17599,
+                "radiant_team": {"team_name": None},
+                "dire_team": {"team_name": None},
+                "scoreboard": {"radiant": {"score": 0}, "dire": {"score": 0}},
+            },
+        ])
+        out = discovery.fetch_steam_live()
+        assert out == []
+
+    def test_drops_match_with_radiant_none(self, monkeypatch):
+        from business import discovery
+        self._patch_steam(monkeypatch, [
+            {
+                "match_id": "300", "league_id": 19886,
+                "radiant_team": {"team_name": None},
+                "dire_team": {"team_name": "Pro Team"},
+            },
+        ])
+        out = discovery.fetch_steam_live()
+        # Single-sided None is also dropped.
+        assert out == []
+
+    def test_drops_match_with_dire_none(self, monkeypatch):
+        from business import discovery
+        self._patch_steam(monkeypatch, [
+            {
+                "match_id": "400", "league_id": 19886,
+                "radiant_team": {"team_name": "Pro Team"},
+                "dire_team": {"team_name": None},
+            },
+        ])
+        out = discovery.fetch_steam_live()
+        assert out == []
+
+    def test_drops_match_with_empty_team_name(self, monkeypatch):
+        from business import discovery
+        self._patch_steam(monkeypatch, [
+            {
+                "match_id": "500", "league_id": 1234,
+                "radiant_team": {"team_name": ""},
+                "dire_team": {"team_name": "Pro Team"},
+            },
+        ])
+        out = discovery.fetch_steam_live()
+        assert out == []
+
+    def test_drops_match_with_missing_team_dict(self, monkeypatch):
+        # Some Steam payloads don't have team dicts at all.
+        from business import discovery
+        self._patch_steam(monkeypatch, [
+            {
+                "match_id": "600", "league_id": 1234,
+                # No radiant_team / dire_team keys.
+            },
+        ])
+        out = discovery.fetch_steam_live()
+        assert out == []
+
+    def test_keeps_mixed_pool_dropping_only_minors(self, monkeypatch):
+        from business import discovery
+        self._patch_steam(monkeypatch, [
+            {"match_id": "1", "league_id": 9999,
+             "radiant_team": {"team_name": "Pro A"},
+             "dire_team": {"team_name": "Pro B"}},
+            {"match_id": "2", "league_id": 17599,
+             "radiant_team": {"team_name": None},
+             "dire_team": {"team_name": None}},
+            {"match_id": "3", "league_id": 18869,
+             "radiant_team": {"team_name": None},
+             "dire_team": {"team_name": "00的五个大猛1"}},
+            {"match_id": "4", "league_id": 19944,
+             "radiant_team": {"team_name": "Zero Tenacity"},
+             "dire_team": {"team_name": "Level Up esports"}},
+        ])
+        out = discovery.fetch_steam_live()
+        ids = sorted(int(g["steam_id"]) for g in out)
+        assert ids == [1, 4]
+
+    def test_no_key_returns_empty(self, monkeypatch):
+        from business import discovery
+        monkeypatch.setattr(discovery, "STEAM_API_KEY", "")
+        # Even if the HTTP stub would return data, no key means no call.
+        out = discovery.fetch_steam_live()
+        assert out == []
+
+
+# ========================================================================== #
 # _extract_event_slug (by direct card head)
 # ========================================================================== #
 

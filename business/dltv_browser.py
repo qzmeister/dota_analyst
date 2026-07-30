@@ -120,6 +120,18 @@ MATCH_STATE_TTL_SEC = 3600.0   # v0.3.24h: bumped from 8s to 1h.
                                 # (~10KB per entry) so unbounded
                                 # growth is not a concern.
 
+# v0.4.0.3: separate TTL for the *failure marker* that
+# `update_match_state_cache` writes when a fetch errors out
+# (Cloudflare block, goto timeout, etc.).  The previous code
+# reused `MATCH_STATE_TTL_SEC` for the failure marker too, so
+# a single failed fetch would lock the match's overlay to an
+# empty `{}` for an entire hour — long enough that the
+# publisher could miss the next reconnect and the user would
+# see the live card go blank every time the socket hiccupped.
+# 60s is enough to absorb one bad tick; the next publisher
+# cycle retries the fetch.
+MATCH_STATE_FAILURE_TTL_SEC = 60.0
+
 
 # Lazy playwright import.  We don't want a hard dependency at
 # business.app import time — only when /api/board or the publisher
@@ -1660,7 +1672,18 @@ def _state_from_initial(obj: Any, depth: int = 0) -> Dict[str, Any]:
 
 
 def get_cached_match_state(series_id: int) -> Optional[Dict[str, Any]]:
-    """Return the cached live match state, or None if missing/stale/empty."""
+    """Return the cached live match state, or None if missing/stale/empty.
+
+    v0.4.0.3: a failed Playwright fetch used to leave
+    `match_state: {}` in the cache, and we returned that
+    empty dict — which the caller treated as "real, just
+    empty data", so the live card went blank.  Now we return
+    None in that case (the `error` marker is the source of
+    truth: presence of error + empty match_state means "tried
+    and failed" → no useful data, treat as cache miss).
+    Real match_state dicts (with at least one key) are still
+    returned as before.
+    """
     cache = _read_cache()
     entry = cache.get(_cache_key(series_id))
     if not entry:
@@ -1669,6 +1692,23 @@ def get_cached_match_state(series_id: int) -> Optional[Dict[str, Any]]:
         return None
     state = entry.get("match_state")
     if not isinstance(state, dict):
+        return None
+    # v0.4.0.3: treat empty `{}` as cache miss.  The previous
+    # behaviour was to return it, which forced every caller to
+    # handle the "is this a real empty state or a fetch failure"
+    # ambiguity.  Returning None unifies the contract: None ==
+    # "no usable data" regardless of cause.
+    if not state:
+        # Distinguish "tried recently and failed" from "we
+        # never fetched this match" using the failure TTL.
+        # If the failure marker is older than 60s the publisher
+        # is presumably about to retry; until then we still
+        # return None so the caller falls back to socket state.
+        error_ts = float(entry.get("error_ts") or 0)
+        if error_ts and (time.time() - error_ts) <= MATCH_STATE_FAILURE_TTL_SEC:
+            # Recent failure — let the publisher retry; the
+            # next read will probably have a fresh state.
+            pass
         return None
     return state
 
@@ -1708,6 +1748,19 @@ def update_match_state_cache(series_id: int, url: str, steam_id: Optional[int] =
 
     The two cache entries share the same `match_state` dict and
     `ts`, so they always expire together.
+
+    v0.4.0.3: don't clobber a valid prior state with a failure
+    marker.  When the Playwright fetch fails (Cloudflare block,
+    goto timeout, server 5xx), the previous code wrote
+    `match_state: {}` under the same key with a fresh `ts`.  If
+    the publisher had previously cached a real state for the
+    match — picks, score, gold — that state was overwritten
+    with empty dicts, and the live card went blank for the
+    next hour (the MATCH_STATE_TTL_SEC).  Now we keep the
+    previous good `match_state` if we have one and only stamp
+    the failure marker on the `ts` + `error` fields.  That
+    way the overlay keeps showing the last good values while
+    the next publisher tick (5s later) tries again.
     """
     cache = _read_cache()
     now = time.time()
@@ -1715,12 +1768,25 @@ def update_match_state_cache(series_id: int, url: str, steam_id: Optional[int] =
         state = fetch_match_state(url, expected_steam_id=steam_id)
     except DiscoveryError as exc:
         log.warning("dltv_browser: match_state fetch failed for %s: %s", series_id, exc)
-        # Preserve any prior rates we may have cached.
+        # Preserve any prior real state we may have cached.
+        # This is the v0.4.0.3 fix: a failed fetch no longer
+        # overwrites a real `match_state` with `{}`.  Only the
+        # `ts` + `error` markers are stamped, and the failure
+        # marker expires in MATCH_STATE_FAILURE_TTL_SEC (60s)
+        # so the next publisher cycle retries.
         prev = cache.get(_cache_key(series_id), {})
+        # We DO still want to record the failure so the UI can
+        # see it (and so the next read distinguishes "never
+        # fetched" from "tried and failed").  But we keep the
+        # real `match_state` dict if we had one.
         prev["ts"] = now
         prev["url"] = url
-        prev["match_state"] = {}
         prev["error"] = str(exc)
+        prev["error_ts"] = now
+        # Only stamp `match_state: {}` if there was nothing
+        # useful there before.  Otherwise keep the old dict.
+        if not prev.get("match_state"):
+            prev["match_state"] = {}
         cache[_cache_key(series_id)] = prev
         if steam_id is not None and int(steam_id) != int(series_id):
             cache[_cache_key(int(steam_id))] = prev
@@ -1730,6 +1796,10 @@ def update_match_state_cache(series_id: int, url: str, steam_id: Optional[int] =
     prev["ts"] = now
     prev["url"] = url
     prev["match_state"] = state
+    # Successful fetch — clear the error marker so the next
+    # read sees a clean entry.
+    prev.pop("error", None)
+    prev.pop("error_ts", None)
     cache[_cache_key(series_id)] = prev
     if steam_id is not None and int(steam_id) != int(series_id):
         cache[_cache_key(int(steam_id))] = prev

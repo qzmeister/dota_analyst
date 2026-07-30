@@ -465,7 +465,26 @@ else:
 
 
 def fetch_steam_live() -> List[Dict]:
-    """Return live pro matches from Steam (requires STEAM_API_KEY)."""
+    """Return live pro matches from Steam (requires STEAM_API_KEY).
+
+    v0.4.0.3: drop Steam-only minor leagues at the source.  Steam
+    API's `GetLiveLeagueGames` returns every match in the pro
+    tier (DPC divisions, qualifiers, third-party cups), but for
+    minor third-party events the team_name fields are empty —
+    the match has no series_id on DLTV, no picks/bans, and no
+    way for us to enrich it.  The card would just show "TBD vs
+    TBD" forever.  We skip them here so the rest of the
+    pipeline (tracker merge, live enrichment, board build, socket
+    subscription, picker UI) doesn't spend any resources on
+    them at all.
+
+    The criterion is intentionally cheap: `radiant` and `dire`
+    team_name must both be present.  That covers the obvious
+    "TBD vs TBD" cases and also single-sided TBDs (a Steam API
+    quirk where one team is filled in but the other is dropped
+    because the GC hasn't synced yet).  Anything with at least
+    one missing name we treat as un-displayable.
+    """
     if not STEAM_API_KEY:
         return []
     url = (
@@ -485,6 +504,7 @@ def fetch_steam_live() -> List[Dict]:
 
     games = (data.get("result") or {}).get("games") or []
     out: List[Dict] = []
+    dropped_minor = 0
     for g in games:
         match_id = g.get("match_id")
         league_id = g.get("league_id")
@@ -495,6 +515,13 @@ def fetch_steam_live() -> List[Dict]:
         dire_score = (sb.get("dire") or {}).get("score")
         if not match_id:
             continue
+        # v0.4.0.3: skip Steam-only minor leagues.  See the
+        # docstring above for the rationale.  We log a one-line
+        # summary once per call so operators can see the
+        # "how many we dropped" metric.
+        if not radiant or not dire:
+            dropped_minor += 1
+            continue
         out.append({
             "series_id": None,
             "steam_id": int(match_id),
@@ -502,8 +529,8 @@ def fetch_steam_live() -> List[Dict]:
             "event": None,  # Steam rarely gives league_name; DLTV scraper will provide
             "bo": None,
             "stage_label": None,
-            "team_a": {"name": radiant or "TBD", "logo": None, "tag": None, "rank": None},
-            "team_b": {"name": dire or "TBD", "logo": None, "tag": None, "rank": None},
+            "team_a": {"name": radiant, "logo": None, "tag": None, "rank": None},
+            "team_b": {"name": dire, "logo": None, "tag": None, "rank": None},
             "start_time": None,
             "live_score": {
                 "radiant": rad_score or 0,
@@ -517,10 +544,20 @@ def fetch_steam_live() -> List[Dict]:
                 "dire": g.get("dire_series_wins") or 0,
             },
             "steam_series_type": g.get("series_type"),
-            # Raw Steam game payload so we can synthesize a v1-like series dict
-            # when DLTV /live/{id}.json doesn't cover this match (minor leagues).
+            # Raw Steam game payload — kept for `_steam_game_to_series`
+            # in dltv_client so the live enrichment path can still
+            # synthesise a v1-like series dict for pro matches that
+            # DLTV's /live/{id}.json doesn't cover (e.g. some
+            # Chinese DPC qualifiers).  The minor-league path is
+            # already filtered above, so this only feeds pro
+            # series from here on.
             "_steam_raw": g,
         })
+    if dropped_minor:
+        log.info(
+            "fetch_steam_live: %d pro matches kept, %d minor-league dropped",
+            len(out), dropped_minor,
+        )
     return out
 
 

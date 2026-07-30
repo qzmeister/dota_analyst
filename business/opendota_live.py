@@ -53,6 +53,7 @@ import os
 import threading
 import time
 import urllib.request
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ._logging import get_logger
@@ -60,11 +61,28 @@ from .exceptions import UpstreamError
 
 log = get_logger(__name__)
 
+# v0.4.0.3: persistent on-disk cache for the per-account_id
+# player_info dict.  The in-memory cache evaporates on every
+# process restart; the on-disk one survives, so the long path
+# of "fetch -> rate limit -> 5min backoff -> fetch again"
+# doesn't lose us everything we already learned.  Nicknames
+# don't change (Steam doesn't allow them to anymore), so a
+# 30-day TTL is effectively forever.
+ML_DATA_DIR = Path(os.environ.get("ML_DATA_DIR", "ml_data"))
+PLAYER_INFO_CACHE_FILE = ML_DATA_DIR / "opendota_player_info.json"
+PLAYER_INFO_DISK_TTL_SEC = 30 * 24 * 3600.0  # 30 days
+
 OPENDOTA_LIVE_URL = "https://api.opendota.com/api/live"
 OPENDOTA_PLAYER_URL = "https://api.opendota.com/api/players/{account_id}"
 HTTP_TIMEOUT = 4.0
 LIVE_TTL_SEC = 15.0     # /api/live entries are stale after 15s
-POLL_INTERVAL_SEC = 10.0  # how often the background poller runs
+# v0.4.0.3: bumped from 10s to 30s.  OpenDota's anonymous
+# rate limit is tighter than the documented 60/min in
+# practice — we got 429 even at 6 req/min.  A 30s interval
+# means 2 req/min for the live feed alone, which gives the
+# player-info fetches (1 every 0.6s, capped at 30 per cycle)
+# room to breathe inside the per-minute budget.
+POLL_INTERVAL_SEC = 30.0
 PLAYER_TTL_SEC = 24 * 3600.0  # nicknames don't change; cache for 24h
 # OpenDota's anonymous rate limit is ~60 requests / minute / IP.
 # The live feed is one call per poll; the per-player lookups
@@ -372,6 +390,79 @@ def _ingest_live(rows: List[Dict[str, Any]]) -> Set[int]:
     return seen
 
 
+def _load_player_info_from_disk() -> None:
+    """Populate the in-memory `_player_cache` from disk on startup.
+
+    v0.4.0.3: the player_info dict (personaname, loccountrycode)
+    is small (~120 bytes per entry, ~600 bytes per match with 5
+    unique players per match) and very stable.  We persist it to
+    `ml_data/opendota_player_info.json` so a process restart
+    doesn't have to re-fetch the same 1000 account_ids over a
+    5-minute backoff cycle.  The on-disk entries are timestamped
+    per fetch; we drop anything older than `PLAYER_INFO_DISK_TTL_SEC`
+    (30 days, well past Steam's nickname-change cooldown).
+    """
+    if not PLAYER_INFO_CACHE_FILE.exists():
+        return
+    try:
+        with open(PLAYER_INFO_CACHE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(data, dict):
+        return
+    now = _now()
+    loaded = 0
+    skipped_expired = 0
+    with _lock:
+        for k, v in data.items():
+            if not isinstance(v, dict):
+                continue
+            try:
+                aid = int(k)
+                ts = float(v.get("ts") or 0)
+            except (TypeError, ValueError):
+                continue
+            if now - ts > PLAYER_INFO_DISK_TTL_SEC:
+                skipped_expired += 1
+                continue
+            _player_cache[aid] = v
+            loaded += 1
+    if loaded or skipped_expired:
+        log.info(
+            "opendota_live: loaded %d player_info entries from disk (skipped %d expired)",
+            loaded, skipped_expired,
+        )
+
+
+def _save_player_info_to_disk() -> None:
+    """Persist the current `_player_cache` to disk.
+
+    Called opportunistically from `_refresh_player_info` after
+    a successful batch.  Atomic write (write to .tmp + os.replace)
+    so a crash mid-write doesn't corrupt the cache.
+    """
+    if not _player_cache:
+        return
+    try:
+        ML_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+    with _lock:
+        # Don't snapshot the live dict — we want a value copy
+        # so concurrent writes from the poller don't race us.
+        snapshot: Dict[int, Dict[str, Any]] = {aid: dict(v) for aid, v in _player_cache.items()}
+    # JSON keys must be strings.
+    serialised = {str(aid): v for aid, v in snapshot.items()}
+    tmp = PLAYER_INFO_CACHE_FILE.with_suffix(".tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(serialised, f, ensure_ascii=False)
+        os.replace(tmp, PLAYER_INFO_CACHE_FILE)
+    except OSError as exc:
+        log.debug("opendota_live: player_info disk write failed: %s", exc)
+
+
 def _refresh_player_info(account_ids: Set[int]) -> None:
     """For each account_id we don't have cached, fetch it.
 
@@ -403,6 +494,7 @@ def _refresh_player_info(account_ids: Set[int]) -> None:
     # rate limit.  Remaining ids are picked up on the next cycle.
     todo = todo[:PLAYER_FETCH_BATCH_LIMIT]
     log.info("opendota_live: refreshing player info for %d account_ids", len(todo))
+    new_entries = 0
     for aid in todo:
         info = fetch_player_info(aid)
         if info is None:
@@ -414,7 +506,14 @@ def _refresh_player_info(account_ids: Set[int]) -> None:
                 **info,
                 "ts": _now(),
             }
+        new_entries += 1
         time.sleep(PLAYER_FETCH_DELAY_SEC)
+    # v0.4.0.3: persist the (possibly expanded) cache to disk
+    # so the next process restart doesn't have to re-fetch the
+    # same account_ids.  Cheap (JSON write of ~120 bytes per
+    # entry) and amortised across the cycle.
+    if new_entries:
+        _save_player_info_to_disk()
 
 
 def _poll_once() -> Set[int]:
@@ -485,6 +584,13 @@ def start_poller() -> threading.Thread:
     global _loop_thread
     if _loop_thread is not None and _loop_thread.is_alive():
         return _loop_thread
+    # v0.4.0.3: warm the player_info cache from disk before
+    # the first poll.  Otherwise a fresh process has zero
+    # entries and has to re-fetch every active account_id
+    # from scratch, which (a) burns rate-limit budget, and
+    # (b) means the live card shows `player_name: null`
+    # for the first 60-90s of uptime.
+    _load_player_info_from_disk()
     _loop_should_stop.clear()
     t = threading.Thread(target=_poller_loop, name="opendota-live-poller", daemon=True)
     t.start()
@@ -496,6 +602,11 @@ def stop_poller(timeout: float = 5.0) -> None:
     _loop_should_stop.set()
     if _loop_thread is not None:
         _loop_thread.join(timeout=timeout)
+    # v0.4.0.3: final flush of the player_info cache to disk.
+    # The poller already saves opportunistically, but a clean
+    # shutdown is a guaranteed save point that doesn't depend
+    # on which batch happened to finish last.
+    _save_player_info_to_disk()
 
 
 def populate_player_info_for_live() -> int:

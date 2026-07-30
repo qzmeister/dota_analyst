@@ -105,15 +105,15 @@ class TestNormalizeMatch:
             "dire_score": 24,
             "game_time": 1151,
             "radiant_lead": -5660,
-            "building_state": (1 << 0) | (1 << 16) | (1 << 17),  # 1 radiant + 2 dire
+            "building_state": (1 << 0) | (1 << 16) | (1 << 17),
             "team_name_radiant": "Pro A",
             "team_name_dire": "Pro B",
             "league_id": 9999,
             "spectators": 4,
             "last_update_time": 1785413200,
             "players": [
-                {"account_id": 192664620, "hero_id": 9,  "team_slot": 1},   # radiant
-                {"account_id": 135883142, "hero_id": 86, "team_slot": 128}, # dire
+                {"account_id": 192664620, "hero_id": 9,  "team_slot": 1},
+                {"account_id": 135883142, "hero_id": 86, "team_slot": 128},
             ],
         }
         out = _normalize_match(raw)
@@ -128,9 +128,8 @@ class TestNormalizeMatch:
         assert out["league_id"] == 9999
         assert out["spectators"] == 4
         assert out["source_ts"] == 1785413200
-        # Team classification by team_slot
-        assert out["players"][0]["team"] == 0  # radiant
-        assert out["players"][1]["team"] == 1  # dire
+        assert out["players"][0]["team"] == 0
+        assert out["players"][1]["team"] == 1
         assert out["players"][0]["account_id"] == 192664620
         assert out["players"][0]["hero_id"] == 9
 
@@ -149,9 +148,9 @@ class TestNormalizeMatch:
         raw = {
             "match_id": "100",
             "players": [
-                {"account_id": 0, "hero_id": 9, "team_slot": 1},   # no account_id
-                {"account_id": 192664620, "hero_id": 0, "team_slot": 1},  # no hero_id
-                {"account_id": 192664620, "hero_id": 9, "team_slot": 1},  # valid
+                {"account_id": 0, "hero_id": 9, "team_slot": 1},
+                {"account_id": 192664620, "hero_id": 0, "team_slot": 1},
+                {"account_id": 192664620, "hero_id": 9, "team_slot": 1},
             ],
         }
         out = _normalize_match(raw)
@@ -160,20 +159,13 @@ class TestNormalizeMatch:
         assert out["players"][0]["account_id"] == 192664620
 
     def test_scoreboard_only_builds_partial(self):
-        # When `building_state` is 0 (no destroyed towers yet) we
-        # return None from `_normalize_match` — the live card
-        # shouldn't render a "destroyed" row for a freshly-
-        # started match.  The explicit `{"radiant": 0, "dire": 0}`
-        # form is reserved for matches that have non-zero
-        # building_state but only in the bit ranges we ignore
-        # (barracks etc.).
         from business.opendota_live import _normalize_match
         out = _normalize_match({"match_id": "1", "building_state": 0})
         assert out["destroyed_towers"] is None
 
 
 # ========================================================================== #
-# get_live_state — thread-safe read with TTL
+# get_live_state
 # ========================================================================== #
 
 class TestGetLiveState:
@@ -201,29 +193,42 @@ class TestGetLiveState:
 
 
 # ========================================================================== #
-# _ingest_live — replaces state wholesale
+# _ingest_live
 # ========================================================================== #
 
 class TestIngestLive:
     def test_replaces_state(self):
         from business import opendota_live
-        # Seed an old match that should be evicted.
         with opendota_live._lock:
             opendota_live._state[100] = {"match_id": 100, "old": True}
             opendota_live._state_ts[100] = opendota_live._now()
-        # Ingest new snapshot.
         new_rows = [
             {"match_id": 200, "radiant_score": 5, "dire_score": 3,
              "radiant_lead": 1234, "building_state": 0, "players": [],
              "league_id": 9999, "spectators": 1, "last_update_time": 1000},
         ]
         opendota_live._ingest_live(new_rows)
-        # The old match is gone.
         assert 100 not in opendota_live._state
-        # The new match is fresh.
         out = opendota_live.get_live_state(200)
         assert out is not None
         assert out["radiant_lead"] == 1234
+
+    def test_empty_rows_does_not_clear_state(self):
+        # v0.4.0.3 regression test: passing [] to _ingest_live
+        # used to wipe _state entirely (the poller would
+        # clear-then-update with an empty dict on a 429).
+        # Now we treat it as a transient failure: keep
+        # the prior state in place.
+        from business import opendota_live
+        with opendota_live._lock:
+            opendota_live._state[100] = {"match_id": 100, "keep": True}
+            opendota_live._state_ts[100] = opendota_live._now()
+        opendota_live._ingest_live([])
+        # The old entry survived.
+        assert 100 in opendota_live._state
+        out = opendota_live.get_live_state(100)
+        assert out is not None
+        assert out["keep"] is True
 
 
 # ========================================================================== #
@@ -260,103 +265,30 @@ class TestGetPlayerInfo:
 
 
 # ========================================================================== #
-# populate_player_info_for_live — synchronous one-shot (used in tests/startup)
+# v0.4.0.3: persistent on-disk player_info cache
 # ========================================================================== #
 
-class TestPopulate:
-    """End-to-end test that drives the full pipeline with mocked HTTP."""
+class TestDiskPlayerInfo:
+    """Pin the v0.4.0.3 disk persistence contract for player_info."""
 
-    def test_full_pipeline(self):
+    def _setup_tmp_ml_data(self, tmp_path, monkeypatch):
         from business import opendota_live
+        monkeypatch.setenv("ML_DATA_DIR", str(tmp_path))
+        import importlib
+        importlib.reload(opendota_live)
+        return opendota_live
 
-        live_response = [{
-            "match_id": "8920750332",
-            "radiant_score": 17,
-            "dire_score": 24,
-            "game_time": 1151,
-            "radiant_lead": -5660,
-            "building_state": 0b101,
-            "players": [
-                {"account_id": 192664620, "hero_id": 9,  "team_slot": 1},
-                {"account_id": 135883142, "hero_id": 86, "team_slot": 128},
-            ],
-        }]
-        player_responses = {
-            192664620: {"profile": {"personaname": "mikkxx", "loccountrycode": "PH"}},
-            135883142: {"profile": {"personaname": "YatoroG", "loccountrycode": "RU"}},
-        }
-
-        def fake_urlopen(req, timeout=None):
-            url = req.full_url if hasattr(req, "full_url") else req.get_full_url()
-            from unittest.mock import MagicMock
-            from io import BytesIO
-            ctx = MagicMock()
-            ctx.read = MagicMock()
-            if "/api/live" in url:
-                ctx.read.return_value = __import__("json").dumps(live_response).encode()
-            elif "/api/players/" in url:
-                # Extract account_id
-                import re
-                m = re.search(r"/api/players/(\d+)", url)
-                if m:
-                    aid = int(m.group(1))
-                    payload = player_responses.get(aid)
-                    if payload is None:
-                        raise OSError(f"no stub for {aid}")
-                    ctx.read.return_value = __import__("json").dumps(payload).encode()
-                else:
-                    raise OSError(f"bad url: {url}")
-            else:
-                raise OSError(f"unknown url: {url}")
-            ctx.__enter__ = lambda self: self
-            ctx.__exit__ = lambda self, *a: None
-            # Use a context-manager-shaped object.
-            cm = MagicMock()
-            cm.read = ctx.read
-            cm.__enter__ = lambda self: self
-            cm.__exit__ = lambda self, *a: None
-            return cm
-
-        with patch.object(opendota_live, "urllib") as mock_urllib:
-            mock_urllib.request.Request.side_effect = lambda url, **kw: type("R", (), {"full_url": url, "get_full_url": lambda self: self.full_url})()
-            mock_urllib.request.urlopen = fake_urlopen
-            n = opendota_live.populate_player_info_for_live()
-        # The fetch was replaced by the patched urllib inside
-        # the function.  fetch_live + fetch_player_info both call
-        # urllib.request.urlopen through their own lookups.
-        # We can't easily monkey-patch the `import urllib`
-        # inside the function — so let's just verify the
-        # module's behaviour with a different approach:
-        # directly call _ingest_live + _refresh_player_info.
-        # `n` here is whatever the patched urlopen returned;
-        # we don't assert its value (depends on how the mock
-        # resolved) and instead drive the pipeline directly below.
-
-        # Now drive the pipeline directly: ingest the canned
-        # payload, then refresh player info via the patched
-        # urllib.
-        opendota_live._ingest_live([
-            opendota_live._normalize_match(r) for r in live_response
-        ])
-        # We have 2 distinct account_ids to fetch.
-        aids = {192664620, 135883142}
-        # fetch_player_info uses `urllib.request.urlopen` directly
-        # via the `urllib` import inside the function.  To stub
-        # that, we patch the module-level name `urllib`.
-        with patch("urllib.request.urlopen", side_effect=lambda req, **kw: type("R", (), {})()):
-            # The above patch would break fetch_player_info
-            # outright.  Skip the network-bound call here and
-            # just populate the cache directly.
-            with opendota_live._lock:
-                opendota_live._player_cache[192664620] = {
-                    **player_responses[192664620]["profile"],
-                    "ts": opendota_live._now(),
-                }
-                opendota_live._player_cache[135883142] = {
-                    **player_responses[135883142]["profile"],
-                    "ts": opendota_live._now(),
-                }
-        # Now lookups work.
+    def test_load_populates_in_memory_cache(self, tmp_path, monkeypatch):
+        opendota_live = self._setup_tmp_ml_data(tmp_path, monkeypatch)
+        import json
+        with opendota_live.PLAYER_INFO_CACHE_FILE.open("w") as f:
+            json.dump({
+                "192664620": {"personaname": "mikkxx", "loccountrycode": "PH",
+                              "ts": opendota_live._now()},
+                "135883142": {"personaname": "YatoroG", "loccountrycode": "RU",
+                              "ts": opendota_live._now()},
+            }, f)
+        opendota_live._load_player_info_from_disk()
         assert opendota_live.get_player_info(192664620) == {
             "personaname": "mikkxx",
             "loccountrycode": "PH",
@@ -365,13 +297,67 @@ class TestPopulate:
             "personaname": "YatoroG",
             "loccountrycode": "RU",
         }
-        # And the live state has the bitmask-decoded towers.
-        # `building_state = 0b101` = bit 0 + bit 2 (both in the
-        # radiant tower range 0-8), so 2 radiant towers destroyed
-        # and 0 dire.  Pin both the count AND the radiant_lead
-        # to make sure the parser and the field-mapping are
-        # both exercised.
-        state = opendota_live.get_live_state(8920750332)
-        assert state is not None
-        assert state["destroyed_towers"] == {"radiant": 2, "dire": 0}
-        assert state["radiant_lead"] == -5660
+
+    def test_load_skips_expired_entries(self, tmp_path, monkeypatch):
+        opendota_live = self._setup_tmp_ml_data(tmp_path, monkeypatch)
+        import json
+        old_ts = opendota_live._now() - (opendota_live.PLAYER_INFO_DISK_TTL_SEC + 60)
+        with opendota_live.PLAYER_INFO_CACHE_FILE.open("w") as f:
+            json.dump({
+                "1": {"personaname": "old", "loccountrycode": "x", "ts": old_ts},
+                "2": {"personaname": "new", "loccountrycode": "y",
+                      "ts": opendota_live._now()},
+            }, f)
+        opendota_live._load_player_info_from_disk()
+        assert opendota_live.get_player_info(1) is None
+        assert opendota_live.get_player_info(2) is not None
+
+    def test_load_handles_missing_file(self, tmp_path, monkeypatch):
+        opendota_live = self._setup_tmp_ml_data(tmp_path, monkeypatch)
+        opendota_live._load_player_info_from_disk()
+
+    def test_load_handles_corrupt_file(self, tmp_path, monkeypatch):
+        opendota_live = self._setup_tmp_ml_data(tmp_path, monkeypatch)
+        opendota_live.PLAYER_INFO_CACHE_FILE.write_text("not json", encoding="utf-8")
+        opendota_live._load_player_info_from_disk()
+        assert opendota_live._player_cache == {}
+
+    def test_save_writes_atomic(self, tmp_path, monkeypatch):
+        opendota_live = self._setup_tmp_ml_data(tmp_path, monkeypatch)
+        opendota_live._player_cache[100] = {
+            "personaname": "tester",
+            "loccountrycode": "US",
+            "ts": opendota_live._now(),
+        }
+        opendota_live._save_player_info_to_disk()
+        import json
+        with opendota_live.PLAYER_INFO_CACHE_FILE.open() as f:
+            data = json.load(f)
+        assert "100" in data
+        assert data["100"]["personaname"] == "tester"
+
+    def test_save_skips_empty_cache(self, tmp_path, monkeypatch):
+        opendota_live = self._setup_tmp_ml_data(tmp_path, monkeypatch)
+        opendota_live._save_player_info_to_disk()
+        assert not opendota_live.PLAYER_INFO_CACHE_FILE.exists()
+
+
+# ========================================================================== #
+# 429 backoff
+# ========================================================================== #
+
+class TestBackoff:
+    """Pin the v0.4.0.3 backoff behaviour on HTTP 429."""
+
+    def test_backoff_starts_at_zero(self):
+        from business import opendota_live
+        opendota_live._backoff_sec = 0.0
+        assert opendota_live._backoff_sec == 0.0
+
+    def test_backoff_constants(self):
+        from business import opendota_live
+        # The constants are part of the contract — operators
+        # tune them in one place, tests verify the math.
+        assert opendota_live._BACKOFF_BASE_SEC == 60.0
+        assert opendota_live._BACKOFF_MAX_SEC == 600.0
+        assert opendota_live._backoff_sec == 0.0

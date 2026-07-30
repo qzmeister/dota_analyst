@@ -267,6 +267,13 @@ async def board_publisher_loop(
         log.info("sse publisher: board-builder thread started")
         while not _stop.is_set():
             t0 = _t.monotonic()
+            # v0.4.0.2: heartbeat so the watchdog can detect a frozen
+            # or silently-killed thread.  Updated every cycle (the
+            # try/except below runs once per loop iteration).
+            try:
+                _publisher_last_heartbeat[0] = _t.monotonic()
+            except NameError:
+                pass  # before the watchdog initialised; safe to skip
             try:
                 board = build_board([], [])
                 if "engine" not in board:
@@ -356,7 +363,59 @@ async def board_publisher_loop(
             _stop.wait(interval_sec)
         log.info("sse publisher: board-builder thread stopped")
 
-    _threading.Thread(target=_build_loop, name="board-builder", daemon=True).start()
+    # v0.4.0.2: watchdog for the board-builder thread.  The thread
+    # was observed dead (still in process) after a long stretch of
+    # DLTV timeouts — its outer try/except recovered from individual
+    # `build_board` exceptions but something else (we suspect a
+    # garbage-collected closure or a daemon-thread teardown race)
+    # killed the whole `while not _stop.is_set()` loop.  Symptoms:
+    # dltv_socket has 0 subscriptions (no `dltv_socket.subscribe()`
+    # calls from the dead publisher), `live=0` everywhere, but the
+    # container is still healthy.  Hard to repro — the only reliable
+    # mitigation is a watchdog that re-starts the thread if it dies.
+    # Heartbeat: `_publisher_last_heartbeat` is updated every cycle
+    # in the build loop.  The watchdog compares it to now() and
+    # considers the thread dead if it hasn't ticked in 3× the
+    # configured interval.
+    _publisher_last_heartbeat = [_t.monotonic()]
+    _publisher_thread_ref = [None]  # filled in below; replaced on each restart
+
+    def _heartbeat_loop() -> None:
+        """Watch the board-builder thread.  If it stops heart-beating
+        for > 3× the build interval, log loudly and re-spawn it.
+        """
+        _watchdog_interval = max(interval_sec * 3, 15.0)
+        while not _stop.is_set():
+            _t.sleep(_watchdog_interval)
+            last = _publisher_last_heartbeat[0]
+            age = _t.monotonic() - last
+            thr = _publisher_thread_ref[0]
+            if thr is not None and not thr.is_alive():
+                log.warning(
+                    "sse publisher: board-builder thread is DEAD "
+                    "(last heartbeat %.1fs ago) — restarting",
+                    age,
+                )
+                new_t = _threading.Thread(
+                    target=_build_loop, name="board-builder", daemon=True
+                )
+                new_t.start()
+                _publisher_thread_ref[0] = new_t
+            elif age > _watchdog_interval:
+                log.warning(
+                    "sse publisher: board-builder thread heartbeat "
+                    "stale (%.1fs since last tick, watchdog_interval=%.1fs)",
+                    age, _watchdog_interval,
+                )
+
+    _board_builder_thread = _threading.Thread(
+        target=_build_loop, name="board-builder", daemon=True
+    )
+    _board_builder_thread.start()
+    _publisher_thread_ref[0] = _board_builder_thread
+    _threading.Thread(
+        target=_heartbeat_loop, name="publisher-watchdog", daemon=True
+    ).start()
 
     # The asyncio half just watches the cache and pushes SSE
     # when something changed.  Sleep `interval_sec` between

@@ -81,6 +81,29 @@ _state_ts: Dict[int, float] = {}
 _subscriptions: Set[int] = set()
 _lock = threading.RLock()
 
+# v0.4.0.3: series-level state pushed by the `__nd2_series`
+# channel.  This is the fallback discovery source we use when the
+# HTTP scraper is unreachable (DNS, Cloudflare, etc.): DLTV's
+# socket.io broadcast gives us the live + upcoming + results
+# lists in a single dict, so the board can keep showing cards
+# even when the scraper is dark.  Layout (verified on 2026-07-30):
+#   {
+#     "live":     {"<steam_id>": <series_id>, ...},    # live matches
+#     "upcoming": [ {id, event_id, status, slug, type,
+#                    first_team_id, second_team_id,
+#                    started_at, ended_at, is_active, ...}, ... ],
+#     "results":  [ <same shape as upcoming> ]         # recently finished
+#   }
+# The `live` dict is the most valuable: it carries the
+# steam_id ↔ series_id mapping that the HTML scraper frequently
+# omits for live cards (DLTV doesn't render `data-match="..."` on
+# the matches page until the game is well underway).
+_series_live: Dict[int, int] = {}            # steam_id -> series_id
+_series_upcoming: List[Dict[str, Any]] = []  # upcoming series dicts
+_series_results: List[Dict[str, Any]] = []   # finished series dicts
+_series_ts: float = 0.0                      # monotonic stamp of last push
+_SERIES_TTL_SEC = 600.0                      # 10 min — list refreshes are rare
+
 # v0.4.0-bans: persistent bans cache.  DLTV's live socket.io
 # payload carries `db.{first,second}_team.bans` only during the
 # draft phase.  Once the game starts, the `bans` array goes
@@ -122,6 +145,55 @@ def get_live_state(steam_id: int) -> Optional[Dict[str, Any]]:
         # Return a shallow copy so the caller can't mutate
         # shared state.
         return dict(_state[int(steam_id)])
+
+
+def get_series_state() -> Dict[str, Any]:
+    """Snapshot of the `__nd2_series` channel state.
+
+    v0.4.0.3: this is the second-socket fallback for discovery.
+    Returns a dict with three lists (deep-copied) and the
+    monotonic timestamp of the last push.  When the data is
+    older than `_SERIES_TTL_SEC` the lists are still returned
+    (the caller may want them as a "last known" snapshot) but
+    the `stale` flag is set so the caller can decide.
+
+    Shape:
+        {
+            "live":     {steam_id(int): series_id(int), ...},
+            "upcoming": [series dict, ...],
+            "results":  [series dict, ...],
+            "ts":       <monotonic float>,
+            "stale":    bool,
+        }
+    """
+    with _lock:
+        ts = _series_ts
+        stale = (ts == 0.0) or ((_now() - ts) > _SERIES_TTL_SEC)
+        return {
+            "live":     {int(k): int(v) for k, v in _series_live.items()},
+            "upcoming": [dict(s) for s in _series_upcoming],
+            "results":  [dict(s) for s in _series_results],
+            "ts":       ts,
+            "stale":    bool(stale),
+        }
+
+
+def get_steam_id_for_series(series_id: int) -> Optional[int]:
+    """Reverse lookup: given a DLTV series_id, return the
+    live steam_id (if any) the `__nd2_series` channel knows about.
+
+    v0.4.0.3: this is the bridge between the scraper's series_id
+    and the socket-only steam_id.  When a live card is missing
+    its steam_id (because the HTML didn't render `data-match="…"`)
+    but the socket broadcast has the pair, this function returns
+    it so `_live_card` can hydrate picks/teams from the live
+    payload.
+    """
+    with _lock:
+        for steam_id, sid in _series_live.items():
+            if int(sid) == int(series_id):
+                return int(steam_id)
+    return None
 
 
 def get_cached_bans(steam_id: int) -> Optional[Dict[str, Any]]:
@@ -213,6 +285,10 @@ async def _run_session() -> None:
     """A single session: connect, subscribe, listen, raise on failure."""
     global _force_reconnect_flag, _last_force_reconnect_ts
     backoff = RECONNECT_BACKOFF_INITIAL
+    # v0.4.0.2: heartbeat.  The watchdog re-spawns the whole thread
+    # if it stops heart-beating for >90s.  We update this on every
+    # successful connection AND on every received message so a
+    # frozen recv() doesn't go unnoticed.
     while not _loop_should_stop.is_set():
         try:
             log.info("dltv_socket: connecting to %s", WS_URL)
@@ -236,6 +312,11 @@ async def _run_session() -> None:
                 ping_timeout=None,
             ) as ws:
                 log.info("dltv_socket: connected")
+                # v0.4.0.2: heartbeat stamp on every successful
+                # connection.  The watchdog compares this to
+                # `now()` and re-spawns the thread if it goes
+                # stale.
+                _heartbeat()
                 # Engine.IO OPEN
                 open_msg = await ws.recv()
                 if not open_msg.startswith("0"):
@@ -291,6 +372,14 @@ async def _run_session() -> None:
                         msg = await ws.recv()
                     except websockets.ConnectionClosed:
                         raise RuntimeError("connection closed by server")
+                    # v0.4.0.2: heartbeat on every received message
+                    # (PING, SIO EVENT, anything).  Combined with the
+                    # connection-stamp above, this guarantees the
+                    # watchdog sees a live thread as long as the
+                    # socket is alive.  If recv() hangs for >90s
+                    # the watchdog will assume the thread is stuck
+                    # and start a new one.
+                    _heartbeat()
                     if not msg:
                         continue
                     # v0.4.0.1: EIO PING (server → client) → reply with
@@ -352,6 +441,68 @@ async def _run_session() -> None:
                                                     "first_is_radiant": bool(first.get("is_radiant")),
                                                 }
                                                 _bans_ts[sid] = _now()
+                    elif channel == "__nd2_series":
+                        # v0.4.0.3: the broadcast channel that pushes
+                        # the live / upcoming / results lists.  We
+                        # were already subscribed to this for
+                        # keepalive (the comment above called it out
+                        # as "DLTV pushes live+upcoming lists on a
+                        # regular cadence") — now we actually parse
+                        # the payload and store it for the discovery
+                        # tracker to use as a fallback when the HTTP
+                        # scraper is dark.
+                        #
+                        # Layout:
+                        #   {"live":     {<steam_id>: <series_id>, ...},
+                        #    "upcoming": [ {id, event_id, ...}, ... ],
+                        #    "results":  [ {id, event_id, ...}, ... ]}
+                        #
+                        # The `live` dict is the prize — it bridges
+                        # the scraper's series_id (which it gets from
+                        # the HTML) to the socket's steam_id (which
+                        # the scraper often misses on live cards).
+                        args = evt.get("args") or []
+                        # v0.4.0.3: the `__nd2_series` payload
+                        # arrives as `42["__nd2_series", {...}]`, but
+                        # during testing we also saw `42["__nd2_series"]`
+                        # with no args (a refresh nudge).  We only
+                        # update state when there's a dict to read.
+                        payload = args[0] if args else None
+                        if not isinstance(payload, dict):
+                            continue
+                        live = payload.get("live") or {}
+                        upcoming = payload.get("upcoming") or []
+                        results = payload.get("results") or []
+                        new_live: Dict[int, int] = {}
+                        if isinstance(live, dict):
+                            for k, v in live.items():
+                                try:
+                                    new_live[int(k)] = int(v)  # type: ignore[arg-type]
+                                except (TypeError, ValueError):
+                                    continue
+                        new_upcoming: List[Dict[str, Any]] = []
+                        if isinstance(upcoming, list):
+                            for s in upcoming:
+                                if isinstance(s, dict):
+                                    new_upcoming.append(dict(s))
+                        new_results: List[Dict[str, Any]] = []
+                        if isinstance(results, list):
+                            for s in results:
+                                if isinstance(s, dict):
+                                    new_results.append(dict(s))
+                        with _lock:
+                            _series_live = new_live
+                            _series_upcoming = new_upcoming
+                            _series_results = new_results
+                            _series_ts = _now()
+                        # Heartbeat already stamped above; log the
+                        # update for visibility on a noisy channel.
+                        if new_live or new_upcoming or new_results:
+                            log.info(
+                                "dltv_socket: __nd2_series push — "
+                                "live=%d upcoming=%d results=%d",
+                                len(new_live), len(new_upcoming), len(new_results),
+                            )
                 # Loop exited normally (should_stop)
                 return
         except Exception as exc:
@@ -389,6 +540,75 @@ def _thread_main() -> None:
 
 _force_reconnect_flag: bool = False
 _last_force_reconnect_ts: float = 0.0
+# v0.4.0.2: heartbeat timestamp (monotonic seconds since epoch).
+# The watchdog re-spawns `_run_session` if this goes stale.
+_socket_heartbeat: float = 0.0
+# Watchdog tuning
+_SOCKET_WATCHDOG_INTERVAL_SEC = 30.0
+_SOCKET_WATCHDOG_DEAD_AFTER_SEC = 90.0  # 3× the poll interval
+_socket_watchdog_thread: Optional[threading.Thread] = None
+
+
+def _heartbeat() -> None:
+    """Stamp the heartbeat timestamp — called by `_run_session`
+    on every successful connection AND on every received message
+    so a frozen recv() doesn't go unnoticed.
+    """
+    global _socket_heartbeat
+    _socket_heartbeat = time.monotonic()
+
+
+def _socket_watchdog_loop() -> None:
+    """Re-spawn the dltv-socket-client thread if it dies.
+
+    v0.4.0.2: We observed the socket thread silently going to
+    `thread: None` after a long stretch of DLTV DNS failures.  The
+    inner reconnect loop caught the connection errors but
+    something else (we suspect a daemon-thread / atexit race)
+    killed the outer `while not _loop_should_stop.is_set()` loop.
+    This watchdog keeps the publisher's data flow alive even when
+    DLTV is misbehaving.
+
+    Two restart triggers:
+      1. `thr is None or not thr.is_alive()` — the thread died
+         outright.  Re-spawn.
+      2. Heartbeat older than `_SOCKET_WATCHDOG_DEAD_AFTER_SEC`
+         but the thread object is still alive — the recv() loop
+         is stuck.  We can't safely kill it from another thread;
+         we let the OS-level GC handle it and start a new one.
+    """
+    global _loop_thread
+    while True:
+        time.sleep(_SOCKET_WATCHDOG_INTERVAL_SEC)
+        thr = _loop_thread
+        age = (
+            time.monotonic() - _socket_heartbeat
+            if _socket_heartbeat
+            else None
+        )
+        if thr is None or not thr.is_alive():
+            log.warning(
+                "dltv-socket-watchdog: socket thread is DEAD — restarting"
+            )
+            try:
+                start_socket_client()
+            except Exception as exc:  # noqa: BLE001
+                log.exception("dltv-socket-watchdog: restart failed: %s", exc)
+        elif age is not None and age > _SOCKET_WATCHDOG_DEAD_AFTER_SEC:
+            log.warning(
+                "dltv-socket-watchdog: socket thread alive but heartbeat "
+                "stale (%.1fs since last tick, threshold=%.1fs) — restarting",
+                age, _SOCKET_WATCHDOG_DEAD_AFTER_SEC,
+            )
+            # The thread is alive but its loop is stuck.  We can't
+            # safely kill it from another thread, so we let the
+            # OS-level GC eventually clean it up.  The new socket
+            # will run on a fresh thread.
+            _loop_thread = None
+            try:
+                start_socket_client()
+            except Exception as exc:  # noqa: BLE001
+                log.exception("dltv-socket-watchdog: restart failed: %s", exc)
 # Throttle: don't honor `force_reconnect()` more than once per N
 # seconds.  Reconnect takes ~3-5s (TCP+TLS+SIO CONNECT), so a
 # 30s minimum is a safe lower bound — fast enough to keep
@@ -415,8 +635,17 @@ def start_socket_client() -> threading.Thread:
 
     Idempotent: returns the existing thread if already started.
     The thread is a daemon and dies with the process.
+
+    v0.4.0.2: also kicks a watchdog thread that re-spawns this one
+    if the loop dies.  We observed the socket thread silently going
+    to `thread: None` after a long stretch of DLTV DNS failures —
+    the inner reconnect loop caught the connection errors but
+    something else (we suspect a daemon-thread / atexit race) killed
+    the outer `while not _loop_should_stop.is_set()` loop.  The
+    watchdog keeps the publisher's data flow alive even when DLTV
+    is misbehaving.
     """
-    global _loop_thread
+    global _loop_thread, _socket_watchdog_thread
     if _loop_thread is not None and _loop_thread.is_alive():
         return _loop_thread
     _loop_should_stop.clear()
@@ -427,6 +656,16 @@ def start_socket_client() -> threading.Thread:
     )
     t.start()
     _loop_thread = t
+    # Start the watchdog if it isn't running yet.  The watchdog
+    # also uses a daemon thread; it stays alive for the process
+    # lifetime and re-spawns the socket loop as needed.
+    if _socket_watchdog_thread is None or not _socket_watchdog_thread.is_alive():
+        _socket_watchdog_thread = threading.Thread(
+            target=_socket_watchdog_loop,
+            name="dltv-socket-watchdog",
+            daemon=True,
+        )
+        _socket_watchdog_thread.start()
     return t
 
 

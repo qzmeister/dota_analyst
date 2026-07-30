@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from business import discovery
@@ -526,3 +528,187 @@ class TestTrackerSteamEvent:
         # unless something explicitly set it.
         result = tracker.steam_event(99_999_999)
         assert result is None
+
+
+# ========================================================================== #
+# v0.4.0.3: socket-based discovery fallback (`_merge_socket_series`)
+#
+# When the HTTP scraper is dark (DNS, Cloudflare, etc.) the
+# `__nd2_series` channel pushed by dltv.org's socket.io still
+# gives us the live / upcoming / results lists.  These tests
+# pin the contract: how `_merge_socket_series` translates that
+# payload into tracker entries without breaking the existing
+# scraper rows.
+# ========================================================================== #
+
+class TestMergeSocketSeries:
+    """Pin the v0.4.0.3 socket-fallback behaviour.
+
+    We patch the *real* dltv_socket module's `get_series_state`
+    function so the `from . import dltv_socket` inside
+    `_merge_socket_series` picks up our stub value.
+    """
+
+    def _stub_socket(self, monkeypatch, *, live=None, upcoming=None,
+                     results=None, stale=False):
+        from business import dltv_socket as real_ds
+        live = live or {}
+        upcoming = upcoming or []
+        results = results if isinstance(results, list) else []
+        snap = {
+            "live":     {int(k): int(v) for k, v in live.items()},
+            "upcoming": [dict(s) for s in upcoming],
+            "results":  [dict(s) for s in results],
+            "ts":       0.0 if stale else 1.0,
+            "stale":    bool(stale),
+        }
+        monkeypatch.setattr(real_ds, "get_series_state",
+                            lambda: snap, raising=True)
+        return snap
+
+    def test_noop_when_socket_stale(self, monkeypatch):
+        self._stub_socket(monkeypatch, stale=True,
+                          live={8920681812: 427543})
+        t = _DiscoveryTracker()
+        t._merge_socket_series()
+        # Stale snapshot is a no-op (don't pollute the tracker
+        # with hours-old data).
+        assert 427543 not in t._by_series
+
+    def test_backfills_steam_id_on_existing_scraper_row(self, monkeypatch):
+        self._stub_socket(monkeypatch, live={8920681812: 427543})
+        t = _DiscoveryTracker()
+        # Scraper already had this series with no steam_id.
+        t._by_series[427543] = {
+            "series_id": 427543, "steam_id": None, "stage": "live",
+            "event": "EPL Masters 1", "event_id": 6617,
+        }
+        t._merge_socket_series()
+        # The socket broadcast backfilled the steam_id.
+        assert t._by_series[427543]["steam_id"] == 8920681812
+
+    def test_synthesises_live_row_for_unseen_steam_id(self, monkeypatch):
+        self._stub_socket(monkeypatch, live={8920681812: 427543})
+        t = _DiscoveryTracker()
+        t._merge_socket_series()
+        # No scraper row — synthesised a stub.
+        assert 427543 in t._by_series
+        row = t._by_series[427543]
+        assert row["stage"] == "live"
+        assert row["steam_id"] == 8920681812
+        assert row["team_a"]["name"] == "TBD"  # socket only sends team_id
+        assert row["_socket_source"] is True
+        # Also seeded `_by_steam` for live enrichment.
+        assert 8920681812 in t._by_steam
+        assert t._by_steam[8920681812]["series_id"] == 427543
+
+    def test_ignores_non_numeric_keys(self, monkeypatch):
+        # Defensive: a malformed broadcast should not crash.
+        snap = {
+            "live":     {"bad": 1, "9999bad": 1, 1234567890: 427543},
+            "upcoming": [], "results": [],
+            "ts": 1.0, "stale": False,
+        }
+        from business import dltv_socket as real_ds
+        monkeypatch.setattr(real_ds, "get_series_state", lambda: snap)
+        t = _DiscoveryTracker()
+        t._merge_socket_series()
+        # Only the numeric pair made it through.
+        assert 427543 in t._by_series
+        assert t._by_series[427543]["steam_id"] == 1234567890
+
+    def test_upcoming_backfills_start_time_and_event_id(self, monkeypatch):
+        self._stub_socket(monkeypatch, upcoming=[
+            {"id": 427600, "event_id": 6617,
+             "started_at": "2026-07-30T12:00:00.000Z"},
+        ])
+        t = _DiscoveryTracker()
+        # Scraper had the row but with no start_time / event_id.
+        t._by_series[427600] = {
+            "series_id": 427600, "steam_id": None, "stage": "prematch",
+            "event": None, "event_id": None, "start_time": None,
+        }
+        t._merge_socket_series()
+        row = t._by_series[427600]
+        assert row["start_time"] == "2026-07-30T12:00:00.000Z"
+        assert row["event_id"] == 6617
+
+    def test_upcoming_synthesises_stub(self, monkeypatch):
+        self._stub_socket(monkeypatch, upcoming=[
+            {"id": 427600, "event_id": 6617,
+             "started_at": "2026-07-30T12:00:00.000Z"},
+        ])
+        t = _DiscoveryTracker()
+        t._merge_socket_series()
+        row = t._by_series[427600]
+        assert row["stage"] == "prematch"
+        assert row["team_a"]["name"] == "TBD"
+        assert row["_socket_source"] is True
+
+    def test_results_demote_live_to_postmatch(self, monkeypatch):
+        self._stub_socket(monkeypatch, results=[
+            {"id": 427543, "event_id": 6617,
+             "started_at": "2026-07-30T10:00:00.000Z"},
+        ])
+        t = _DiscoveryTracker()
+        t._by_series[427543] = {
+            "series_id": 427543, "steam_id": 8920681812, "stage": "live",
+        }
+        t._merge_socket_series()
+        # Live -> postmatch because the results list contains it.
+        assert t._by_series[427543]["stage"] == "postmatch"
+
+    def test_results_does_not_synthesise(self, monkeypatch):
+        # Unlike live/upcoming, the results list should NOT
+        # flood `_by_series` with finished matches.  Only rows
+        # the scraper is already tracking get demoted.
+        self._stub_socket(monkeypatch, results=[
+            {"id": 427543, "event_id": 6617},
+        ])
+        t = _DiscoveryTracker()
+        t._merge_socket_series()
+        assert 427543 not in t._by_series
+
+
+# ========================================================================== #
+# v0.4.0.3: dltv_socket.get_series_state / get_steam_id_for_series
+# ========================================================================== #
+
+class TestDltvSocketSeriesState:
+    """Pin the new shared-state surface on dltv_socket."""
+
+    def test_get_series_state_empty_initially(self):
+        from business import dltv_socket
+        with dltv_socket._lock:
+            dltv_socket._series_live = {}
+            dltv_socket._series_upcoming = []
+            dltv_socket._series_results = []
+            dltv_socket._series_ts = 0.0
+        snap = dltv_socket.get_series_state()
+        assert snap["live"] == {}
+        assert snap["upcoming"] == []
+        assert snap["results"] == []
+        assert snap["stale"] is True  # ts=0 -> stale
+
+    def test_get_series_state_marks_stale_after_ttl(self):
+        from business import dltv_socket
+        with dltv_socket._lock:
+            dltv_socket._series_live = {123: 456}
+            dltv_socket._series_upcoming = []
+            dltv_socket._series_results = []
+            dltv_socket._series_ts = time.monotonic() - (dltv_socket._SERIES_TTL_SEC + 1)
+        snap = dltv_socket.get_series_state()
+        assert snap["stale"] is True
+        assert snap["live"] == {123: 456}  # still returned (caller decides)
+
+    def test_get_steam_id_for_series_roundtrip(self):
+        from business import dltv_socket
+        with dltv_socket._lock:
+            dltv_socket._series_live = {8920681812: 427543, 8920700000: 427999}
+        try:
+            assert dltv_socket.get_steam_id_for_series(427543) == 8920681812
+            assert dltv_socket.get_steam_id_for_series(427999) == 8920700000
+            assert dltv_socket.get_steam_id_for_series(999_999) is None
+        finally:
+            with dltv_socket._lock:
+                dltv_socket._series_live = {}

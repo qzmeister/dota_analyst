@@ -580,6 +580,15 @@ class _DiscoveryTracker:
                     self._merge_scraped(scraped)
             except Exception as exc:
                 log.warning("scraper refresh failed: %s", exc, exc_info=False)
+        # v0.4.0.3: socket-based discovery fallback.  The
+        # `__nd2_series` channel pushes live/upcoming/results
+        # lists on a regular cadence.  We always run it (it's
+        # cheap — just a dict copy under the socket's lock) and
+        # it backfills any steam_id the scraper missed.  This is
+        # the second-socket bridge that keeps live cards showing
+        # the right teams when the HTTP scraper is dark.
+        with self._lock:
+            self._merge_socket_series()
 
     def _merge_scraped(self, scraped: List[Dict]) -> None:
         """Merge the scraper's rows into `_by_series`.
@@ -662,6 +671,182 @@ class _DiscoveryTracker:
             return None
         title = self._steam_to_event_title.get(int(steam_league_id)) or f"Event {eid}"
         return eid, title
+
+    # ---- socket-based discovery fallback (v0.4.0.3) ----
+
+    def _merge_socket_series(self) -> None:
+        """Pull the live/upcoming/results lists from the
+        dltv_socket's `__nd2_series` channel and merge them into
+        the tracker.
+
+        v0.4.0.3: this is the second-socket fallback for
+        discovery.  When the HTTP scraper is dark (DNS failure,
+        Cloudflare block, etc.) the dltv.org broadcast channel
+        still gives us enough to render the board:
+
+          * `live`     — `{steam_id: series_id}` — fills in
+                         steam_ids the scraper missed and gives
+                         us the bridge to live payload data
+          * `upcoming` — list of series with team_id, event_id,
+                         started_at — fed into `_by_series` as
+                         "prematch" stubs
+          * `results`  — list of finished series — fed into
+                         `_by_series` as "postmatch" stubs
+
+        For live matches the team names come from the
+        `__nd2_match_<steam_id>` payload (which the socket loop
+        already caches in `_state`); for upcoming/results we only
+        get team_id, so names stay "TBD" until the user opens
+        the match page or the v1 series API catches up.
+
+        This is best-effort: any failure (dltv_socket not
+        imported, channel never pushed, malformed payload) is
+        swallowed so a flaky socket doesn't break the tracker.
+        """
+        try:
+            from . import dltv_socket as _ds
+        except Exception:
+            return
+        try:
+            state = _ds.get_series_state()
+        except Exception as exc:
+            log.debug("dltv_socket.get_series_state failed: %s", exc)
+            return
+        if not state or state.get("stale"):
+            return
+
+        live_map: Dict[int, int] = state.get("live") or {}
+        upcoming: List[Dict] = state.get("upcoming") or []
+        results: List[Dict] = state.get("results") or []
+
+        with self._lock:
+            # 1) Live: backfill steam_id on existing scraper rows
+            #    AND add new live rows for steam_ids the scraper
+            #    didn't surface.
+            new_subs: Set[int] = set()  # steam_ids the socket should subscribe to
+            for steam_id, sid in live_map.items():
+                # Defensive: malformed payload (e.g. "bad" string
+                # keys) shouldn't crash the merge.  dltv_socket
+                # already coerces to int, but we double-check here
+                # so a buggy upstream can't poison the tracker.
+                try:
+                    steam_id_i = int(steam_id)
+                    sid_i = int(sid)
+                except (TypeError, ValueError):
+                    continue
+                if not steam_id_i or not sid_i:
+                    continue
+                prev = self._by_series.get(sid_i)
+                if prev is not None:
+                    # Backfill the steam_id we couldn't get from HTML.
+                    if not prev.get("steam_id"):
+                        prev["steam_id"] = steam_id_i
+                    # Promote to live (the socket broadcast is
+                    # authoritative for "this is happening now").
+                    prev["stage"] = "live"
+                else:
+                    # No scraper row yet — synthesise a stub.
+                    # The board will hydrate teams from the
+                    # live payload via `get_live_state(steam_id)`.
+                    self._by_series[sid_i] = {
+                        "series_id": sid_i,
+                        "steam_id": steam_id_i,
+                        "stage": "live",
+                        "event": None,
+                        "event_id": None,
+                        "bo": None,
+                        "team_a": {"name": "TBD", "logo": None, "tag": None, "rank": None},
+                        "team_b": {"name": "TBD", "logo": None, "tag": None, "rank": None},
+                        "start_time": None,
+                        "live_score": None,
+                        "game_no": None,
+                        "game_time": None,
+                        "_socket_source": True,
+                    }
+                # Also seed `_by_steam` so the live enrichment
+                # path (which keys off steam_id) can find it.
+                if steam_id_i not in self._by_steam:
+                    self._by_steam[steam_id_i] = {
+                        "series_id": sid_i,
+                        "steam_id": steam_id_i,
+                        "stage": "live",
+                        "_socket_source": True,
+                    }
+                # Mark the steam_id for subscription so the socket
+                # loop starts sending us `__nd2_match_<id>` payloads
+                # (which carry the real team names + picks + score).
+                # Done OUTSIDE the lock below because dltv_socket
+                # has its own.
+                new_subs.add(steam_id_i)
+            # Upcoming: synthesise a minimal prematch row per series.
+            for s in upcoming:
+                sid = s.get("id")
+                if not sid:
+                    continue
+                try:
+                    sid_i = int(sid)
+                except (TypeError, ValueError):
+                    continue
+                prev = self._by_series.get(sid_i)
+                if prev is None:
+                    self._by_series[sid_i] = {
+                        "series_id": sid_i,
+                        "steam_id": None,
+                        "stage": "prematch",
+                        "event": None,
+                        "event_id": s.get("event_id"),
+                        "bo": None,
+                        "team_a": {"name": "TBD", "logo": None, "tag": None, "rank": None},
+                        "team_b": {"name": "TBD", "logo": None, "tag": None, "rank": None},
+                        "start_time": s.get("started_at"),
+                        "live_score": None,
+                        "game_no": None,
+                        "game_time": None,
+                        "_socket_source": True,
+                    }
+                else:
+                    # Backfill start_time / event_id if scraper missed
+                    # them (common for fresh listings).
+                    if not prev.get("start_time") and s.get("started_at"):
+                        prev["start_time"] = s.get("started_at")
+                    if prev.get("event_id") is None and s.get("event_id") is not None:
+                        prev["event_id"] = s.get("event_id")
+            # Results: feed the postmatch pool.  We do NOT synthesise
+            # a row for every result — that would flood the postmatch
+            # column with hundreds of finished matches.  Only seed
+            # entries that already exist in `_by_series` (so a row
+            # the scraper is currently showing as "live" gets
+            # correctly transitioned to "postmatch" when the broadcast
+            # says it's finished).
+            for s in results:
+                sid = s.get("id")
+                if not sid:
+                    continue
+                try:
+                    sid_i = int(sid)
+                except (TypeError, ValueError):
+                    continue
+                prev = self._by_series.get(sid_i)
+                if prev is not None and prev.get("stage") in ("live", "prematch"):
+                    prev["stage"] = "postmatch"
+                    if not prev.get("start_time") and s.get("started_at"):
+                        prev["start_time"] = s.get("started_at")
+
+        # Subscribe + force-reconnect OUTSIDE the lock.  The
+        # dltv_socket server doesn't accept mid-session SUBSCRIBE
+        # packets (it closes the connection a few minutes later);
+        # the only reliable way to pick up new live matches is to
+        # drop the WS and re-open with the fresh subscription set.
+        # `force_reconnect()` is throttled to once per 30s so a
+        # chatty publisher can't pin us in reconnect loops.
+        if new_subs:
+            try:
+                from . import dltv_socket as _ds
+                for sid in new_subs:
+                    _ds.subscribe(int(sid))
+                _ds.force_reconnect()
+            except Exception as exc:
+                log.debug("dltv_socket subscribe/reconnect failed: %s", exc)
 
     # ---- probing /live/{id}.json for upcoming matches ---- #
 

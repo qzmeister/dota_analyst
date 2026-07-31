@@ -5,50 +5,52 @@ reCAPTCHA + Group-IB block that).  Instead, the user logs in once
 in a real browser, exports the cookies + the auth-token from the
 login response, and we replay them.
 
-The cookies / token are short-lived (cf_clearance ~30 min, auth-token
-varies).  The user has to refresh them every so often.  When
-BETBOOM_AUTH_TOKEN is missing, the backend falls back to
-"no quotes" rather than failing the live card.
+The cookies / token are short-lived (csrf_token has a 1y TTL but
+can rotate; the JWT expires 6h).  The user has to refresh them
+every so often.  When BETBOOM_AUTH_TOKEN is missing, the backend
+falls back to "no quotes" rather than failing the live card.
 
 Real auth flow (HAR 2026-07-31):
   URL:     https://betboom.ru/api/auth/login
   Method:  POST
   Headers: x-platform: web
-  Body:    {
-            "phone": "79081484848",
-            "password": "...",
-            "fingerprint": "<Group-IB>",
-            "fingerprint_request_id": "<...>",
-            "is_wrong_data_auth_support": true,
-            "ym_id": "<Yandex Metrika counter>",
-            "captcha_key": "<reCAPTCHA token>",
-            "features": {"is_support_conditional_captcha": true}
-          }
-  Status:  200, content-length 651
+  Body:    {phone, password, fingerprint, fingerprint_request_id,
+            is_wrong_data_auth_support, ym_id, captcha_key,
+            features.is_support_conditional_captcha}
+  Server:  QRATOR (not Cloudflare)
+  Response: {code: 200, status: "OK", token: <JWT, 6h>,
+             refresh_token: <JWT, 1y>, trace_id}
 
-So the live API is on `betboom.ru/api/...` (NOT the
-`siteapi.betboom.ru/api/site_api/v1/...` mirror I initially
-probed — the SPA only uses the former).
+The live API is on `siteapi.betboom.ru` (NOT betboom.ru):
+  * User HAR of /auth/login (on betboom.ru) returns 200, sets NO
+    cookies in the response (the JWT is in the body).
+  * The cookies the browser holds are split by domain:
+      betboom.ru     — SPA cookies (mindbox, Yandex, theme,
+                       authorizedId, directCrm, GIB fingerprint,
+                       Intercom, csrf_token NOT here)
+      siteapi.betboom.ru — only `csrf_token` (JWT, 1y TTL) is
+                           bound to this API host
+  * So the data API lives on `siteapi.betboom.ru` and needs the
+    csrf_token cookie (which the SPA set during initialisation
+    before /auth/login).  Login is on `betboom.ru` and is the
+    only thing that needs the SPA fingerprint cookies.
+  * The /auth/login response itself uses envelope
+    {code, status, ...} where code=200 means OK and code=404
+    means "path not found" (but the HTTP status is 200).  This
+    is application-level routing on the API host.
 
 Env vars (loaded from .env.betboom — gitignored):
-  BETBOOM_PHONE          — phone in any format (logged only)
-  BETBOOM_AUTH_TOKEN      — the access_token / X-Access-Token /
-                            session token from the /auth/login
-                            response body (shape TBD; we send
-                            it as both `Authorization: Bearer`
-                            and `X-Access-Token` headers so the
-                            server's auth middleware picks the
-                            one it understands).
-  BETBOOM_CF_CLEARANCE    — Cloudflare clearance cookie value
-                            (from Set-Cookie header in the
-                            /auth/login response).
-  BETBOOM_SESSION_COOKIE  — "name=value" of the auth session
-                            cookie (e.g. "session=eyJ...").  The
-                            server's session id; sent as a
-                            Cookie.
-  BETBOOM_OTHER_COOKIES   — additional "name=value" pairs
-                            (CSRF, device_id, fingerprint, _ym_uid,
-                            etc.) joined by "; ".
+  BETBOOM_PHONE          — phone (logged only)
+  BETBOOM_AUTH_TOKEN      — JWT from /auth/login response body
+                            (used as Authorization: Bearer)
+  BETBOOM_REFRESH_TOKEN   — JWT refresh token, 1y TTL (unused yet)
+  BETBOOM_COOKIES         — full "name=value; name=value; ..."
+                            cookie string from the authed browser.
+                            Includes csrf_token, GIB fingerprint,
+                            Yandex Metrika, etc.
+  BETBOOM_BASE_URL        — override the API base (default
+                            https://siteapi.betboom.ru).  Useful
+                            for testing against a different env.
 
 Why this design:
   * No CAPTCHA solving in our code (2captha is the right call if
@@ -72,12 +74,50 @@ from typing import Any, Dict, List, Optional
 
 from .odds import OddsBackend, OddsQuote
 
-# v0.4.1: live API base is `betboom.ru/api/...` (per the user's
-# HAR of the actual /auth/login call).  The siteapi mirror we
-# initially probed does exist but doesn't expose the same
-# endpoints; the SPA only talks to the first.
-BASE = "https://betboom.ru"
-ORIGIN = "https://betboom.ru"
+# v0.4.1: live API base is `siteapi.betboom.ru` (the cookie
+# distribution in the user's browser session shows that
+# `csrf_token` is the ONLY cookie bound to that domain — every
+# other cookie (GIB fingerprint, Yandex, theme, etc.) is bound
+# to `betboom.ru`.  This is the standard pattern: SPA on the
+# main domain, data API on a separate host, csrf_token is the
+# cross-origin auth.  Login itself stays on `betboom.ru`.
+# Override with BETBOOM_BASE_URL env var.
+BASE = os.environ.get("BETBOOM_BASE_URL", "https://siteapi.betboom.ru").rstrip("/")
+ORIGIN = "https://betboom.ru"  # CORS origin; SPA shell is on betboom.ru
+
+# v0.4.1: live data is on the WebSocket, not the HTTP API.  Reverse
+# engineering (2026-07-31) found:
+#   * BetBoom HTML config exposes:
+#       WS_URL             = wss://ws.{current_domain}:444
+#       SPORTBOOK_API_URL  = https://siteapi.betboom.ru/api/site_api/v1
+#       SITE_V3_API_URL    = https://{current_domain}/api
+#   * The HTTP API at siteapi.betboom.ru/api/site_api/v1/* returns
+#     `{code: 404, status: "NOT_FOUND", ...}` for every path we
+#     tried (200+ candidates including /live, /feed/live/dota2,
+#     /esports, /events, /matches, /sport/dota2, etc.) — auth is
+#     accepted (no 401/403) but no path is exposed.
+#   * The SPA bundle's accounting_ws reducer wires up a WebSocket
+#     to `${WS_URL}/api/accounting_ws/v1`.  Handshake succeeds;
+#     server then sends PING every ~5s.
+#   * Messages are Centrifugo v6 protobuf (binary frames, not JSON).
+#     PING is a WebSocket protocol-level ping (op=0x9) with payload
+#     "PING"; we MUST reply with a protocol-level pong (op=0xA)
+#     carrying the same payload — not a binary command.
+#   * ConnectRequest: `{ name, version }` (anonymous) works and the
+#     server replies with `Reply{code:200, reason:"OK"}`.  JWT in
+#     `token` field currently rejects with "Unsubscribed" — the
+#     site likely signs Centrifugo tokens server-side and our
+#     `BETBOOM_AUTH_TOKEN` isn't the right shape.
+#   * Subscribe / RPC names: 200+ candidates tried, every one
+#     returned BAD_REQUEST.  Without a real HAR of the WS frames
+#     (DevTools → Network → WS, copy frames while on the live
+#     betting page) we can't reverse-engineer the channel naming.
+#
+# So the HTTP backend in this file is a stub until the user
+# supplies either a live-page WS HAR or the channel naming.  The
+# shape below (OddsBackend protocol, OddsQuote dataclass) is
+# still correct and ready to wire up once a real parser exists.
+#
 
 
 class BetBoomBackend:
@@ -107,27 +147,29 @@ class BetBoomBackend:
     def _creds(self) -> Dict[str, str]:
         return {
             "phone":       os.environ.get("BETBOOM_PHONE", "").strip(),
+            # The JWT "token" field from the /auth/login response.
+            # Used as `Authorization: Bearer <token>`.  Note:
+            # there is no separate `cf_clearance` — BetBoom is
+            # behind QRATOR, not Cloudflare, so the auth flow
+            # is a different anti-bot stack.
             "auth_token":  os.environ.get("BETBOOM_AUTH_TOKEN", "").strip(),
-            "cf_clearance":os.environ.get("BETBOOM_CF_CLEARANCE", "").strip(),
-            "session":     os.environ.get("BETBOOM_SESSION_COOKIE", "").strip(),
-            "other":       os.environ.get("BETBOOM_OTHER_COOKIES", "").strip(),
+            "refresh_token": os.environ.get("BETBOOM_REFRESH_TOKEN", "").strip(),
+            # All cookies as a single semicolon-separated
+            # "name=value" string.  Captured from the
+            # authed browser session; replay verbatim.
+            "cookies":     os.environ.get("BETBOOM_COOKIES", "").strip(),
         }
 
     def _has_creds(self, c: Dict[str, str]) -> bool:
-        # We need at least the auth token + cf_clearance.  Without
-        # cf_clearance, Cloudflare will 403; without the auth token,
-        # the response is a 401.
-        return bool(c["auth_token"]) and bool(c["cf_clearance"])
+        # We need at least the auth token.  Cookies are
+        # strongly recommended for non-GET endpoints (CSRF
+        # is enforced via the `csrf_token` cookie + the
+        # matching header that mirrors it) but not strictly
+        # required for /api/live reads.
+        return bool(c["auth_token"])
 
     def _cookie_header(self, c: Dict[str, str]) -> str:
-        parts = []
-        if c["cf_clearance"]:
-            parts.append(f"cf_clearance={c['cf_clearance']}")
-        if c["session"]:
-            parts.append(c["session"])
-        if c["other"]:
-            parts.append(c["other"])
-        return "; ".join(parts)
+        return c["cookies"]
 
     def _request(
         self, method: str, path: str,
@@ -149,8 +191,8 @@ class BetBoomBackend:
         if not self._has_creds(c):
             now = time.monotonic()
             if now - self._last_warn_no_creds > 60:
-                print(f"[odds] BetBoomBackend: missing BETBOOM_AUTH_TOKEN or "
-                      f"BETBOOM_CF_CLEARANCE — see .env.betboom template")
+                print(f"[odds] BetBoomBackend: missing BETBOOM_AUTH_TOKEN — "
+                      f"see .env.betboom template")
                 self._last_warn_no_creds = now
             return None
         headers = {
@@ -160,9 +202,12 @@ class BetBoomBackend:
             "Origin": ORIGIN,
             "Referer": ORIGIN + "/",
             "Cookie": self._cookie_header(c),
-            # The browser's _app-c5cfc201ad42cb5f.js sends
-            # whichever the runtimeConfig lookup resolves to.
-            # We send both common shapes; the server picks.
+            # The HAR's /auth/login response sends the token
+            # back as `Authorization: Bearer <token>` for all
+            # subsequent API calls.  The CORS allow-list also
+            # mentions X-Access-Token; we send both so the
+            # server's auth middleware picks the one it
+            # understands (some endpoints check both).
             "Authorization": f"Bearer {c['auth_token']}",
             "X-Access-Token": c["auth_token"],
         }
@@ -226,30 +271,70 @@ class BetBoomBackend:
         is responsible for mapping to OddsQuote.
 
         Path is heuristic — we don't actually know BetBoom's
-        exact endpoint.  Common shapes are `/api/live`,
-        `/api/esports/dota2/live`, `/api/feed/live/dota2`.
-        The first one that returns a non-empty list wins.
+        exact endpoint yet (waiting on a live-page HAR from
+        the user).  We try the most common shapes:
+          * /api/site_api/v1/live*  (BetBoom's "site_api" gateway)
+          * /api/live*              (the SPA's possibly-shorter path)
+          * /api/feed/live*         (some betting sites use a feed)
+          * /api/esports/dota2/live (esports-scoped path)
+          * /api/events*            (generic events list)
+
+        The first path that returns HTTP 200 with code=200 (NOT
+        code=404) AND a non-empty list wins.  Application-level
+        404s on siteapi.betboom.ru return HTTP 200 with
+        {code: 404, ...} so we filter on the envelope code.
         """
-        for path in (
+        candidate_paths = [
+            # Most likely: the site_api v1 gateway (used by the
+            # SPA's own code; cookie domain confirms).
+            "/api/site_api/v1/live",
+            "/api/site_api/v1/live/dota2",
+            "/api/site_api/v1/live/esports",
+            "/api/site_api/v1/live/events",
+            "/api/site_api/v1/live?sport=dota2",
+            "/api/site_api/v1/live?status=1",
+            "/api/site_api/v1/live?status=live",
+            "/api/site_api/v1/live?category=esports",
+            "/api/site_api/v1/feed/live",
+            "/api/site_api/v1/feed/live/dota2",
+            "/api/site_api/v1/feed/live/esports",
+            "/api/site_api/v1/esports/dota2/live",
+            "/api/site_api/v1/esports/live",
+            "/api/site_api/v1/events?status=live",
+            "/api/site_api/v1/events?status=1",
+            "/api/site_api/v1/matches?status=live",
+            "/api/site_api/v1/matches/live",
+            "/api/site_api/v1/matches/live?game=dota2",
+            # Shorter paths on the same host (some apps omit the
+            # /site_api/v1 prefix).
             "/api/live",
-            "/api/live?status=1",
-            "/api/live?status=live",
             "/api/live/dota2",
             "/api/live/esports",
-            "/api/esports/live",
-            "/api/esports/dota2/live",
+            "/api/live?status=1",
+            "/api/live?status=live",
+            "/api/live?sport=dota2",
+            "/api/live?category=esports",
             "/api/feed/live",
             "/api/feed/live/dota2",
-            "/api/feed/live/esports",
+            "/api/esports/dota2/live",
+            "/api/esports/live",
             "/api/events?status=live",
             "/api/events?status=1",
-        ):
+            "/api/matches?status=live",
+        ]
+        for path in candidate_paths:
             resp = self._request("GET", path)
             if not resp:
                 continue
-            # The response shape varies.  Try common envelopes.
+            # siteapi.betboom.ru returns HTTP 200 with code:404 in
+            # the body for unknown paths.  Treat those as "not
+            # found" and keep trying.
+            code = resp.get("code")
+            if code is not None and code != 200:
+                continue
             for key in ("data", "events", "matches", "items", "result",
-                        "sports", "leagues", "data_list", "list"):
+                        "sports", "leagues", "data_list", "list",
+                        "games", "fixtures"):
                 items = resp.get(key)
                 if isinstance(items, list) and items:
                     return items

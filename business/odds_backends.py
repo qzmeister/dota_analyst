@@ -10,19 +10,48 @@ varies).  The user has to refresh them every so often.  When
 BETBOOM_AUTH_TOKEN is missing, the backend falls back to
 "no quotes" rather than failing the live card.
 
+Real auth flow (HAR 2026-07-31):
+  URL:     https://betboom.ru/api/auth/login
+  Method:  POST
+  Headers: x-platform: web
+  Body:    {
+            "phone": "79081484848",
+            "password": "...",
+            "fingerprint": "<Group-IB>",
+            "fingerprint_request_id": "<...>",
+            "is_wrong_data_auth_support": true,
+            "ym_id": "<Yandex Metrika counter>",
+            "captcha_key": "<reCAPTCHA token>",
+            "features": {"is_support_conditional_captcha": true}
+          }
+  Status:  200, content-length 651
+
+So the live API is on `betboom.ru/api/...` (NOT the
+`siteapi.betboom.ru/api/site_api/v1/...` mirror I initially
+probed — the SPA only uses the former).
+
 Env vars (loaded from .env.betboom — gitignored):
-  BETBOOM_PHONE          — used for logs only
-  BETBOOM_AUTH_TOKEN      — the `access_token` from /auth/login response
-                            (or whatever the response carries — could be
-                            `session_token`, `X-Access-Token`, etc.)
+  BETBOOM_PHONE          — phone in any format (logged only)
+  BETBOOM_AUTH_TOKEN      — the access_token / X-Access-Token /
+                            session token from the /auth/login
+                            response body (shape TBD; we send
+                            it as both `Authorization: Bearer`
+                            and `X-Access-Token` headers so the
+                            server's auth middleware picks the
+                            one it understands).
   BETBOOM_CF_CLEARANCE    — Cloudflare clearance cookie value
-  BETBOOM_SESSION_COOKIE  — "name=value" pair of the auth session cookie
-                            (e.g. "_session=eyJhbGciOi...")
-  BETBOOM_OTHER_COOKIES   — additional "name=value" pairs to send, joined
-                            by "; " (e.g. "_csrf=...; device_id=...")
+                            (from Set-Cookie header in the
+                            /auth/login response).
+  BETBOOM_SESSION_COOKIE  — "name=value" of the auth session
+                            cookie (e.g. "session=eyJ...").  The
+                            server's session id; sent as a
+                            Cookie.
+  BETBOOM_OTHER_COOKIES   — additional "name=value" pairs
+                            (CSRF, device_id, fingerprint, _ym_uid,
+                            etc.) joined by "; ".
 
 Why this design:
-  * No CAPTCHA solving in our code (2captcha is the right call if
+  * No CAPTCHA solving in our code (2captha is the right call if
     we want automation; we deliberately don't for now).
   * No persistent Playwright browser (heavy + fragile).
   * User does the login once in their own browser, exports state,
@@ -43,7 +72,11 @@ from typing import Any, Dict, List, Optional
 
 from .odds import OddsBackend, OddsQuote
 
-BASE = "https://siteapi.betboom.ru"
+# v0.4.1: live API base is `betboom.ru/api/...` (per the user's
+# HAR of the actual /auth/login call).  The siteapi mirror we
+# initially probed does exist but doesn't expose the same
+# endpoints; the SPA only talks to the first.
+BASE = "https://betboom.ru"
 ORIGIN = "https://betboom.ru"
 
 
@@ -102,7 +135,13 @@ class BetBoomBackend:
         params: Optional[Dict[str, str]] = None,
         timeout: float = 5.0,
     ) -> Optional[Dict[str, Any]]:
-        url = BASE + path
+        # v0.4.1: paths are relative to `https://betboom.ru` now
+        # (was siteapi.betboom.ru).  If the caller passes an
+        # absolute URL, use it as-is.
+        if path.startswith("http"):
+            url = path
+        else:
+            url = BASE + path
         if params:
             from urllib.parse import urlencode
             url = url + "?" + urlencode(params)
@@ -115,22 +154,21 @@ class BetBoomBackend:
                 self._last_warn_no_creds = now
             return None
         headers = {
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) dota-analyst/0.4",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x64) dota-analyst/0.4",
             "Accept": "application/json",
+            "x-platform": "web",
             "Origin": ORIGIN,
             "Referer": ORIGIN + "/",
             "Cookie": self._cookie_header(c),
-            # Try a few common auth header shapes — BetBoom
-            # hasn't documented which one.  The browser sends
-            # whichever the SPA's `runtimeConfig` lookup resolves
-            # to.  We send all three and let the server pick.
+            # The browser's _app-c5cfc201ad42cb5f.js sends
+            # whichever the runtimeConfig lookup resolves to.
+            # We send both common shapes; the server picks.
             "Authorization": f"Bearer {c['auth_token']}",
             "X-Access-Token": c["auth_token"],
-            "platform": "web",
         }
         if body is not None:
             data = json.dumps(body).encode("utf-8")
-            headers["Content-Type"] = "application/json"
+            headers["Content-Type"] = "application/json;charset=UTF-8"
             req = urllib.request.Request(url, data=data, method=method, headers=headers)
         else:
             req = urllib.request.Request(url, method=method, headers=headers)
@@ -174,12 +212,10 @@ class BetBoomBackend:
         now = time.monotonic()
         if self._session_ok is not None and (now - self._last_session_check) < self._session_check_ttl:
             return self._session_ok
-        # The /auth/session endpoint exists (we saw it earlier)
-        # and the right answer for a valid session is a 200 with
-        # the user payload.  We don't have the exact path —
-        # fall back to /ping (which is public) and consider
-        # session valid if we get a non-401.  This is best-effort.
-        resp = self._request("GET", "/api/site_api/v1/ping")
+        # Use the /api/live endpoint as the probe — public-ish
+        # but auth-required for real data.  A 200 means the
+        # auth token works; 401/403 means the session is dead.
+        resp = self._request("GET", "/api/live")
         self._session_ok = resp is not None
         self._last_session_check = now
         return self._session_ok
@@ -190,25 +226,30 @@ class BetBoomBackend:
         is responsible for mapping to OddsQuote.
 
         Path is heuristic — we don't actually know BetBoom's
-        endpoint.  Common shapes are `/live`, `/events/live`,
-        `/feed/live/dota2`.  The first one that returns a
-        non-empty list wins.
+        exact endpoint.  Common shapes are `/api/live`,
+        `/api/esports/dota2/live`, `/api/feed/live/dota2`.
+        The first one that returns a non-empty list wins.
         """
         for path in (
-            "/api/site_api/v1/live",
-            "/api/site_api/v1/live/dota2",
-            "/api/site_api/v1/live/events",
-            "/api/site_api/v1/events?status=live",
-            "/api/site_api/v1/events?status=1",
-            "/api/site_api/v1/feed/live",
-            "/api/site_api/v1/feed/live/dota2",
-            "/api/site_api/v1/prematch?status=live",
+            "/api/live",
+            "/api/live?status=1",
+            "/api/live?status=live",
+            "/api/live/dota2",
+            "/api/live/esports",
+            "/api/esports/live",
+            "/api/esports/dota2/live",
+            "/api/feed/live",
+            "/api/feed/live/dota2",
+            "/api/feed/live/esports",
+            "/api/events?status=live",
+            "/api/events?status=1",
         ):
             resp = self._request("GET", path)
             if not resp:
                 continue
             # The response shape varies.  Try common envelopes.
-            for key in ("data", "events", "matches", "items", "result"):
+            for key in ("data", "events", "matches", "items", "result",
+                        "sports", "leagues", "data_list", "list"):
                 items = resp.get(key)
                 if isinstance(items, list) and items:
                     return items
@@ -237,16 +278,18 @@ class BetBoomBackend:
                 ev.get("team_a_name") or
                 ev.get("home_name") or
                 ev.get("first_team_name") or
-                (ev.get("opponents") or [{}])[0].get("name") or
+                ev.get("team_a") or
+                ev.get("home") or
                 ev.get("title") or
-                ""
+                (ev.get("opponents") or [{}])[0].get("name") if ev.get("opponents") else ""
             )
             team_b = (
                 ev.get("team_b_name") or
                 ev.get("away_name") or
                 ev.get("second_team_name") or
-                (ev.get("opponents") or [{}, {}])[1].get("name") or
-                ""
+                ev.get("team_b") or
+                ev.get("away") or
+                (ev.get("opponents") or [{}, {}])[1].get("name") if ev.get("opponents") else ""
             )
             if not (team_a and team_b):
                 continue
@@ -310,7 +353,7 @@ class BetBoomBackend:
 
 # To enable, set:
 #   ODDS_BACKEND=business.odds_backends.BetBoomBackend
-#   BETBOOM_AUTH_TOKEN=<from /auth/login response>
-#   BETBOOM_CF_CLEARANCE=<from cookies>
+#   BETBOOM_AUTH_TOKEN=<from /auth/login response body>
+#   BETBOOM_CF_CLEARANCE=<from Set-Cookie header of /auth/login>
 #   BETBOOM_SESSION_COOKIE=session=eyJ...
-#   BETBOOM_OTHER_COOKIES=_csrf=...; device_id=...
+#   BETBOOM_OTHER_COOKIES=_csrf=...; device_id=...; _ym_uid=...

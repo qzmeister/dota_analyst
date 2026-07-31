@@ -15,6 +15,7 @@ from .analysis import analyze, analyze_map_with_verdict, decode_towers
 from .dltv_client import client, _parse_dt
 from .exceptions import AccuracyError, DotaAnalystError, MLError
 from .ml.engine import get_default_engine
+from . import odds as _odds
 
 log = get_logger(__name__)
 
@@ -645,6 +646,41 @@ def _live_card(series: Dict, event_title: str) -> Dict:
                 return None
         return None
 
+    def _compute_odds(
+        m: Dict, predictions: Dict, radiant_is_first: bool,
+        prob_radiant: Optional[float],
+    ) -> Dict[str, Any]:
+        """v0.4.1: bookmaker odds + edge.  Fail-soft — returns
+        empty markets if the backend is unconfigured or the
+        call is slow.  See business/odds.py for backend wiring.
+        """
+        try:
+            pk = predictions.get("kills")
+            predicted_kills_val = (pk.get("total") if isinstance(pk, dict) else pk)
+            try:
+                predicted_kills_val = float(predicted_kills_val) if predicted_kills_val is not None else None
+            except (TypeError, ValueError):
+                predicted_kills_val = None
+            pd_raw = predictions.get("duration_sec")
+            if pd_raw is None:
+                pd_raw = predictions.get("duration_min")
+            try:
+                predicted_duration_val = float(pd_raw) if pd_raw is not None else None
+            except (TypeError, ValueError):
+                predicted_duration_val = None
+            return _odds.compute_edge_for_card(
+                match_id=int(m.get("steam_id") or 0),
+                prob_radiant=prob_radiant,
+                predicted_kills=predicted_kills_val,
+                predicted_duration=predicted_duration_val,
+                radiant_is_first=radiant_is_first,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # The odds subsystem is best-effort.  A bug there
+            # must NOT take down the live card.
+            log.debug("odds: compute_edge_for_card failed: %s", exc)
+            return {"winner": {}, "total_kills": {}, "duration": {}}
+
     first = client.normalize_team(series.get("first_team"))
     second = client.normalize_team(series.get("second_team"))
     first_id = series.get("first_team_id")
@@ -1260,9 +1296,9 @@ def _live_card(series: Dict, event_title: str) -> Dict:
     # we also drop a separate `snapshot=True` row that is frozen
     # for post-match comparison (separate `scored_snapshot` verdict
     # key so live updates don't clobber it).
+    winner_info = predictions.get("winner") or {}
+    prob_radiant = winner_info.get("prob_radiant")
     try:
-        winner_info = predictions.get("winner") or {}
-        prob_radiant = winner_info.get("prob_radiant")
         game_time_now = _coerce_int(m.get("game_time"))
         # Predicted kills / duration from the v17 / hybrid dict.
         # v17 returns these as floats under different keys than the
@@ -1420,6 +1456,12 @@ def _live_card(series: Dict, event_title: str) -> Dict:
             "dire_bans": _bans_to_cards(m.get("dire_bans"), use_steam_id=is_watchlist),
         },
         "predictions": predictions,
+        # v0.4.1: bookmaker odds + edge.  Stubbed by default (no
+        # real backend configured); see business/odds.py for
+        # how to wire a paid/free/scrape backend.  Fail-soft —
+        # the live card renders without this if the odds call
+        # is slow or broken.
+        "odds": _compute_odds(m, predictions, radiant_is_first, prob_radiant),
         # v0.3.24: surface the "synthesised from Steam raw, no DLTV coverage"
         # marker so the server-side /api/board filter can drop these
         # by default — they were polluting the board with 50+ Chinese

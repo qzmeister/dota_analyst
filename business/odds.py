@@ -124,6 +124,11 @@ class StubBackend:
             self._last_log = now
         return []
 
+    def get_all_live_quotes(self) -> Dict[str, List[OddsQuote]]:
+        # v0.4.1: bulk snapshot for the poller cache.  Stub
+        # always returns {} so the poller runs no-ops.
+        return {}
+
 
 # Sentinel used by the live card; the real backends are loaded
 # lazily by `get_backend()` when the first quote is requested.
@@ -226,6 +231,7 @@ def compute_edge_for_card(
     predicted_kills: Optional[float],
     predicted_duration: Optional[float],
     radiant_is_first: bool = True,
+    quotes: Optional[List["OddsQuote"]] = None,
 ) -> Dict[str, Any]:
     """Return a dict of {winner, total_kills, duration} with quotes + edge.
 
@@ -237,16 +243,24 @@ def compute_edge_for_card(
             "edge_radiant": 0.07,   # our_prob_radiant - bookmaker_implied
             "edge_dire": -0.07,
         }
+
+    When `quotes` is provided, we skip the backend call entirely
+    — the caller has already fetched them (e.g. from a poller
+    cache).  When `quotes` is None, we fall back to
+    `backend.get_quotes(match_id)` for a one-shot lookup.  The
+    live card always passes `quotes` so the per-card cost is
+    constant.
     """
-    backend = get_backend()
-    try:
-        quotes = backend.get_quotes(int(match_id)) or []
-    except Exception as exc:
-        # Fail-soft: log + return empty odds block.  The live card
-        # should still render the prediction without odds if the
-        # bookmaker is unreachable.
-        print(f"[odds] backend {backend.name!r} raised on {match_id}: {exc}")
-        quotes = []
+    if quotes is None:
+        backend = get_backend()
+        try:
+            quotes = backend.get_quotes(int(match_id)) or []
+        except Exception as exc:
+            # Fail-soft: log + return empty odds block.  The live card
+            # should still render the prediction without odds if the
+            # bookmaker is unreachable.
+            print(f"[odds] backend {backend.name!r} raised on {match_id}: {exc}")
+            quotes = []
 
     out: Dict[str, Any] = {"winner": {}, "total_kills": {}, "duration": {}}
 

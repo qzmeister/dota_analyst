@@ -667,6 +667,13 @@ def _live_card(series: Dict, event_title: str) -> Dict:
         """v0.4.1: bookmaker odds + edge.  Fail-soft — returns
         empty markets if the backend is unconfigured or the
         call is slow.  See business/odds.py for backend wiring.
+
+        Team-pair lookup: the configured backend's quotes are
+        keyed by `"{team_a}|{team_b}"` (lowercased) where
+        team_a/team_b match the bookmaker's "first team" /
+        "second team" labels.  We pull from the `odds_live`
+        module's cache (refreshed by the background poller)
+        rather than blocking on a network call here.
         """
         try:
             pk = predictions.get("kills")
@@ -682,12 +689,29 @@ def _live_card(series: Dict, event_title: str) -> Dict:
                 predicted_duration_val = float(pd_raw) if pd_raw is not None else None
             except (TypeError, ValueError):
                 predicted_duration_val = None
+            # Pull from the poller's cache by team-pair.  We try
+            # the original first/second ordering first; if the
+            # cache misses we try the swapped ordering (some
+            # bookmakers key by home/away which may not match
+            # our radiant/dire).
+            quotes: List = []
+            try:
+                from . import odds_live as _odds_live
+                first_name = (first.get("name") or "").strip()
+                second_name = (second.get("name") or "").strip()
+                quotes = _odds_live.get_quotes_for_teams(first_name, second_name)
+                if not quotes:
+                    quotes = _odds_live.get_quotes_for_teams(second_name, first_name)
+            except Exception as exc:
+                log.debug("odds: cache lookup failed: %s", exc)
+                quotes = []
             return _odds.compute_edge_for_card(
                 match_id=int(m.get("steam_id") or 0),
                 prob_radiant=prob_radiant,
                 predicted_kills=predicted_kills_val,
                 predicted_duration=predicted_duration_val,
                 radiant_is_first=radiant_is_first,
+                quotes=quotes,
             )
         except Exception as exc:  # noqa: BLE001
             # The odds subsystem is best-effort.  A bug there

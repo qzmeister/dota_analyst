@@ -225,6 +225,15 @@ async def _lifespan(app: FastAPI):
     opendota_live.start_poller()
     log.info("opendota_live poller started (background thread)")
 
+    # v0.4.1: bookmaker odds.  Polls `ODDS_BACKEND` (if configured)
+    # and caches live-quotes by team-pair.  No-op when no backend
+    # is configured (the StubBackend returns []).  Default 60s
+    # interval — change with `ODDS_LIVE_POLL_SEC`.
+    from . import odds_live
+    odds_live.start_poller()
+    log.info("odds_live poller started (background thread, interval=%.1fs)",
+             odds_live.POLL_INTERVAL_SEC)
+
     try:
         yield
     finally:
@@ -242,7 +251,13 @@ async def _lifespan(app: FastAPI):
             opendota_live.stop_poller(timeout=3.0)
         except Exception:
             pass
-        log.info("sse publisher + accuracy scorer + player_wr browser + dltv socket + opendota_live stopped")
+        try:
+            from . import odds_live
+            odds_live.stop_poller(timeout=3.0)
+        except Exception:
+            pass
+        log.info("sse publisher + accuracy scorer + player_wr browser + dltv socket + "
+                 "opendota_live + odds_live stopped")
 
 
 app = FastAPI(title="Dota Analyst — business", version="0.4.0", lifespan=_lifespan)
@@ -322,6 +337,45 @@ def get_leagues():
     # appear at the top of the picker.
     leagues.sort(key=lambda L: (-L["match_count"], (L["title"] or "").lower()))
     return {"leagues": leagues}
+
+
+@app.get("/api/odds/all")
+async def get_all_odds():
+    """v0.4.1: dump the live-quotes cache (post-TTL).
+
+    The frontend uses this to render a dedicated odds page or
+    to show the bookmaker overlay outside the live card (e.g.
+    in a modal that opens when the user clicks a match).
+    Per-match lookup is via `predictions.odds` on `/api/board`.
+
+    Returns:
+      {
+        "backend": "betboom" | "stub" | ...,
+        "ts":   <unix timestamp of when this snapshot was assembled>,
+        "size": <number of team-pair keys>,
+        "items": [
+          {"key": "team a|team b", "quotes": [...]},
+          ...
+        ]
+      }
+    """
+    from . import odds_live as _odds_live
+    from .odds import get_backend
+    snap = _odds_live.get_all_live_quotes()
+    return {
+        "backend": get_backend().name,
+        "ts": int(time.time()),
+        "size": len(snap),
+        "items": [
+            {"key": k, "quotes": [
+                {"market": q.market, "selection": q.selection,
+                 "decimal_odds": q.decimal_odds, "implied_prob": q.implied_prob,
+                 "bookmaker": q.bookmaker}
+                for q in quotes
+            ]}
+            for k, quotes in snap.items()
+        ],
+    }
 
 
 @app.get("/api/board")

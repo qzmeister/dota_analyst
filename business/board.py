@@ -1254,9 +1254,54 @@ def _live_card(series: Dict, event_title: str) -> Dict:
     # We record exactly one prediction per (match_id, game_no).  The
     # board is rebuilt every 5 seconds; without dedup we'd log 12
     # identical rows per minute per live match.
+    # v0.4.0.3: live tracking.  Every rebuild in the in-game phase
+    # writes a row (dedup-bucketed by game_time // 30 → ~60 rows
+    # per match).  When the game first enters the 3-5 min window
+    # we also drop a separate `snapshot=True` row that is frozen
+    # for post-match comparison (separate `scored_snapshot` verdict
+    # key so live updates don't clobber it).
     try:
         winner_info = predictions.get("winner") or {}
         prob_radiant = winner_info.get("prob_radiant")
+        game_time_now = _coerce_int(m.get("game_time"))
+        # Predicted kills / duration from the v17 / hybrid dict.
+        # v17 returns these as floats under different keys than the
+        # legacy engine — handle both.
+        pk = predictions.get("kills")
+        predicted_kills_val = (pk.get("total") if isinstance(pk, dict) else pk)
+        if predicted_kills_val is not None:
+            try:
+                predicted_kills_val = float(predicted_kills_val)
+            except (TypeError, ValueError):
+                predicted_kills_val = None
+        pd_raw = predictions.get("duration_sec")
+        if pd_raw is None:
+            pd_raw = predictions.get("duration_min")
+        if pd_raw is not None:
+            try:
+                predicted_duration_val = float(pd_raw)
+            except (TypeError, ValueError):
+                predicted_duration_val = None
+        else:
+            predicted_duration_val = None
+        pf15_raw = predictions.get("first_15_kills")
+        if pf15_raw is not None:
+            try:
+                predicted_first_15_val = float(pf15_raw)
+            except (TypeError, ValueError):
+                predicted_first_15_val = None
+        else:
+            predicted_first_15_val = None
+        # Short score string for the human log.  e.g. "16/12@4:30".
+        # We pull the live scores from m directly (the response
+        # builds a `live_score: {radiant, dire}` field for the
+        # front-end, but on the engine side we just have the
+        # raw m["radiant_score"] / m["dire_score"]).
+        rs = _coerce_int(m.get("radiant_score")) or 0
+        ds = _coerce_int(m.get("dire_score")) or 0
+        gm = int(game_time_now) if game_time_now is not None else 0
+        # "16/12@4:30" or "0/0@0:00" when game hasn't started
+        game_state_val = f"{rs}/{ds}@{gm//60}:{gm%60:02d}"
         if prob_radiant is not None:
             # ML engine emits `team` as a team NAME; we store a SIDE
             # label so `_compare` in accuracy.py can match it to the
@@ -1281,7 +1326,39 @@ def _live_card(series: Dict, event_title: str) -> Dict:
                     "game_no": game_no,
                     "radiant_is_first": radiant_is_first,
                 },
+                game_time=game_time_now,
+                predicted_kills=predicted_kills_val,
+                predicted_duration=predicted_duration_val,
+                predicted_first_15=predicted_first_15_val,
+                game_state=game_state_val,
             )
+            # v0.4.0.3: 3-5 min snapshot.  When game_time first
+            # enters the [180, 300] second window, drop a frozen
+            # row.  The dedup key in accuracy.py is
+            # (match_id, "snapshot_3_5min") so subsequent rebuilds
+            # in the same window coalesce.
+            if game_time_now is not None and 180 <= game_time_now <= 300:
+                record_prediction(
+                    match_id=m.get("steam_id"),
+                    series_id=series.get("id"),
+                    predicted_winner=predicted_side,
+                    predicted_probability=max(prob_radiant, 1.0 - prob_radiant),
+                    engine=engine_name,
+                    extra={
+                        "team_a_id": first_id,
+                        "team_a_name": first.get("name"),
+                        "team_b_id": series.get("second_team_id"),
+                        "team_b_name": second.get("name"),
+                        "game_no": game_no,
+                        "radiant_is_first": radiant_is_first,
+                    },
+                    game_time=game_time_now,
+                    predicted_kills=predicted_kills_val,
+                    predicted_duration=predicted_duration_val,
+                    predicted_first_15=predicted_first_15_val,
+                    game_state=game_state_val,
+                    snapshot=True,
+                )
     except AccuracyError as exc:
         # Tracking is best-effort — a missing log dir or write race
         # must not break board rendering.

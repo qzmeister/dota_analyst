@@ -122,8 +122,10 @@ _DROP_SUFFIXES = (
     "gaming",
     "team",
     "club",
-    "gg",  # may conflict — checked AFTER alias map
-    "go",  # ditto
+    "brothers",   # Yakult Brothers -> yakult
+    "academy",    # Inner Circle Academy -> inner circle
+    "gg",         # may conflict — checked AFTER alias map
+    "go",         # ditto
 )
 
 # Prefixes to strip.

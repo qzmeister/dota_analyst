@@ -588,6 +588,23 @@ class OddsApiIOBackend:
         "esports-dota-2",
     )
 
+    # Substrings of participant names that strongly suggest a Dota 2
+    # match.  Used as a tiebreaker when the league slug is missing
+    # or doesn't contain "dota" — e.g. a third-party organiser
+    # that doesn't tag their league with "dota" in the slug.
+    # Keep this list small and conservative: a false positive
+    # here means we pay for /v3/odds/multi on a non-Dota2 match
+    # and the live card shows "no odds" anyway.  Better to miss
+    # and let the live card show empty than to spam the API.
+    DOTA2_TEAM_TOKENS = (
+        "team liquid", "team spirit", "team falcons", "team tidebound",
+        "team secret", "team heroic", "og", "tsm", "eg ",
+        "evil geniuses", "betboom", "gaimin gladiators", "parivision",
+        "nouns", "aurora", "xtreme gaming", "talon", "tundra",
+        "shopify rebellion", "mouz", "lgd", "psg.lgd", "rng",
+        "invictus gaming", "virtus.pro", "vp ", "spirit",
+    )
+
     def __init__(self) -> None:
         self._last_warn_no_creds: float = 0.0
         self._last_session_check: float = 0.0
@@ -599,9 +616,15 @@ class OddsApiIOBackend:
         # Comma-separated bookmaker filter; default = use whatever
         # the user's plan has.  When set, we send this on every
         # /odds call so we only pay for the books we care about.
-        self._bookmakers = (
+        self._bookmakers_env = (
             os.environ.get("ODDS_API_BOOKMAKERS", "").strip()
         )
+        # Bookmakers we discovered from /v3/bookmakers/selected at
+        # the last probe.  Cached for 1 hour so we don't re-probe
+        # on every poll cycle.  When env is not set, we use these.
+        self._selected_bookmakers: List[str] = []
+        self._selected_bookmakers_ts: float = 0.0
+        self._selected_bookmakers_ttl = 3600.0  # 1 hour
 
     # -- env helpers -----------------------------------------------------
 
@@ -618,7 +641,7 @@ class OddsApiIOBackend:
         method: str,
         path: str,
         params: Optional[Dict[str, str]] = None,
-        timeout: float = 6.0,
+        timeout: float = 10.0,
     ) -> Optional[Any]:
         """Thin wrapper around urllib that injects the apiKey.
 
@@ -710,6 +733,17 @@ class OddsApiIOBackend:
 
         The cheapest authenticated endpoint is `/bookmakers/selected`
         which returns the user's enabled bookmakers.  We use that.
+
+        Returns True if the last probe returned 2xx, False on
+        401/403.  Returns the *previous* value on transient
+        network errors so the caller doesn't flip to "dead" on
+        a one-off timeout.
+
+        Side effects:
+          * Sets `self._session_ok` to True / False / leaves alone
+            depending on outcome (see above).
+          * Refreshes `self._selected_bookmakers` from the
+            response (used by `_effective_bookmakers`).
         """
         now = time.monotonic()
         if (
@@ -717,13 +751,79 @@ class OddsApiIOBackend:
             and (now - self._last_session_check) < self._session_check_ttl
         ):
             return self._session_ok
-        resp = self._request("GET", "/bookmakers/selected")
-        # 200 with a list (possibly empty) = OK
-        # 401/403 = dead
-        # None (network) = not "OK" but not necessarily "dead"
-        self._session_ok = resp is not None
-        self._last_session_check = now
-        return self._session_ok
+        # We can't tell apart 401/403 from network errors with
+        # `_request()` alone (it returns None for both).  Make
+        # the call manually here so we can classify.
+        if not self._has_key():
+            self._session_ok = False
+            return False
+        qp: Dict[str, str] = {"apiKey": self._key()}
+        url = self._base_url + "/bookmakers/selected?" + urllib.parse.urlencode(qp)
+        req = urllib.request.Request(
+            url, method="GET",
+            headers={"User-Agent": "dota-analyst/0.4.2", "Accept": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10.0) as r:
+                body = r.read().decode("utf-8", errors="replace")
+                try:
+                    resp = json.loads(body) if body else None
+                except json.JSONDecodeError:
+                    resp = None
+                # 200 with a list (possibly empty) = OK
+                self._session_ok = True
+                self._last_session_check = now
+                # Refresh selected-bookmakers cache
+                if isinstance(resp, dict) and isinstance(resp.get("bookmakers"), list):
+                    self._selected_bookmakers = [
+                        str(b) for b in resp["bookmakers"] if b
+                    ]
+                    self._selected_bookmakers_ts = now
+                elif isinstance(resp, list):
+                    self._selected_bookmakers = [str(b) for b in resp if b]
+                    self._selected_bookmakers_ts = now
+                return True
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                # Auth really failed.  Mark dead.
+                self._session_ok = False
+                self._last_session_check = now
+                self._handle_http_error("GET", "/bookmakers/selected", e)
+                return False
+            # Other HTTP errors (5xx, 429) — log but don't mark dead
+            self._handle_http_error("GET", "/bookmakers/selected", e)
+            # Leave _session_ok as-is (could be True from prior
+            # successful probe, or None if first try).
+            return bool(self._session_ok)
+        except (urllib.error.URLError, TimeoutError) as e:
+            # Network blip — log once per minute but DON'T change
+            # _session_ok.  Returning the previous value keeps
+            # the data-fetch path open for the actual call.
+            if time.monotonic() - self._last_warn_no_creds > 60:
+                log.warning(
+                    "OddsApiIOBackend: probe network error: %s", e,
+                )
+                self._last_warn_no_creds = time.monotonic()
+            return bool(self._session_ok)
+
+    def _effective_bookmakers(self) -> Optional[str]:
+        """Pick the bookmaker list to send on /v3/odds/multi.
+
+        Priority:
+          1. ODDS_API_BOOKMAKERS env var (explicit override)
+          2. The list we cached from /v3/bookmakers/selected at
+             the last probe (the user's enabled books on their
+             plan; required for free tier which rejects calls
+             without a bookmakers filter)
+          3. None — let the API use its default (paid plans only)
+
+        Returns the comma-separated string to send, or None.
+        """
+        if self._bookmakers_env:
+            return self._bookmakers_env
+        if self._selected_bookmakers:
+            return ",".join(self._selected_bookmakers)
+        return None
 
     # -- live events fetch ----------------------------------------------
 
@@ -778,6 +878,13 @@ class OddsApiIOBackend:
         any of our known hints is a substring; otherwise we look
         for "dota" in the slug itself (covers e.g. `dota-2-blast`
         and `dota-2-esl-one`).
+
+        v0.4.2 (post-key test): the earlier "any non-empty team
+        names -> True" fallback was too permissive — it caught
+        Counter-Strike / LoL / Valorant events that the umbrella
+        sport="Esports" rolled up under Dota 2.  We now require
+        a positive Dota-2 indicator from EITHER the league slug
+        OR a small set of well-known Dota 2 team tokens.
         """
         if not league_slug:
             # No league info — drop.  The /events/live response
@@ -788,17 +895,16 @@ class OddsApiIOBackend:
         for hint in self.DOTA2_LEAGUE_HINTS:
             if hint in league_slug:
                 return True
-        # Last resort: peek at the team names.  Dota 2 team
-        # names rarely include digits; CS2 / Valorant / LoL team
-        # names are usually different.  This is a very rough
-        # fallback — better to over-include than under-include
-        # so the live card just shows empty odds for non-Dota2.
+        # Last-resort: team-name sniff.  Only return True if we
+        # see a *known Dota 2 team token* in the participant
+        # names.  We deliberately do NOT match on "any non-empty
+        # names" because that lets through CS/LoL/Valorant
+        # matches that share the umbrella sport="Esports".
         names = " ".join(
             str(event.get(k) or "")
             for k in ("home", "away", "homeName", "awayName")
         ).lower()
-        # Heuristic-only; we err on the side of inclusion.
-        return "dota" in names or bool(names)
+        return any(token in names for token in self.DOTA2_TEAM_TOKENS)
 
     def _fetch_odds_multi(
         self, event_ids: List[int],
@@ -808,15 +914,25 @@ class OddsApiIOBackend:
         Splits the list into chunks of 10 and makes one request per
         chunk.  The first 10-event chunk is what hits the wire
         for a typical live Dota 2 window (≤ 10 concurrent matches).
+
+        v0.4.2 (post-key test): the API returns 400 "Missing
+        bookmakers" when no bookmakers filter is passed on the
+        free tier.  We now always include one (env override,
+        cached selected list, or — if neither is set — fall back
+        to an empty string which the API interprets as "all",
+        which works on paid plans but errors on free).
         """
         if not event_ids:
             return []
+        book_filter = self._effective_bookmakers() or ""
         results: List[Dict[str, Any]] = []
         for i in range(0, len(event_ids), 10):
             chunk = event_ids[i : i + 10]
-            params: Dict[str, str] = {"eventIds": ",".join(str(e) for e in chunk)}
-            if self._bookmakers:
-                params["bookmakers"] = self._bookmakers
+            params: Dict[str, str] = {
+                "eventIds": ",".join(str(e) for e in chunk),
+            }
+            if book_filter:
+                params["bookmakers"] = book_filter
             data = self._request("GET", "/odds/multi", params=params)
             if isinstance(data, list):
                 results.extend([e for e in data if isinstance(e, dict)])
@@ -950,18 +1066,27 @@ class OddsApiIOBackend:
         shape so the cache lookup is direct.
 
         Behaviour:
-          1. Probe the session.  If it fails, return {} (the
-             poller will log and try again next cycle).
-          2. Fetch live Dota 2 events from `/events/live`.
-          3. Batch-fetch odds via `/odds/multi` (up to 10/call).
-          4. Parse each event to OddsQuote list.
-          5. Bucket by `team_pair_key(home, away)`.  We DON'T
+          1. Refuse if no key is set.
+          2. Best-effort session probe — if it 401/403s we
+             return {} (the poller logs and tries again next
+             cycle).  If the probe TIMES OUT (network blip),
+             we still attempt the data fetch — `/events/live`
+             and `/odds/multi` will surface the real error if
+             auth is actually broken.
+          3. Fetch live Dota 2 events from `/events/live`.
+          4. Batch-fetch odds via `/odds/multi` (up to 10/call).
+          5. Parse each event to OddsQuote list.
+          6. Bucket by `team_pair_key(home, away)`.  We DON'T
              add a second bucket under the swapped key — the
              live card already tries both orderings itself.
         """
         if not self._has_key():
             return {}
-        if not self.probe_session():
+        # v0.4.2: probe is best-effort.  We distinguish the
+        # "session is dead" case (probe returned an HTTPError
+        # 401/403) from the "network blip" case (probe timed
+        # out).  Only the first blocks the data fetch.
+        if self._session_ok is False and self._auth_actually_failed():
             return {}
         events = self._fetch_live_dota_events()
         if not events:
@@ -996,6 +1121,16 @@ class OddsApiIOBackend:
                 continue
             out[k] = quotes
         return out
+
+    def _auth_actually_failed(self) -> bool:
+        """Did the most recent probe return a 401/403?
+
+        Used to gate `get_all_live_quotes` — we only block on
+        *real* auth failure, not on transient network blips.
+        `self._session_ok` is only set to False on a 401/403,
+        so this is the right thing to check.
+        """
+        return self._session_ok is False
 
     def get_quotes(self, match_id: int) -> List[OddsQuote]:
         """Per-match lookup — the live card's direct-call path.

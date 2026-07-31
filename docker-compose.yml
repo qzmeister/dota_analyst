@@ -122,6 +122,29 @@ services:
       # 603-match OpenDota pro corpus).  "1" routes _postmatch_prediction
       # through business/v17_predict.py instead of the legacy ml.engine.
       - V17_PREDICT=${V17_PREDICT:-0}
+      # v0.4.1+: bookmaker odds.  Default is "stub" (no real
+      # backend; the live card surfaces empty `predictions.odds`
+      # blocks).  Set to one of the following to enable real
+      # odds (see business/odds_backends.py for the full list):
+      #   * "business.odds_backends.OddsApiIOBackend"
+      #         Free tier: 100 req/hour + 2 bookmakers.  Needs
+      #         ODDS_API_KEY in .env (sign up at odds-api.io).
+      #         Recommended default — works from any network.
+      #   * "business.odds_backends.BetBoomBackend"
+      #         Russian-market only.  Needs BETBOOM_AUTH_TOKEN +
+      #         BETBOOM_COOKIES in .env.betboom.  Live odds path
+      #         is currently unreachable (fw-wc2.sportbook.bet
+      #         parked; see notes in business/odds_backends.py).
+      - ODDS_BACKEND=${ODDS_BACKEND:-stub}
+      - ODDS_API_KEY=${ODDS_API_KEY:-}
+      - ODDS_API_BOOKMAKERS=${ODDS_API_BOOKMAKERS:-}
+      - ODDS_LIVE_POLL_SEC=${ODDS_LIVE_POLL_SEC:-60}
+    env_file:
+      # v0.4.1: BetBoom session creds.  The file is gitignored
+      # (.env.* rule in .gitignore).  If the file is missing
+      # or BETBOOM_AUTH_TOKEN is empty the backend logs a
+      # warning and the live card surfaces empty odds.
+      - .env.betboom
     networks:
       - backend
       - external

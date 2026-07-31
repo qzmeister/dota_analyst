@@ -29,6 +29,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from .odds import OddsBackend, OddsQuote
+from .odds_match import team_pair_key
 from ._logging import get_logger
 
 log = get_logger(__name__)
@@ -58,7 +59,13 @@ def _now() -> float:
 
 
 def _key(team_a: str, team_b: str) -> str:
-    return f"{team_a.strip().lower()}|{team_b.strip().lower()}"
+    # v0.4.2: route through `team_pair_key` so the live card's
+    # lookup uses the same normalisation as the backend's storage
+    # (lowercase + strip + replace [.,_-] + drop common suffixes
+    # like "team", "esports").  Without this, a name divergence
+    # like "Team.Liquid" (DLTV) vs "Team Liquid" (odds-api.io)
+    # would silently miss the cache.
+    return team_pair_key(team_a, team_b)
 
 
 def get_quotes_for_teams(team_a: str, team_b: str) -> List[OddsQuote]:

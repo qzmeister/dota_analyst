@@ -25,6 +25,20 @@ log = get_logger(__name__)
 # features, threshold-pruned per target).  Backtest: 73.8% winner
 # accuracy on 599 matches.  Falls back to legacy engine on MLError.
 _V17_ENABLED = False
+# v0.4.0.3: per-process set of (match_id, game_no) tuples that
+# have already had their 3-5 min snapshot written.  We only
+# mark the FIRST live row whose `game_time` lands in
+# [180, 300] as the snapshot — every subsequent rebuild
+# in that window is a regular live update, not a snapshot.
+# In-memory only; a process restart loses the "already
+# snapshotted" state, but that's fine because the row in
+# the JSONL log already has `is_snapshot=True` and a
+# startup-time loader could pick it up if needed.  Today
+# the worst-case is one extra snapshot on restart, which
+# the dedup key in record_prediction
+# (match_id, "snapshot_3_5min") deduplicates to the same
+# values anyway.
+_snapshot_done: set = set()
 if os.environ.get("V17_PREDICT", "0") == "1":
     try:
         from . import v17_predict
@@ -1348,6 +1362,24 @@ def _live_card(series: Dict, event_title: str) -> Dict:
                 "team_a" if (prob_radiant > 0.5) == radiant_is_first
                 else "team_b"
             )
+            # v0.4.0.3: 3-5 min snapshot.  The live row we
+            # just wrote has a bucket dedup
+            # (match_id, game_no, game_time // 30).  If this is
+            # the FIRST row whose `game_time` lands in
+            # [180, 300], we mark IT as the snapshot.  We do
+            # NOT write a separate row — the user's
+            # clarification is that the 3-5 min prediction
+            # is one of the live predictions, not a parallel
+            # frozen copy.  The flag is set in-memory and
+            # added to the row before it lands in the log.
+            is_snapshot_row = False
+            if (
+                game_time_now is not None
+                and 180 <= game_time_now <= 300
+                and (m.get("steam_id"), game_no) not in _snapshot_done
+            ):
+                _snapshot_done.add((m.get("steam_id"), game_no))
+                is_snapshot_row = True
             record_prediction(
                 match_id=m.get("steam_id"),
                 series_id=series.get("id"),
@@ -1367,34 +1399,8 @@ def _live_card(series: Dict, event_title: str) -> Dict:
                 predicted_duration=predicted_duration_val,
                 predicted_first_15=predicted_first_15_val,
                 game_state=game_state_val,
+                snapshot=is_snapshot_row,
             )
-            # v0.4.0.3: 3-5 min snapshot.  When game_time first
-            # enters the [180, 300] second window, drop a frozen
-            # row.  The dedup key in accuracy.py is
-            # (match_id, "snapshot_3_5min") so subsequent rebuilds
-            # in the same window coalesce.
-            if game_time_now is not None and 180 <= game_time_now <= 300:
-                record_prediction(
-                    match_id=m.get("steam_id"),
-                    series_id=series.get("id"),
-                    predicted_winner=predicted_side,
-                    predicted_probability=max(prob_radiant, 1.0 - prob_radiant),
-                    engine=engine_name,
-                    extra={
-                        "team_a_id": first_id,
-                        "team_a_name": first.get("name"),
-                        "team_b_id": series.get("second_team_id"),
-                        "team_b_name": second.get("name"),
-                        "game_no": game_no,
-                        "radiant_is_first": radiant_is_first,
-                    },
-                    game_time=game_time_now,
-                    predicted_kills=predicted_kills_val,
-                    predicted_duration=predicted_duration_val,
-                    predicted_first_15=predicted_first_15_val,
-                    game_state=game_state_val,
-                    snapshot=True,
-                )
     except AccuracyError as exc:
         # Tracking is best-effort — a missing log dir or write race
         # must not break board rendering.

@@ -84,19 +84,21 @@ def _ensure_dedup_loaded() -> None:
     if _dedup_loaded:
         return
     for r in _read_jsonl(PREDICTIONS_FILE):
-        # Use (match_id, game_no) as the dedup key.  game_no comes
-        # from the engine's "current game of the series" counter; for
-        # series that aren't best-of-N it's just 1.
+        # Use (match_id, game_no) as the dedup key for live rows.
+        # Snapshot rows use (match_id, "snapshot_3_5min") as their
+        # own bucket — without loading those here, a process
+        # restart would happily re-write the snapshot on the next
+        # rebuild in the 3-5 min window.  We load both shapes.
         extra = r.get("extra") or {}
-        # Prefer the numeric match_id; fall back to the synthetic
-        # string ("steam-..." / "watch-...") so Steam-only matches
-        # don't all dedup-collide to the (None, game_no) bucket.
         match_id_val = r.get("match_id")
         if match_id_val is None:
             match_id_val = r.get("synthetic_match_id")
-        key = (match_id_val, extra.get("game_no"))
-        if key != (None, None):
-            _dedup_seen.add(key)
+        if r.get("is_snapshot"):
+            _dedup_seen.add((match_id_val, "snapshot_3_5min"))
+        else:
+            key = (match_id_val, extra.get("game_no"))
+            if key != (None, None):
+                _dedup_seen.add(key)
     _dedup_loaded = True
 
 

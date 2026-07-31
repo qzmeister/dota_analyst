@@ -452,4 +452,115 @@ revisit all P1 items, including this one.
 
 ---
 
+---
+
+## 🎯 Target: 0.4.1 — live prediction tracking + odds integration
+
+### Live prediction tracking (3-5 min snapshot)
+
+The current `record_prediction()` writes exactly one row per
+(match, game_no) and only the `predicted_winner` + probability —
+kills and duration are computed by the engine but never logged.
+That makes it impossible to ask "how did our model react to a
+lead flip at 4:30?" or "what was our kills prediction at 3:00 vs
+what actually happened?".
+
+**Plan** (backwards compatible — existing rows still valid):
+
+1. `business/accuracy.py`:
+   * `record_prediction()` adds optional `game_time` (seconds),
+     `predicted_kills` (int | None), `predicted_duration` (int |
+     None), `predicted_first_15` (int | None), `game_state` (str —
+     short summary, e.g. "5/2@4:30").
+   * New flag `snapshot=True` records a separate "frozen" row
+     (untouched by live updates), used for the 3-5 min window.
+   * Dedup key is `(match_id, game_no, game_time_bucket)` for
+     the live stream — we coalesce re-predicts within a 30s
+     window to one row per bucket, so a 30 min match produces
+     ~60 rows not ~360.  Snapshot rows have their own dedup
+     key `(match_id, "snapshot_3_5min")`.
+   * New `score_snapshot_at_postmatch()` looks up the
+     `(match, "snapshot_3_5min")` row and compares kills /
+     duration / first_15 to actual values via DLTV v1 series.
+
+2. `business/board.py` `_live_card`:
+   * When the publisher rebuild hits a match whose
+     `m["game_time"]` changed since the last recorded row, fire
+     a `record_prediction()` with the new state (snapshot=False).
+   * When `m["game_time"]` first enters the 180-300s window,
+     fire a `record_prediction(..., snapshot=True)` exactly once.
+
+3. `business/analysis.py`:
+   * `analyze()` already emits `winner`, `kills`, `duration`,
+     `first_15` — we just need to plumb all four into the
+     live card payload so the publisher can read them.
+
+4. Tests:
+   * Snapshot is recorded exactly once at 3-5 min.
+   * Live updates do not overwrite the snapshot.
+   * Post-match scoring picks the snapshot row and reports
+     absolute errors (kills MAE, duration MAE) plus a
+     confidence-interval accuracy (`over`/`under` correctness
+     against actual result).
+
+### BetBoom odds integration (research)
+
+User wants to compare our 3 modelled outcomes (winner, kills,
+time) against the live odds BetBoom is offering.  Two markets
+matter:
+
+- **Match winner** — directly comparable to `predicted_winner`.
+  Compare our `prob_radiant` against the implied probability
+  from BetBoom's decimal odds: `1 / decimal_odds`.  A 5%+ edge
+  is interesting.
+- **Total kills** — BetBoom offers `Over/Under` lines at
+  discrete values (e.g. `> 35.5`, `> 40.5`).  We need to map
+  our `predicted_kills` (continuous) to the closest bracket
+  before comparing.
+- **Match duration** — same Over/Under pattern, brackets are
+  e.g. `> 35.5 min`, `> 40.5 min`.  Map our `predicted_duration`
+  similarly.
+
+**Research needed** (pre-implementation):
+
+- Does BetBoom have a public API?  (Most RU/CIS bookmakers
+  don't — they go through a CDN-frontend API like
+  `https://example.com/api/v2/...` that is undocumented and
+  rotates auth tokens.)
+- What endpoints return the markets above?  Odds update at
+  ~5-10 sec cadence for live in-play, slower for pre-match.
+- Auth: cookies, session tokens, captcha?  Captcha would
+  block headless scraping cold.
+- Alternative: scrape the live match page (Playwright
+  headless), parse the DOM for odds.  The previous Playwright
+  path is Cloudflare-blocked on `dltv.org/matches/...` — is
+  BetBoom's match page equally protected?
+- Cost: do they ban aggressive scrapers?  Do we have a clean
+  IP (the current container IP is already OpenDota-banned)?
+
+**Suggested approach**:
+
+1. Probe `https://betboom.ru/Match` and `https://betboom.ru/`
+   (and `.com`, `.live`) from the container to see if
+   there's a JSON API behind a /api path.
+2. Open a browser on a few live Dota 2 match pages, watch the
+   network panel, capture the XHR that fetches odds.
+3. If no clean API: fall back to `pinnacle.com` or
+   `oddsapi.io` (paid, but documented JSON API) for a
+   benchmark / source of truth, and only scrape BetBoom as
+   a best-effort secondary source.
+4. Avoid `bet365.com` — they detect Playwright aggressively
+   (verified in 0.3.25 as Cloudflare-blocked).
+
+**Pinning**:
+
+- `business/odds.py` (new) — one module, one source-of-truth
+  interface: `get_odds_for_match(steam_id) -> {winner, kills,
+  duration}`.  Multiple backends (BetBoom, Pinnacle, OddsAPI)
+  plug into the same interface so we can A/B them.
+- Live card surfaces an `edge` field: e.g. "Edge: +7% on
+  Radiant @ 1.85".  Click-through links to BetBoom with the
+  pre-filled match.
+
+---
 _Last updated: 2026-07-27 — 0.3.24e: live picks dual-id fix (Hoodwink↔Pangolier collision) + 5s publisher. 0.3.24 (a-d): hide steam-only matches, map watch-/steam- → dltv id, dedup Steam+Scraper, both tracker formats, TTL 5s→30s. 0.3.23: real-time live data via `radiant_picks` / `dire_picks` page globals + `#live_scoreboard` + npmmirror Playwright host. 0.3.22: Docker deploy + DLTV live extractor rewrite + chromium subprocess-leak fix (shared browser + per-fetch context + zombie reaper) + strict live filter + auto-board server-side filter. 0.3.21: live TTL fix + match-state overlay + nginx X-API-Key. 0.3.20: Playwright + match-state overlay for in-progress series + chromium binary in `/app/.cache/ms-playwright/`. 0.3.19: live enrichment TTL 120s→5s. 0.3.18: nginx `map` for dev X-API-Key. 0.3.17: Playwright `dltv_browser` for live `player.win_rate`. 0.3.16: `/api/board` async rewrite + accuracy tracking. 0.3.15: per-player features (`PlayerWinRateEncoder`) — winner_v15. 0.3.10–0.3.14: XGBoost winner + cross-side lane matchups + smoothing grid. 0.3.9: ML accuracy push. 0.3.8: `ARCHITECTURE.md` refresh. 0.3.7: `train.py` tests. 0.3.6: `pip-audit` in CI. 0.3.5: `~=` pins. 0.3.4: domain exception hierarchy. 0.3.3: audit P0 fixes. 0.3.2: SSE auth fix. 0.3.0: multikill classifier. 0.2.2: calibration plumbing. 0.1.1: rate limit + SSE live updates._

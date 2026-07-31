@@ -629,6 +629,22 @@ def _postmatch_card(series: Dict, event_title: str, is_watchlist: bool = False) 
 
 
 def _live_card(series: Dict, event_title: str) -> Dict:
+    def _coerce_int(v: Any) -> Optional[int]:
+        if v is None:
+            return None
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, int):
+            return v
+        if isinstance(v, float):
+            return int(v) if v.is_finite() else None
+        if isinstance(v, str):
+            try:
+                return int(v)
+            except ValueError:
+                return None
+        return None
+
     first = client.normalize_team(series.get("first_team"))
     second = client.normalize_team(series.get("second_team"))
     first_id = series.get("first_team_id")
@@ -835,22 +851,6 @@ def _live_card(series: Dict, event_title: str) -> Dict:
                     socket_state = _ds.get_live_state(int(steam_id_for_lookup))
             except Exception:
                 socket_state = None
-
-            def _coerce_int(v: Any) -> Optional[int]:
-                if v is None:
-                    return None
-                if isinstance(v, bool):
-                    return None
-                if isinstance(v, int):
-                    return v
-                if isinstance(v, float):
-                    return int(v) if v.is_finite() else None
-                if isinstance(v, str):
-                    try:
-                        return int(v)
-                    except ValueError:
-                        return None
-                return None
 
             if socket_state is not None:
                 # Socket is the primary source.  We always overlay
@@ -1192,8 +1192,41 @@ def _live_card(series: Dict, event_title: str) -> Dict:
     r_metas, r_cards = _picks_to_heroes(m.get("radiant_picks"), use_steam_id=is_watchlist)
     d_metas, d_cards = _picks_to_heroes(m.get("dire_picks"), use_steam_id=is_watchlist)
 
-    predictions = get_default_engine().analyze(radiant_team, dire_team, r_metas, d_metas)
-    engine_name = get_default_engine().name
+    # v0.4.0.3: v17 trained models.  Use the same hybrid
+    # (v17 winner/kills/duration + legacy towers/multikill/first_to_15)
+    # the postmatch card uses.  Falls back to pure legacy on
+    # MLError (e.g. team_id missing for a Steam-only match).
+    if _V17_ENABLED:
+        try:
+            r_hero_ids = [h.get("hero_id") for h in (m.get("radiant_picks") or [])
+                          if isinstance(h, dict) and h.get("hero_id") is not None]
+            d_hero_ids = [h.get("hero_id") for h in (m.get("dire_picks") or [])
+                          if isinstance(h, dict) and h.get("hero_id") is not None]
+            hybrid = v17_predict.hybrid_predict(
+                engine=get_default_engine(),
+                team_a=radiant_team, team_b=dire_team,
+                heroes_a=r_metas, heroes_b=d_metas,
+                actual={},  # live card: no actual yet
+                radiant_team_id=m.get("radiant_team_id"),
+                dire_team_id=m.get("dire_team_id"),
+                radiant_picks=r_hero_ids,
+                dire_picks=d_hero_ids,
+                radiant_bans=[b.get("hero_id") for b in (m.get("radiant_bans") or [])
+                              if isinstance(b, dict) and b.get("hero_id") is not None],
+                dire_bans=[b.get("hero_id") for b in (m.get("dire_bans") or [])
+                           if isinstance(b, dict) and b.get("hero_id") is not None],
+            )
+            predictions = hybrid.get("prediction") or hybrid
+            engine_name = "v17_hybrid"
+        except MLError:
+            # v17 unavailable for this card (missing team_id, broken
+            # model, etc.) — fall back to legacy.  This matches the
+            # postmatch path's behaviour.
+            predictions = get_default_engine().analyze(radiant_team, dire_team, r_metas, d_metas)
+            engine_name = get_default_engine().name
+    else:
+        predictions = get_default_engine().analyze(radiant_team, dire_team, r_metas, d_metas)
+        engine_name = get_default_engine().name
 
     # current series score so far — must be computed BEFORE we record
     # the prediction (the dedup key uses game_no, and the verdict

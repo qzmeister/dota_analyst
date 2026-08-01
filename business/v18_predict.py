@@ -90,13 +90,29 @@ def _load_v18() -> Tuple[Any, Dict[str, Any]]:
         return _MODEL_CACHE, _META_CACHE
     if joblib is None:
         raise v18_unavailable("joblib is not installed")
-    path = MODELS_DIR / "_v18_winner"
+    # v0.7.6: prefer the tuned model (scripts/tune_v18.py) when
+    # present, fall back to the original _v18_winner/ that the
+    # trainer builds.  The tuned model is the same XGBClassifier
+    # architecture -- just different hyperparameters -- so the
+    # caller doesn't need to know which one is loaded.
+    candidates = [
+        MODELS_DIR / "_v18_winner_tuned",
+        MODELS_DIR / "_v18_winner",
+    ]
+    path = None
+    for c in candidates:
+        mf = c / "model.joblib"
+        mef = c / "metadata.json"
+        if mf.exists() and mef.exists():
+            path = c
+            break
+    if path is None:
+        raise v18_unavailable(
+            f"v18 model not found at any of {[str(c) for c in candidates]}.  "
+            "Run scripts/train_v18.py (or scripts/tune_v18.py) first."
+        )
     model_file = path / "model.joblib"
     meta_file = path / "metadata.json"
-    if not (model_file.exists() and meta_file.exists()):
-        raise v18_unavailable(
-            f"v18 model not found at {path}.  Run scripts/train_v18.py first."
-        )
     try:
         model = joblib.load(model_file)
         meta = json.loads(meta_file.read_text(encoding="utf-8"))

@@ -46,9 +46,19 @@ except ImportError:  # pragma: no cover
 PRO_ROOT = Path(__file__).resolve().parents[1]
 ML_DATA = PRO_ROOT / "ml_data"
 MODELS_DIR = ML_DATA / "models"
-TOP_TEAMS_PATH = ML_DATA / "imports" / "v17_phase1_top_teams.json"
+# v0.7.0: prefer the v18 top-teams snapshot (540 teams with
+# percentile-based tier field) when present, fall back to the v17
+# 30-team Glicko snapshot if the new file doesn't exist yet.
+TOP_TEAMS_PATHS = (
+    ML_DATA / "imports" / "v18_top_teams.json",
+    ML_DATA / "imports" / "v17_phase1_top_teams.json",
+)
 PATCH_INFO_PATH = ML_DATA / "imports" / "v17_phase7_patch_info.json"
 
+# v0.7.0: tier thresholds are now percentile-based inside
+# v18_top_teams.json.  We keep these constants as a last-resort
+# fallback for the legacy 30-team snapshot (where the Glicko
+# rating has mean 1500 and std 350).
 TIER_THRESHOLD_PREMIUM = 1400
 TIER_THRESHOLD_PROFESSIONAL = 1100
 NUM_HEROES = 256
@@ -56,7 +66,7 @@ NUM_HEROES = 256
 # Optional one-time load cache (re-built on first call per process).
 _MODEL_CACHE: Any = None
 _META_CACHE: Optional[Dict[str, Any]] = None
-_TOP_TEAMS_CACHE: Optional[Dict[int, float]] = None
+_TOP_TEAMS_CACHE: Optional[Dict[int, int]] = None
 _PATCH_INFO_CACHE: Optional[Dict[str, str]] = None
 
 
@@ -88,25 +98,55 @@ def _load_v18() -> Tuple[Any, Dict[str, Any]]:
     return model, meta
 
 
-def _load_top_teams() -> Dict[int, float]:
-    """team_id -> rating, used to compute the r/d_top_team flags."""
+def _load_top_teams() -> Dict[int, int]:
+    """team_id -> tier (0/1/2), used to compute r_tier/d_tier and
+    r_top_team/d_top_team.
+
+    v0.7.0: the v18 snapshot has a pre-computed `tier` field
+    (percentile-based, 60% minor / 30% professional / 10%
+    premium).  We prefer that.  For the v17 fallback (30-team
+    Glicko snapshot without `tier` field), we apply the legacy
+    absolute thresholds (1400/1100).
+    """
     global _TOP_TEAMS_CACHE
     if _TOP_TEAMS_CACHE is not None:
         return _TOP_TEAMS_CACHE
-    out: Dict[int, float] = {}
-    if TOP_TEAMS_PATH.exists():
+    out: Dict[int, int] = {}
+    for path in TOP_TEAMS_PATHS:
+        if not path.exists():
+            continue
         try:
-            data = json.loads(TOP_TEAMS_PATH.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        # v0.7.0: v18 snapshot has a pre-computed `tier` field.
+        if data and isinstance(data[0], dict) and "tier" in data[0]:
             for t in data:
                 tid = t.get("team_id")
                 if tid is None:
                     continue
                 try:
-                    out[int(tid)] = float(t.get("rating") or 0)
+                    out[int(tid)] = int(t.get("tier") or 0)
                 except (TypeError, ValueError):
                     continue
-        except Exception:
-            pass
+            break
+        # v17 snapshot: derive tier from rating with absolute
+        # thresholds (legacy 30-team Glicko mean 1500 std 350).
+        for t in data:
+            tid = t.get("team_id")
+            if tid is None:
+                continue
+            try:
+                r = float(t.get("rating") or 0)
+            except (TypeError, ValueError):
+                continue
+            if r >= TIER_THRESHOLD_PREMIUM:
+                out[int(tid)] = 2
+            elif r >= TIER_THRESHOLD_PROFESSIONAL:
+                out[int(tid)] = 1
+            else:
+                out[int(tid)] = 0
+        break
     _TOP_TEAMS_CACHE = out
     return out
 
@@ -156,15 +196,10 @@ def _days_since_patch(start_time: Optional[int],
     return 30.0
 
 
-def _tier_for(team_id: Optional[int], top_teams: Dict[int, float]) -> int:
+def _tier_for(team_id: Optional[int], top_teams: Dict[int, int]) -> int:
     if not team_id:
         return 0
-    r = top_teams.get(int(team_id), 0)
-    if r >= TIER_THRESHOLD_PREMIUM:
-        return 2
-    if r >= TIER_THRESHOLD_PROFESSIONAL:
-        return 1
-    return 0
+    return int(top_teams.get(int(team_id), 0))
 
 
 def _build_features(

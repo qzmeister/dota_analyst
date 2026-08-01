@@ -67,7 +67,13 @@ ML_DATA = PRO_ROOT / "ml_data"
 IMPORTS = ML_DATA / "imports"
 MODELS = ML_DATA / "models"
 PATCH_INFO_PATH = IMPORTS / "v17_phase7_patch_info.json"
-TOP_TEAMS_PATH = IMPORTS / "v17_phase1_top_teams.json"
+# v0.7.0: prefer the v18 540-team snapshot (with pre-computed
+# `tier` field) when present, fall back to the legacy v17
+# 30-team Glicko snapshot otherwise.
+TOP_TEAMS_PATHS = (
+    IMPORTS / "v18_top_teams.json",
+    IMPORTS / "v17_phase1_top_teams.json",
+)
 
 TIER_THRESHOLD_PREMIUM = 1400
 TIER_THRESHOLD_PROFESSIONAL = 1100
@@ -97,12 +103,21 @@ def _load_patch_info() -> Dict[str, str]:
 
 
 def _load_top_teams() -> List[Dict[str, Any]]:
-    if not TOP_TEAMS_PATH.exists():
-        return []
-    try:
-        return json.loads(TOP_TEAMS_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return []
+    """Return the list of top-team dicts.
+
+    v0.7.0: prefer the v18 540-team snapshot (with pre-computed
+    `tier` field) when present, fall back to the v17 30-team
+    Glicko snapshot (with `rating` only, derived via absolute
+    thresholds in `_tier_for`).
+    """
+    for path in TOP_TEAMS_PATHS:
+        if not path.exists():
+            continue
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+    return []
 
 
 def _days_since_patch(start_time: int, patch_info: Dict[str, str]) -> float:
@@ -123,12 +138,21 @@ def _days_since_patch(start_time: int, patch_info: Dict[str, str]) -> float:
 
 
 def _tier_for(team_id: Optional[int], top_teams: List[Dict[str, Any]]) -> int:
-    """0 = minor, 1 = professional, 2 = premium."""
+    """0 = minor, 1 = professional, 2 = premium.
+
+    v0.7.0: prefer the pre-computed `tier` field from
+    v18_top_teams.json.  Fall back to legacy absolute thresholds
+    for the v17 snapshot.
+    """
     if not team_id:
         return 0
     for t in top_teams:
         try:
             if int(t.get("team_id") or 0) == int(team_id):
+                # v18 snapshot has a `tier` field already.
+                if "tier" in t and t["tier"] is not None:
+                    return int(t["tier"])
+                # v17 snapshot: derive from rating.
                 r = t.get("rating")
                 if r is None:
                     return 0

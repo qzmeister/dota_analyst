@@ -1352,19 +1352,28 @@ class OddsPapiBackend:
     # -- fixtures / odds -------------------------------------------------
 
     def _fetch_live_dota_fixtures(self) -> List[Dict[str, Any]]:
-        """GET /v4/fixtures?sportId=16 — list of Dota 2 fixtures.
+        """GET /v4/fixtures?sportId=16&from=...&to=... — list of Dota 2 fixtures.
+
+        The API requires `from` and `to` date params when only
+        `sportId` is given (else 400 MISSING_PARAMETERS).  The
+        free tier caps the window at 10 days, so we use 3 days
+        forward from today — enough to catch most live + upcoming
+        matches without burning a request on a too-wide window.
 
         Filters for live / upcoming matches.  Free tier gives us
         pre-match + live.  We do NOT filter for hasOdds=true
         here because the response may omit it; the odds call
         downstream will tell us if there's actual data.
         """
+        from datetime import datetime, timedelta, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        plus3 = (datetime.now(timezone.utc) + timedelta(days=3)).strftime("%Y-%m-%d")
         data = self._request(
             "GET", "/fixtures",
             params={
                 "sportId": str(self._sport_id()),
-                # No date filter: free tier returns what's
-                # currently active.  We limit in code below.
+                "from": today,
+                "to": plus3,
                 "limit": "50",
             },
         )

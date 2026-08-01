@@ -126,18 +126,29 @@ services:
       # backend; the live card surfaces empty `predictions.odds`
       # blocks).  Set to one of the following to enable real
       # odds (see business/odds_backends.py for the full list):
+      #   * "business.odds_backends.MultiOddsBackend"  (v0.4.3+)
+      #         Composite: primary polls every 60s, secondary
+      #         throttled (default 3h).  Best coverage on free
+      #         tier.  Needs ODDS_BACKENDS + ODDS_API_KEY +
+      #         ODDSPAPI_API_KEY in .env.
       #   * "business.odds_backends.OddsApiIOBackend"
-      #         Free tier: 100 req/hour + 2 bookmakers.  Needs
-      #         ODDS_API_KEY in .env (sign up at odds-api.io).
-      #         Recommended default — works from any network.
+      #         Standalone.  Free tier: 100 req/hour + 2 books.
+      #         Needs ODDS_API_KEY in .env.
+      #   * "business.odds_backends.OddsPapiBackend"
+      #         Standalone.  Free tier: 250 req/month, 350+ books
+      #         (Pinnacle/GG.BET/Thunderpick).  Needs
+      #         ODDSPAPI_API_KEY in .env.
       #   * "business.odds_backends.BetBoomBackend"
-      #         Russian-market only.  Needs BETBOOM_AUTH_TOKEN +
-      #         BETBOOM_COOKIES in .env.betboom.  Live odds path
-      #         is currently unreachable (fw-wc2.sportbook.bet
-      #         parked; see notes in business/odds_backends.py).
+      #         Russian-market only.  Live odds currently
+      #         unreachable (see v0.4.1 notes).
       - ODDS_BACKEND=${ODDS_BACKEND:-stub}
+      - ODDS_BACKENDS=${ODDS_BACKENDS:-business.odds_backends.OddsApiIOBackend}
       - ODDS_API_KEY=${ODDS_API_KEY:-}
       - ODDS_API_BOOKMAKERS=${ODDS_API_BOOKMAKERS:-}
+      - ODDSPAPI_API_KEY=${ODDSPAPI_API_KEY:-}
+      - ODDSPAPI_BOOKMAKERS=${ODDSPAPI_BOOKMAKERS:-pinnacle,ggbet,thunderpick}
+      - ODDSPAPI_SPORT_ID=${ODDSPAPI_SPORT_ID:-16}
+      - ODDS_SECONDARY_POLL_SEC=${ODDS_SECONDARY_POLL_SEC:-10800}
       - ODDS_LIVE_POLL_SEC=${ODDS_LIVE_POLL_SEC:-60}
     env_file:
       # v0.4.1: BetBoom session creds.  The file is gitignored

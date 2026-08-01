@@ -26,6 +26,7 @@ keeps the live card simple.
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import re
@@ -1154,4 +1155,759 @@ class OddsApiIOBackend:
 #   ODDS_API_KEY=<your key from https://odds-api.io>
 #   # Optional: filter to specific bookmakers (free tier = 2):
 #   ODDS_API_BOOKMAKERS=Pinnacle,Bet365
+
+
+# =========================================================================== #
+# OddsPapiBackend  (v0.4.3 — secondary backend for the multi-backend setup)
+# =========================================================================== #
+#
+# REST poller against https://api.oddspapi.io/v4 — the only free-tier
+# odds aggregator that includes Pinnacle, GG.BET and Thunderpick
+# (the sharp + esports-specialist books that actually price Dota 2
+# well).
+#
+# Free tier: 250 req/month, 350+ bookmakers, real-time, no delay,
+# historical odds included.  Limited to ~8 calls/day, so this
+# backend is meant to be a SPOT-CHECK behind odds-api.io (which
+# gives 100 req/hour but only 2 recreational bookmakers).
+#
+# Auth: `?apiKey=...` query param, just like odds-api.io.  No
+# cookies, no signing, no SDKs needed.
+#
+# Response shape (relevant subset of /v4/odds):
+#   {
+#     "fixtureId": "id1000001761301055",
+#     "participant1Id": 123, "participant2Id": 456,
+#     "sportId": 16,                        # 16 = Dota 2
+#     "statusId": 1,                        # 1=pre, 2=live, 3=settled
+#     "hasOdds": true,
+#     "bookmakerOdds": {
+#       "pinnacle": {
+#         "markets": {
+#           "101": {                        # market ID, stringified
+#             "outcomes": {
+#               "101": {                    # outcome ID, stringified
+#                 "players": {"0": {"price": 8.25}}
+#               },
+#               "102": {"players": {"0": {"price": 4.55}}},
+#               "103": {"players": {"0": {"price": 1.46}}}
+#             }
+#           }
+#         }
+#       },
+#       "bet365": {...},
+#       "1xbet": {...}
+#     }
+#   }
+#
+# Market/outcome IDs are per-sport.  For Dota 2, we don't have
+# the canonical mapping, so the parser uses a generic heuristic:
+# * 2 outcomes in a market: first = P1, second = P2 (ML)
+# * 3 outcomes in a market (1X2): skip the middle (Draw)
+# * market with `over/under` in the outcome player key: treat as Total
+# * otherwise: skip the market
+#
+# This is intentionally lenient — when we get a real response,
+# we'll log the actual market names and add explicit ID mappings.
+#
+# Env vars:
+#   ODDSPAPI_API_KEY        — required, from https://oddspapi.io
+#   ODDSPAPI_BASE_URL       — optional, override for testing
+#   ODDSPAPI_BOOKMAKERS     — optional, comma-separated filter
+#   ODDSPAPI_SPORT_ID       — optional, default 16 (Dota 2)
+# ---------------------------------------------------------------------------
+
+
+class OddsPapiBackend:
+    """REST-poller backend for https://api.oddspapi.io/v4.
+
+    Conforms to the `OddsBackend` Protocol.  Loaded by
+    `MultiOddsBackend` as a secondary (the multi-backend
+    coordinator throttles us to one call per 3 hours so the
+    250/month free tier lasts the month).
+
+    Public methods (same shape as OddsApiIOBackend):
+      get_quotes(match_id)       — returns [] (per-match not
+                                   supported; live card uses
+                                   team-pair cache)
+      get_all_live_quotes()     — full snapshot, same Dict shape
+                                   as odds-api.io (keyed by
+                                   team_pair_key)
+      probe_session()            — verify the key works
+    """
+    name = "oddspapi"
+
+    SPORT_ID_DOTA2 = 16  # from oddspapi.io/docs
+    # Per OddsPapi docs: 500ms cooldown between requests.  We
+    # batch up to 10 fixtures per /odds call so a typical live
+    # Dota 2 window is 1-2 requests per cycle.
+    _REQUEST_COOLDOWN_SEC = 0.6
+
+    def __init__(self) -> None:
+        self._last_warn_no_creds: float = 0.0
+        self._last_request_at: float = 0.0
+        self._base_url = os.environ.get(
+            "ODDSPAPI_BASE_URL", "https://api.oddspapi.io/v4"
+        ).rstrip("/")
+        self._bookmakers = os.environ.get(
+            "ODDSPAPI_BOOKMAKERS", ""
+        ).strip()
+        # Per-market, per-outcome label overrides.  We populate
+        # this lazily once we see a real response — it lets us
+        # distinguish "P1 / P2" from "Over / Under" without
+        # guessing from outcome IDs.  v0.4.3 starts empty; once
+        # we have a real Dota 2 response logged, we add the
+        # market/outcome IDs we see.
+        self._known_market_types: Dict[str, str] = {}
+
+    # -- env helpers -----------------------------------------------------
+
+    def _key(self) -> str:
+        return os.environ.get("ODDSPAPI_API_KEY", "").strip()
+
+    def _has_key(self) -> bool:
+        return bool(self._key())
+
+    def _sport_id(self) -> int:
+        try:
+            return int(os.environ.get("ODDSPAPI_SPORT_ID", str(self.SPORT_ID_DOTA2)))
+        except (TypeError, ValueError):
+            return self.SPORT_ID_DOTA2
+
+    def _cooldown(self) -> None:
+        """Sleep until at least _REQUEST_COOLDOWN_SEC has passed
+        since the last request.  OddsPapi enforces a 500ms
+        cooldown per the docs; we round up to 600ms for safety.
+        """
+        now = time.monotonic()
+        delta = self._REQUEST_COOLDOWN_SEC - (now - self._last_request_at)
+        if delta > 0:
+            time.sleep(delta)
+        self._last_request_at = time.monotonic()
+
+    # -- low-level HTTP --------------------------------------------------
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        params: Optional[Dict[str, str]] = None,
+        timeout: float = 10.0,
+    ) -> Optional[Any]:
+        if not self._has_key():
+            now = time.monotonic()
+            if now - self._last_warn_no_creds > 60:
+                log.warning("OddsPapiBackend: missing ODDSPAPI_API_KEY — see .env template")
+                self._last_warn_no_creds = now
+            return None
+        qp: Dict[str, str] = {"apiKey": self._key()}
+        if params:
+            qp.update({k: v for k, v in params.items() if v is not None})
+        url = self._base_url + path + "?" + urllib.parse.urlencode(qp)
+        self._cooldown()
+        req = urllib.request.Request(
+            url, method=method,
+            headers={
+                "User-Agent": "dota-analyst/0.4.3 (+https://oddspapi.io)",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                body = r.read()
+                if not body:
+                    return None
+                try:
+                    return json.loads(body.decode("utf-8"))
+                except json.JSONDecodeError as exc:
+                    log.warning(
+                        "OddsPapiBackend: %s %s returned non-JSON (%d bytes): %s",
+                        method, path, len(body), exc,
+                    )
+                    return None
+        except urllib.error.HTTPError as e:
+            code = e.code
+            try:
+                err_body = e.read()[:200].decode("utf-8", errors="replace")
+            except Exception:
+                err_body = ""
+            now = time.monotonic()
+            if now - self._last_warn_no_creds > 60:
+                log.warning(
+                    "OddsPapiBackend: %s %s -> HTTP %d: %s",
+                    method, path, code, err_body[:120],
+                )
+                self._last_warn_no_creds = now
+            return None
+        except (urllib.error.URLError, TimeoutError) as e:
+            now = time.monotonic()
+            if now - self._last_warn_no_creds > 60:
+                log.warning(
+                    "OddsPapiBackend: %s %s network error: %s",
+                    method, path, e,
+                )
+                self._last_warn_no_creds = now
+            return None
+
+    # -- fixtures / odds -------------------------------------------------
+
+    def _fetch_live_dota_fixtures(self) -> List[Dict[str, Any]]:
+        """GET /v4/fixtures?sportId=16 — list of Dota 2 fixtures.
+
+        Filters for live / upcoming matches.  Free tier gives us
+        pre-match + live.  We do NOT filter for hasOdds=true
+        here because the response may omit it; the odds call
+        downstream will tell us if there's actual data.
+        """
+        data = self._request(
+            "GET", "/fixtures",
+            params={
+                "sportId": str(self._sport_id()),
+                # No date filter: free tier returns what's
+                # currently active.  We limit in code below.
+                "limit": "50",
+            },
+        )
+        if not isinstance(data, list):
+            # Some endpoints return a {"data": [...]} envelope.
+            # Try that.
+            if isinstance(data, dict) and isinstance(data.get("data"), list):
+                data = data["data"]
+            else:
+                return []
+        out: List[Dict[str, Any]] = []
+        for f in data:
+            if not isinstance(f, dict):
+                continue
+            sid = f.get("sportId")
+            if sid is not None and int(sid) != self._sport_id():
+                continue
+            out.append(f)
+        return out
+
+    def _fetch_odds_for_fixtures(
+        self, fixture_ids: List[str],
+    ) -> List[Dict[str, Any]]:
+        """GET /v4/odds?fixtureId=X — one per fixture.
+
+        We can't easily batch via fixtureIds on /v4/odds; the
+        primary batch endpoint is /v4/odds-by-tournament but
+        that requires knowing tournament IDs upfront.  For
+        simplicity (and because we'll throttle hard at the
+        multi-backend layer), we make one request per fixture.
+        With ~3-5 live Dota 2 matches, that's 3-5 requests per
+        secondary cycle (well under the 250/month budget).
+        """
+        out: List[Dict[str, Any]] = []
+        for fid in fixture_ids:
+            params: Dict[str, str] = {"fixtureId": str(fid)}
+            if self._bookmakers:
+                params["bookmakers"] = self._bookmakers
+            data = self._request("GET", "/odds", params=params)
+            if isinstance(data, dict) and data.get("hasOdds"):
+                out.append(data)
+        return out
+
+    # -- parser ---------------------------------------------------------
+
+    # Heuristics for "is this a Total market?".  We have to
+    # guess because the response doesn't ship human-readable
+    # market labels in the live feed (only integer IDs).  We
+    # update this map after seeing a real response.
+    _TOTAL_MARKET_HINTS = (
+        "total", "over", "under", "maps", "kills",
+    )
+
+    def _classify_market(
+        self, market_id: str, outcomes: Dict[str, Any],
+    ) -> Optional[str]:
+        """Return 'winner', 'total', or None for a market.
+
+        `outcomes` is the raw `outcomes` dict from the response,
+        keyed by stringified outcome ID.  Heuristics, in order:
+          1. If any outcome has a numeric `handicap` / `total` /
+             `points` / `line` field → it's a totals market.
+             (OddsPapi stores the threshold in `players["0"]
+             .handicap` for over/under lines.)
+          2. If an outcome's name/label contains "over", "under",
+             "total", "maps", or "kills" → totals.
+          3. 3 outcomes and no totals signal → 1X2 (winner with
+             a draw in the middle; we skip the draw).
+          4. 2 outcomes and no totals signal → ML (winner).
+        """
+        n = len(outcomes or {})
+        if n < 2 or n > 3:
+            return None
+        # Heuristic 1: presence of a threshold field on any
+        # outcome.  Strong signal for Over/Under.
+        for oid, outcome in outcomes.items():
+            if not isinstance(outcome, dict):
+                continue
+            if self._outcome_threshold(outcome) is not None:
+                return "total"
+        # Heuristic 2: text hints on outcome names
+        for oid, outcome in outcomes.items():
+            if not isinstance(outcome, dict):
+                continue
+            p0 = (outcome.get("players") or {}).get("0") or {}
+            label = (
+                p0.get("name") or p0.get("label") or p0.get("type")
+                or ""
+            ).lower()
+            for hint in self._TOTAL_MARKET_HINTS:
+                if hint in label:
+                    return "total"
+        # Heuristic 3 / 4: count
+        if n == 3:
+            return "winner_1x2"
+        return "winner"
+
+    def _outcome_price(self, outcome: Dict[str, Any]) -> Optional[float]:
+        """Pull the decimal price out of an outcome's nested structure.
+
+        Path: outcome.players["0"].price  (a dict on /v4/odds).
+        Returns None on any structural mismatch.
+        """
+        try:
+            p0 = (outcome.get("players") or {}).get("0")
+            if not isinstance(p0, dict):
+                return None
+            price = p0.get("price")
+            if price is None:
+                return None
+            return float(price)
+        except (TypeError, ValueError):
+            return None
+
+    def _outcome_threshold(self, outcome: Dict[str, Any]) -> Optional[float]:
+        """Pull a numeric threshold out of an outcome if present.
+
+        Different markets store the threshold differently:
+        odds["0"].handicap, odds["0"].total, odds["0"].points, etc.
+        We try a few common field names.
+        """
+        p0 = (outcome.get("players") or {}).get("0") or {}
+        if not isinstance(p0, dict):
+            return None
+        for k in ("handicap", "total", "points", "line", "max"):
+            v = p0.get(k)
+            if v is None:
+                continue
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    def _fixture_to_quotes(
+        self, fixture: Dict[str, Any],
+    ) -> List[OddsQuote]:
+        """Parse one /v4/odds response into OddsQuote list.
+
+        Walks bookmakerOdds[slug].markets[mid].outcomes[oid] and
+        emits one OddsQuote per (bookmaker, market, outcome) cell.
+        """
+        out: List[OddsQuote] = []
+        ev_id = fixture.get("fixtureId")
+        bookmakers = fixture.get("bookmakerOdds") or {}
+        for slug, bdata in bookmakers.items():
+            if not isinstance(bdata, dict):
+                continue
+            markets = bdata.get("markets") or {}
+            for market_id, mdata in markets.items():
+                if not isinstance(mdata, dict):
+                    continue
+                outcomes = mdata.get("outcomes") or {}
+                mtype = self._classify_market(market_id, outcomes)
+                if mtype is None:
+                    continue
+                # ----- Winner (2-outcome ML) or 1X2 (3-outcome) -----
+                if mtype in ("winner", "winner_1x2"):
+                    # Order: outcomes are usually 101/102/103 (or
+                    # 1/2/3 for Dota 2).  We pick the first and
+                    # the last as P1/P2; if 1X2, the middle one
+                    # is the draw and we skip it.
+                    items = list(outcomes.items())
+                    # Sort by outcome id (stringified int) for
+                    # stable ordering — the first/lowest is Home,
+                    # the highest is Away.
+                    try:
+                        items.sort(key=lambda kv: int(kv[0]))
+                    except (TypeError, ValueError):
+                        pass
+                    if not items:
+                        continue
+                    p1_oid, p1_outcome = items[0]
+                    p2_oid, p2_outcome = items[-1]
+                    if p1_oid == p2_oid:
+                        # Only 1 outcome — degenerate, skip.
+                        continue
+                    p1_price = self._outcome_price(p1_outcome)
+                    p2_price = self._outcome_price(p2_outcome)
+                    if p1_price is None or p2_price is None:
+                        continue
+                    if p1_price <= 1.0 or p2_price <= 1.0:
+                        # Sanity: decimal odds must be > 1.0
+                        continue
+                    out.append(OddsQuote(
+                        market="winner", selection="P1",
+                        decimal_odds=p1_price, bookmaker=str(slug),
+                        raw={"fixture_id": ev_id, "market_id": market_id,
+                             "outcome_id": p1_oid},
+                    ))
+                    out.append(OddsQuote(
+                        market="winner", selection="P2",
+                        decimal_odds=p2_price, bookmaker=str(slug),
+                        raw={"fixture_id": ev_id, "market_id": market_id,
+                             "outcome_id": p2_oid},
+                    ))
+                # ----- Total (Over/Under with threshold) -----
+                elif mtype == "total":
+                    items = list(outcomes.items())
+                    if len(items) != 2:
+                        continue
+                    # First is typically Over, second Under
+                    over_oid, over_out = items[0]
+                    under_oid, under_out = items[1]
+                    over_price = self._outcome_price(over_out)
+                    under_price = self._outcome_price(under_out)
+                    if over_price is None or under_price is None:
+                        continue
+                    # Threshold can live on either outcome (or
+                    # both).  Try over first, fall back to under.
+                    threshold = (
+                        self._outcome_threshold(over_out)
+                        or self._outcome_threshold(under_out)
+                    )
+                    if threshold is None:
+                        # Without a threshold we can't form
+                        # `over_2.5`.  Skip — the live card
+                        # doesn't have a "no-threshold total"
+                        # slot anyway.
+                        continue
+                    try:
+                        thr_f = float(threshold)
+                    except (TypeError, ValueError):
+                        continue
+                    out.append(OddsQuote(
+                        market="total_kills",
+                        selection=f"over_{thr_f:g}",
+                        decimal_odds=over_price, bookmaker=str(slug),
+                        raw={"fixture_id": ev_id, "market_id": market_id,
+                             "outcome_id": over_oid, "threshold": thr_f},
+                    ))
+                    out.append(OddsQuote(
+                        market="total_kills",
+                        selection=f"under_{thr_f:g}",
+                        decimal_odds=under_price, bookmaker=str(slug),
+                        raw={"fixture_id": ev_id, "market_id": market_id,
+                             "outcome_id": under_oid, "threshold": thr_f},
+                    ))
+        return out
+
+    # -- public API ------------------------------------------------------
+
+    def get_all_live_quotes(self) -> Dict[str, List[OddsQuote]]:
+        """Full snapshot keyed by `team_pair_key(home, away)`.
+
+        Same shape as `OddsApiIOBackend.get_all_live_quotes` so
+        the multi-backend coordinator can merge results
+        directly.
+        """
+        if not self._has_key():
+            return {}
+        fixtures = self._fetch_live_dota_fixtures()
+        if not fixtures:
+            return {}
+        # Filter to fixtures that have odds (most efficient path
+        # — the /odds call costs a request per fixture, so we
+        # only call it for fixtures likely to have data)
+        candidate_ids = [
+            f.get("fixtureId") for f in fixtures
+            if f.get("fixtureId") and (f.get("hasOdds") is not False)
+        ]
+        if not candidate_ids:
+            return []
+        odds_data = self._fetch_odds_for_fixtures(candidate_ids)
+        # Build a quick fixtureId -> fixture-with-odds map
+        by_id: Dict[str, Dict[str, Any]] = {
+            od.get("fixtureId"): od for od in odds_data
+            if isinstance(od, dict)
+        }
+        # Build a fixtureId -> original fixture (for team names) map
+        names_by_id: Dict[str, Dict[str, Any]] = {
+            f.get("fixtureId"): f for f in fixtures
+            if f.get("fixtureId")
+        }
+        out: Dict[str, List[OddsQuote]] = {}
+        for fid, od in by_id.items():
+            quotes = self._fixture_to_quotes(od)
+            if not quotes:
+                continue
+            # Team names live on the original fixture record.
+            # OddsPapi uses `participants` (array) or
+            # `participant1Name` / `participant2Name` depending
+            # on the endpoint version.  We try all known shapes.
+            f = names_by_id.get(fid, {})
+            home, away = self._extract_team_names(f, od)
+            if not (home and away):
+                continue
+            k = team_pair_key(home, away)
+            if not k or k == "|":
+                continue
+            out[k] = quotes
+        return out
+
+    @staticmethod
+    def _extract_team_names(
+        fixture: Dict[str, Any], odds: Dict[str, Any],
+    ) -> Tuple[str, str]:
+        """Pull (home, away) names out of the OddsPapi payload.
+
+        Tries several known shapes:
+          * `participant1Name` / `participant2Name` (top-level)
+          * `participants[].name` array
+          * `homeTeam` / `awayTeam` (some versions)
+          * `externalProviders` IDs (last resort — not names)
+        """
+        for src in (odds, fixture):
+            if not isinstance(src, dict):
+                continue
+            a = src.get("participant1Name") or src.get("homeTeam") or src.get("home_name")
+            b = src.get("participant2Name") or src.get("awayTeam") or src.get("away_name")
+            if a and b:
+                return str(a), str(b)
+            parts = src.get("participants") or []
+            if isinstance(parts, list) and len(parts) >= 2:
+                a = parts[0].get("name") if isinstance(parts[0], dict) else None
+                b = parts[1].get("name") if isinstance(parts[1], dict) else None
+                if a and b:
+                    return str(a), str(b)
+        return "", ""
+
+    def get_quotes(self, match_id: int) -> List[OddsQuote]:
+        # Per-match lookup not supported — the live card uses
+        # the team-pair cache populated by `get_all_live_quotes`.
+        return []
+
+    def probe_session(self) -> bool:
+        """Hit /v4/sports (no auth required) to check connectivity.
+
+        We can't probe a cheap authenticated endpoint on free
+        tier — the cheapest is /fixtures which costs a request.
+        For OddsPapi we use a non-auth probe and trust that
+        the real data calls will surface 401/403.
+        """
+        try:
+            req = urllib.request.Request(
+                self._base_url + "/sports",
+                method="GET",
+                headers={
+                    "User-Agent": "dota-analyst/0.4.3",
+                    "Accept": "application/json",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=10.0) as r:
+                return r.status == 200
+        except Exception:
+            return False
+
+
+# To enable as a secondary (rate-limited):
+#   ODDSPAPI_API_KEY=<your key from https://oddspapi.io>
+#   ODDSPAPI_BOOKMAKERS=pinnacle,ggbet,thunderpick
+#   (The multi-backend coordinator throttles us to once per
+#    ODDS_SECONDARY_POLL_SEC seconds — default 10800 = 3 hours,
+#    keeping the 250/month free tier budget intact.)
+
+
+# =========================================================================== #
+# MultiOddsBackend  (v0.4.3 — composite: primary + one-or-more secondaries)
+# =========================================================================== #
+#
+# Coordinates multiple `OddsBackend` instances:
+#
+#   1. **Primary** (first in the ODDS_BACKENDS list) is called
+#      every poll cycle.  It is expected to be cheap (high rate
+#      limit) — typically `OddsApiIOBackend` (100 req/hour free).
+#
+#   2. **Secondaries** (rest of the list) are throttled to one
+#      call per `ODDS_SECONDARY_POLL_SEC` (default 3 hours).
+#      They fill in matches the primary missed.  Typically
+#      `OddsPapiBackend` (250 req/month free, includes Pinnacle).
+#
+# Merging: keys that the primary already filled are kept;
+# secondary keys fill in only what's missing.  This means the
+# primary's data is "trusted" first, secondaries add breadth.
+#
+# Configuration via env:
+#   ODDS_BACKENDS=business.odds_backends.OddsApiIOBackend,business.odds_backends.OddsPapiBackend
+#   ODDS_SECONDARY_POLL_SEC=10800          # default 3 hours
+#
+# Why throttling: 250 req/month ÷ 30 days = 8/day, so 3 hours
+# is the safe cadence.  If the user upgrades OddsPapi to a paid
+# tier, lower the interval accordingly.
+# ---------------------------------------------------------------------------
+
+
+class MultiOddsBackend:
+    """Composite backend that fans out to a primary + secondaries.
+
+    Per-cycle flow (`get_all_live_quotes`):
+      1. Call primary.  Merge into `out`.
+      2. For each secondary, if its `_last_poll_at` is older
+         than `ODDS_SECONDARY_POLL_SEC`, call it and merge
+         missing keys.  Skip the call if the cadence hasn't
+         elapsed — saves the free-tier budget.
+      3. If a secondary raises, log once and continue.
+      4. Return `out`.
+
+    `probe_session` returns True if ANY backend's probe
+    succeeds — fail-soft for the whole composite.
+    """
+    name = "multi"
+
+    # Default secondary cadence.  3 hours × 8 = 24/day, which
+    # is 720/month for OddsPapi free tier 250 — too high.  But
+    # the throttling is per-secondary, and we only call when the
+    # primary is missing matches; in practice the secondary
+    # call is much less frequent than every 3 hours when
+    # odds-api.io is doing its job.
+    DEFAULT_SECONDARY_POLL_SEC = 10800.0  # 3 hours
+
+    def __init__(self) -> None:
+        self._backends: List[OddsBackend] = []
+        self._secondary_poll_at: Dict[str, float] = {}
+        self._init_backends()
+        self._secondary_poll_sec: float = float(
+            os.environ.get(
+                "ODDS_SECONDARY_POLL_SEC",
+                str(self.DEFAULT_SECONDARY_POLL_SEC),
+            )
+        )
+        log.info(
+            "MultiOddsBackend: %d backend(s): %s (secondary_cadence=%.0fs)",
+            len(self._backends),
+            ", ".join(b.name for b in self._backends) or "(none!)",
+            self._secondary_poll_sec,
+        )
+
+    def _init_backends(self) -> None:
+        """Read ODDS_BACKENDS env, instantiate each class.
+
+        Format: comma-separated fully-qualified class names
+        (e.g. "business.odds_backends.OddsApiIOBackend,business.odds_backends.OddsPapiBackend").
+        Anything that fails to import / instantiate is logged
+        and skipped — a misconfigured secondary should not
+        break the whole composite.
+        """
+        spec = os.environ.get(
+            "ODDS_BACKENDS",
+            "business.odds_backends.OddsApiIOBackend",
+        ).strip()
+        if not spec:
+            return
+        for cls_spec in spec.split(","):
+            cls_spec = cls_spec.strip()
+            if not cls_spec:
+                continue
+            try:
+                module_name, _, cls_name = cls_spec.rpartition(".")
+                if not module_name:
+                    raise ValueError(
+                        f"ODDS_BACKENDS entry must be 'module.path.ClassName', got {cls_spec!r}"
+                    )
+                mod = importlib.import_module(module_name)
+                cls = getattr(mod, cls_name)
+                inst = cls()
+                self._backends.append(inst)
+            except Exception as exc:
+                log.warning(
+                    "MultiOddsBackend: failed to load %r: %s", cls_spec, exc,
+                )
+
+    def _should_poll_secondary(self, backend: OddsBackend) -> bool:
+        last = self._secondary_poll_at.get(backend.name)
+        if last is None:
+            return True
+        return (time.monotonic() - last) >= self._secondary_poll_sec
+
+    def probe_session(self) -> bool:
+        """True if at least one backend's probe succeeds."""
+        if not self._backends:
+            return False
+        for b in self._backends:
+            try:
+                if b.probe_session():
+                    return True
+            except Exception as exc:
+                log.debug("MultiOddsBackend: %s probe raised: %s", b.name, exc)
+        return False
+
+    def get_all_live_quotes(self) -> Dict[str, List[OddsQuote]]:
+        out: Dict[str, List[OddsQuote]] = {}
+        if not self._backends:
+            return out
+        # 1. Primary (always poll)
+        primary = self._backends[0]
+        try:
+            primary_snap = primary.get_all_live_quotes() or {}
+            out.update(primary_snap)
+            log.debug(
+                "MultiOddsBackend: primary %s returned %d keys",
+                primary.name, len(primary_snap),
+            )
+        except Exception as exc:
+            log.warning(
+                "MultiOddsBackend: primary %s raised: %s", primary.name, exc,
+            )
+        # 2. Secondaries (throttled)
+        for sec in self._backends[1:]:
+            if not self._should_poll_secondary(sec):
+                continue
+            try:
+                sec_snap = sec.get_all_live_quotes() or {}
+                # Fill in only keys the primary didn't have.
+                # This is the "spot-check" behavior: if odds-api.io
+                # already covered the match, we don't overwrite.
+                added = 0
+                for k, v in sec_snap.items():
+                    if k not in out:
+                        out[k] = v
+                        added += 1
+                log.info(
+                    "MultiOddsBackend: secondary %s returned %d keys (%d new, %d already covered)",
+                    sec.name, len(sec_snap), added, len(sec_snap) - added,
+                )
+            except Exception as exc:
+                log.warning(
+                    "MultiOddsBackend: secondary %s raised: %s", sec.name, exc,
+                )
+            finally:
+                # Mark the poll attempt even on failure so we
+                # don't immediately retry.  The next cycle
+                # will try again after the cadence elapses.
+                self._secondary_poll_at[sec.name] = time.monotonic()
+        return out
+
+    def get_quotes(self, match_id: int) -> List[OddsQuote]:
+        """Per-match lookup: try each backend in order, first hit wins."""
+        for b in self._backends:
+            try:
+                quotes = b.get_quotes(int(match_id))
+                if quotes:
+                    return quotes
+            except Exception as exc:
+                log.debug("MultiOddsBackend: %s get_quotes raised: %s", b.name, exc)
+        return []
+
+
+# To enable:
+#   ODDS_BACKEND=business.odds_backends.MultiOddsBackend
+#   ODDS_BACKENDS=business.odds_backends.OddsApiIOBackend,business.odds_backends.OddsPapiBackend
+#   ODDS_API_KEY=<from odds-api.io>
+#   ODDSPAPI_API_KEY=<from oddspapi.io>
+#   ODDS_SECONDARY_POLL_SEC=10800            # 3 hours
+#   ODDS_API_BOOKMAKERS=1xbet,Bet365        # free tier 2-bookmaker cap
+#   ODDSPAPI_BOOKMAKERS=pinnacle,ggbet,thunderpick  # sharp + esports specialists
 

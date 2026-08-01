@@ -68,6 +68,15 @@ _MODEL_CACHE: Any = None
 _META_CACHE: Optional[Dict[str, Any]] = None
 _TOP_TEAMS_CACHE: Optional[Dict[int, int]] = None
 _PATCH_INFO_CACHE: Optional[Dict[str, str]] = None
+# v0.7.2: DLTV uses an internal hero-id namespace that's NOT
+# the same as the OpenDota/Steam one.  Out of 127 DLTV heroes,
+# 104 have id != steam_id (DLTV 24 = Lina / Steam 25, etc).
+# The v18 model was trained on OpenDota hero_ids (Steam), so
+# if the live card passes a DLTV id (which it does for v1 API
+# sources and most browser cache entries), the model sees the
+# wrong hero.  We build the mapping lazily on first call and
+# convert any incoming hero_id in `_normalise_hero_id`.
+_DLTV_TO_STEAM: Optional[Dict[int, int]] = None
 
 
 class v18_unavailable(RuntimeError):
@@ -95,7 +104,89 @@ def _load_v18() -> Tuple[Any, Dict[str, Any]]:
         raise v18_unavailable(f"failed to load v18 model: {exc}") from exc
     _MODEL_CACHE = model
     _META_CACHE = meta
+    # Eagerly build the DLTV->Steam map so the first predict
+    # call doesn't pay the cost.
+    _get_dltv_to_steam_map()
     return model, meta
+
+
+# --------------------------------------------------------------------------- #
+# Hero-id namespace translation
+# --------------------------------------------------------------------------- #
+
+def _get_dltv_to_steam_map() -> Dict[int, int]:
+    """Build (lazily) and return the DLTV internal hero-id ->
+    OpenDota/Steam hero-id map.
+
+    The DLTV index has 127 heroes, of which 104 use a different
+    id than Steam (mostly offset +1, but the newer heroes
+    114-127 use a remap that goes up to offset +28).  The v18
+    model was trained on OpenDota /matches/{id} payloads which
+    use Steam ids, so the live card must convert DLTV -> Steam
+    before passing to v18 -- otherwise the model treats the
+    picked hero as a different one (DLTV 120 = Hoodwink but
+    Steam 120 = Pangolier; the model would predict the
+    Pangolier matchup when the team actually picked Hoodwink).
+
+    The map is cached at module scope after the first build.
+    """
+    global _DLTV_TO_STEAM
+    if _DLTV_TO_STEAM is not None:
+        return _DLTV_TO_STEAM
+    out: Dict[int, int] = {}
+    try:
+        # Local import to avoid a hard dep on dltv_client at
+        # module load (the v18 trainer doesn't have dltv_client
+        # available in all contexts).
+        from .dltv_client import client
+        heroes = client.get_heroes() or []
+        for h in heroes:
+            did = h.get("id")
+            sid = h.get("steam_id")
+            if did is None or sid is None:
+                continue
+            try:
+                out[int(did)] = int(sid)
+            except (TypeError, ValueError):
+                continue
+    except Exception:
+        # If dltv_client isn't importable (test contexts), the
+        # caller will fall through to the pass-through branch
+        # in `_normalise_hero_id`.
+        pass
+    _DLTV_TO_STEAM = out
+    return out
+
+
+def _dltv_to_steam(hero_id: int) -> int:
+    """Force-translate a single hero_id from DLTV internal to
+    Steam (OpenDota/Valve) namespace.
+
+    IMPORTANT: the two namespaces are ambiguous in [1..23]
+    (both use the same ids for the first 23 heroes) and
+    deliberately collide at higher ids too (e.g. both use
+    24 for Lina, 120 for Hoodwink, but with completely
+    different heroes).  Use this function ONLY when you know
+    the input is a DLTV internal id.  For callers that pass
+    Steam ids, use the no-op pass-through (the model expects
+    Steam).
+
+    Heroes that are not in the DLTV map (i.e. the input is
+    already Steam, or the input is a new hero not yet indexed)
+    pass through unchanged.
+    """
+    if hero_id is None:
+        return 0
+    try:
+        hid = int(hero_id)
+    except (TypeError, ValueError):
+        return 0
+    if hid <= 0:
+        return 0
+    m = _DLTV_TO_STEAM
+    if m is None:
+        m = _get_dltv_to_steam_map()
+    return int(m.get(hid, hid))
 
 
 def _load_top_teams() -> Dict[int, int]:
@@ -229,6 +320,16 @@ def _build_features(
         "d_bans": float(len(d_bans or [])),
         "days_since_patch": _days_since_patch(start_time, patch, patch_info),
     }
+    # The v18 model was trained on OpenDota /matches/{id} payloads
+    # which use Steam hero ids.  _build_features always treats
+    # the input as Steam (the public predict_winner_v18 pre-
+    # translates DLTV->Steam when the caller asks for that
+    # namespace).  We deliberately do NOT translate again here
+    # because the two namespaces are ambiguous for ids in
+    # [1..23] (both use the same ids for the first 23 heroes)
+    # and for some specific ids in [24..127] (e.g. 25 = Lion
+    # in DLTV but 25 = Lina in Steam).  Re-translating an
+    # already-Steam id would corrupt the feature vector.
     r_set = set(int(h) for h in (r_picks or []))
     d_set = set(int(h) for h in (d_picks or []))
     for h in range(NUM_HEROES):
@@ -246,16 +347,46 @@ def predict_winner_v18(
     dire_bans: Optional[List[int]] = None,
     start_time: Optional[int] = None,
     patch: Optional[str] = None,
+    hero_id_namespace: str = "steam",
 ) -> Dict[str, Any]:
     """Run the v18 winner model.  Returns the same dict shape
     as v17_predict.predict()'s "winner" sub-dict, plus a
     "source" field for downstream observability.
+
+    `hero_id_namespace` (v0.7.2): the namespace of the incoming
+    hero ids.  Must be one of:
+      - "steam"  : OpenDota / Valve / Steam ids (default).
+                   Pass this for watchlist JSON, OpenDota
+                   payloads, v18 trainer data, anything that's
+                   already in the OpenDota namespace.
+      - "dltv"   : DLTV internal ids.  v18 will force-translate
+                   to Steam via the dltv_client map.  Use this
+                   for v1 API maps[].picks, the dltv_browser
+                   cache overlay, and any other source that
+                   exposes DLTV internal ids.
+    The two namespaces are NOT identical (104 of 127 DLTV
+    heroes use a different id than Steam), so getting this
+    wrong biases the model toward the wrong hero.
 
     Raises v18_unavailable if the model isn't installed (caller
     falls back to v17).
     """
     model, meta = _load_v18()
     feat_names = meta["feature_columns"]
+    # v0.7.2: pre-translate the picks/bans if the caller said
+    # they're DLTV.  We do this once here so _build_features
+    # can stay Steam-only.
+    if hero_id_namespace == "dltv":
+        radiant_picks = [_dltv_to_steam(int(h)) for h in (radiant_picks or [])]
+        dire_picks = [_dltv_to_steam(int(h)) for h in (dire_picks or [])]
+        if radiant_bans:
+            radiant_bans = [_dltv_to_steam(int(h)) for h in radiant_bans]
+        if dire_bans:
+            dire_bans = [_dltv_to_steam(int(h)) for h in dire_bans]
+    elif hero_id_namespace != "steam":
+        raise ValueError(
+            f"hero_id_namespace must be 'steam' or 'dltv', got {hero_id_namespace!r}"
+        )
     feats = _build_features(
         radiant_picks, dire_picks,
         radiant_team_id, dire_team_id,

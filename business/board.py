@@ -17,6 +17,51 @@ from .exceptions import AccuracyError, DotaAnalystError, MLError
 from .ml.engine import get_default_engine
 from . import odds as _odds
 
+
+# v0.7.2: the v18 (and v17) ML models are trained on OpenDota /
+# Steam hero-id namespace.  The live card pulls picks from three
+# different sources, each with its own convention:
+#   - v1 API maps[].picks            : hero_id IS DLTV internal (1..127)
+#   - watchlist /live/{id}.json      : hero_id IS the steam id (1..155)
+#   - dltv_browser cache overlay     : hero_id is DLTV, _steam_id is Steam
+#
+# Without conversion, the model sees the wrong hero for ~104 of
+# 127 DLTV heroes (e.g. DLTV 120 = Hoodwink, Steam 120 = Pangolier).
+# `convert_to_steam` takes a list of picks (DLTV-style dicts) and
+# returns a list of Steam ids, preferring `_steam_id` when present
+# and falling back to the DLTV -> Steam map for the rest.
+def convert_to_steam(picks: Optional[List[Dict[str, Any]]]) -> List[int]:
+    """Convert a list of pick dicts to a list of Steam hero ids.
+
+    Resolution priority (v0.7.2):
+      1. `_steam_id` field (explicit steam namespace)
+      2. `hero_id` field, run through the DLTV -> Steam map
+      3. skip the entry if both are missing
+    """
+    from .v18_predict import _get_dltv_to_steam_map
+    dltv_to_steam = _get_dltv_to_steam_map()
+    out: List[int] = []
+    for p in picks or []:
+        if not isinstance(p, dict):
+            continue
+        sid = p.get("_steam_id")
+        if sid is not None:
+            try:
+                out.append(int(sid))
+                continue
+            except (TypeError, ValueError):
+                pass
+        did = p.get("hero_id")
+        if did is not None:
+            try:
+                did_i = int(did)
+                # Translate DLTV -> Steam; pass through if id > 127
+                # (already steam) or not in the map.
+                out.append(int(dltv_to_steam.get(did_i, did_i)))
+            except (TypeError, ValueError):
+                pass
+    return out
+
 log = get_logger(__name__)
 
 # v17 trained-model predictor (opt-in via V17_PREDICT=1).
@@ -428,22 +473,23 @@ def _postmatch_prediction(series: Dict, is_watchlist: bool = False) -> Optional[
             # first_15 MAE 3.92.  Bypass legacy engine entirely.
             radiant_team_id = last_map.get("radiant_team_id")
             dire_team_id    = last_map.get("dire_team_id")
-            # For live cards we have raw hero_ids; pass them straight
-            # through.  For postmatch we may have hero_id or hero_steam_id
-            # mixed; `_picks_to_heroes` normalises that.
-            r_hero_ids = [h.get("hero_id") for h in (r_picks if radiant_is_first else d_picks)
-                          if isinstance(h, dict) and h.get("hero_id") is not None]
-            d_hero_ids = [h.get("hero_id") for h in (d_picks if radiant_is_first else r_picks)
-                          if isinstance(h, dict) and h.get("hero_id") is not None]
+            # v0.7.2: convert picks to Steam hero ids.  The picks
+            # come from one of three sources (v1 API = DLTV,
+            # watchlist JSON = already Steam, browser cache =
+            # DLTV + _steam_id) and `convert_to_steam` handles
+            # all three correctly.  Without this conversion the
+            # v18 model sees the wrong hero for ~80% of picks.
+            r_picks_for_model = convert_to_steam(r_picks if radiant_is_first else d_picks)
+            d_picks_for_model = convert_to_steam(d_picks if radiant_is_first else r_picks)
+            r_bans_for_model  = convert_to_steam(last_map.get("radiant_bans") or [])
+            d_bans_for_model  = convert_to_steam(last_map.get("dire_bans") or [])
             pred = v17_predict.predict(
                 radiant_team_id=radiant_team_id,
                 dire_team_id=dire_team_id,
-                radiant_picks=r_hero_ids,
-                dire_picks=d_hero_ids,
-                radiant_bans=[b.get("hero_id") for b in (last_map.get("radiant_bans") or [])
-                              if isinstance(b, dict) and b.get("hero_id") is not None],
-                dire_bans=[b.get("hero_id") for b in (last_map.get("dire_bans") or [])
-                           if isinstance(b, dict) and b.get("hero_id") is not None],
+                radiant_picks=r_picks_for_model,
+                dire_picks=d_picks_for_model,
+                radiant_bans=r_bans_for_model,
+                dire_bans=d_bans_for_model,
                 start_time=last_map.get("start_time"),
                 patch=last_map.get("patch"),
             )
@@ -574,14 +620,14 @@ def _postmatch_card(series: Dict, event_title: str, is_watchlist: bool = False) 
                     actual=actual,
                     radiant_team_id=m.get("radiant_team_id"),
                     dire_team_id=m.get("dire_team_id"),
-                    radiant_picks=[h.get("hero_id") for h in r_picks
-                                   if isinstance(h, dict) and h.get("hero_id") is not None],
-                    dire_picks=[h.get("hero_id") for h in d_picks
-                                 if isinstance(h, dict) and h.get("hero_id") is not None],
-                    radiant_bans=[b.get("hero_id") for b in (m.get("radiant_bans") or [])
-                                  if isinstance(b, dict) and b.get("hero_id") is not None],
-                    dire_bans=[b.get("hero_id") for b in (m.get("dire_bans") or [])
-                                if isinstance(b, dict) and b.get("hero_id") is not None],
+                    # v0.7.2: convert picks/bans to Steam hero ids
+                    # (v1 API = DLTV, watchlist = already Steam,
+                    # browser cache = DLTV + _steam_id).  Without
+                    # this, the v18 model sees the wrong hero.
+                    radiant_picks=convert_to_steam(r_picks),
+                    dire_picks=convert_to_steam(d_picks),
+                    radiant_bans=convert_to_steam(m.get("radiant_bans") or []),
+                    dire_bans=convert_to_steam(m.get("dire_bans") or []),
                     start_time=m.get("start_time"),
                     patch=m.get("patch"),
                 )

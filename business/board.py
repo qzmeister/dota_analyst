@@ -1276,6 +1276,14 @@ def _live_card(series: Dict, event_title: str) -> Dict:
                           if isinstance(h, dict) and h.get("hero_id") is not None]
             d_hero_ids = [h.get("hero_id") for h in (m.get("dire_picks") or [])
                           if isinstance(h, dict) and h.get("hero_id") is not None]
+            # v0.4.3.2: pass start_time + patch so the live and
+            # postmatch predictions use IDENTICAL feature vectors.
+            # Without these, predict() falls back to time.time()
+            # (days_since_patch ~ 0) and "" patch (categorical
+            # code -1), giving a different model output than
+            # the postmatch call.  v17 doesn't model in-game
+            # state (gold/kills) anyway, so the two calls should
+            # now agree for the same picks/bans/teams/patch.
             hybrid = v17_predict.hybrid_predict(
                 engine=get_default_engine(),
                 team_a=radiant_team, team_b=dire_team,
@@ -1289,6 +1297,8 @@ def _live_card(series: Dict, event_title: str) -> Dict:
                               if isinstance(b, dict) and b.get("hero_id") is not None],
                 dire_bans=[b.get("hero_id") for b in (m.get("dire_bans") or [])
                            if isinstance(b, dict) and b.get("hero_id") is not None],
+                start_time=m.get("start_time"),
+                patch=m.get("patch"),
             )
             predictions = hybrid.get("prediction") or hybrid
             engine_name = "v17_hybrid"

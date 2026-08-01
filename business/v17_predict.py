@@ -351,27 +351,59 @@ def predict(radiant_team_id: Optional[int],
         except Exception as exc:  # noqa: BLE001
             raise MLError(f"{tgt} predict failed: {exc}") from exc
 
-    # Winner
+    # Winner -- v0.6.0: try v18 first (XGBoost on 3403 matches
+    # with hero one-hot), fall back to v17 (logreg on 21 features
+    # where L1 zeroed out 19).  The two share the same return
+    # shape so the rest of the pipeline is unaffected.
+    used_winner_source = None
     try:
-        model, meta = _load_model("winner")
-        row = _encode_features(meta, feats)
-        proba = model.predict_proba([row])[0]
-        prob_radiant = float(proba[1]) if len(proba) > 1 else 0.5
-        prob_dire = float(proba[0]) if len(proba) > 0 else 0.5
+        from . import v18_predict
+        v18_winner = v18_predict.predict_winner_v18(
+            radiant_picks=radiant_picks or [],
+            dire_picks=dire_picks or [],
+            radiant_team_id=radiant_team_id,
+            dire_team_id=dire_team_id,
+            radiant_bans=radiant_bans,
+            dire_bans=dire_bans,
+            start_time=start_time,
+            patch=patch,
+        )
+        prob_radiant = float(v18_winner["prob_radiant"])
+        prob_dire = 1.0 - prob_radiant
         out["winner"] = {
-            "team": "radiant" if prob_radiant >= 0.5 else "dire",
+            "team": v18_winner["team"],
             "prob_radiant": prob_radiant,
             "prob_dire":     prob_dire,
             "probability":   max(prob_radiant, prob_dire),
         }
-        margin = abs(prob_radiant - 0.5)
-        out["confidence"] = "high" if margin > 0.15 else ("medium" if margin > 0.07 else "low")
-    except MLError:
-        out["winner"] = {"team": "radiant", "prob_radiant": 0.5, "probability": 0.5}
-        out["confidence"] = "low"
-    except Exception as exc:  # noqa: BLE001
-        raise MLError(f"winner predict failed: {exc}") from exc
+        used_winner_source = "v18"
+    except Exception as v18_exc:  # noqa: BLE001 -- fallback is intentional
+        # v18 unavailable (model files missing, joblib error,
+        # numpy conversion, etc.).  Fall through to v17.
+        try:
+            model, meta = _load_model("winner")
+            row = _encode_features(meta, feats)
+            proba = model.predict_proba([row])[0]
+            prob_radiant = float(proba[1]) if len(proba) > 1 else 0.5
+            prob_dire = float(proba[0]) if len(proba) > 0 else 0.5
+            out["winner"] = {
+                "team": "radiant" if prob_radiant >= 0.5 else "dire",
+                "prob_radiant": prob_radiant,
+                "prob_dire":     prob_dire,
+                "probability":   max(prob_radiant, prob_dire),
+            }
+            used_winner_source = "v17"
+        except MLError:
+            out["winner"] = {"team": "radiant", "prob_radiant": 0.5, "probability": 0.5}
+            out["confidence"] = "low"
+            return out
+        except Exception as exc:  # noqa: BLE001
+            raise MLError(f"winner predict failed: {exc}") from exc
 
+    # Confidence uses the magnitude of the deviation from 0.5.
+    margin = abs(prob_radiant - 0.5)
+    out["confidence"] = "high" if margin > 0.15 else ("medium" if margin > 0.07 else "low")
+    out["source"] = used_winner_source or out.get("source", "v17")
     return out
 
 

@@ -440,29 +440,40 @@ def _discover_premium_leagues(cookies: Dict[str, str], take: int
                                 ) -> List[Dict[str, Any]]:
     """Query top premium leagues (PROFESSIONAL/MAJOR/PREMIUM/
     INTERNATIONAL, with prize pool, not ended, ordered desc).
-    Returns the list of league summaries (id, name, tier, ...)."""
+    Returns the list of league summaries (id, name, tier, ...).
+
+    v0.7.28: removed `orderBy: DESC` -- the first attempt with
+    that returned HTTP 400.  `FilterOrderBy` is a Stratz-specific
+    enum (probably START_DATE_DESC, PRIZE_POOL_DESC etc) and
+    `DESC` is not a valid value.  Default order is fine for now.
+
+    v0.7.28: also dumps the FULL error body on HTTP 400 / GQL
+    errors so the next failure mode is visible immediately
+    instead of just 'no leagues returned'.
+    """
     q = (
         '{ leagues(request: { '
         'tiers: [PROFESSIONAL, MAJOR, PREMIUM, INTERNATIONAL], '
         'requirePrizePool: true, '
         f'take: {take}, '
-        'leagueEnded: false, '
-        'orderBy: DESC '
+        'leagueEnded: false '
         '}) { id name displayName tier prizePool startDateTime endDateTime } }'
     )
     r = _post_raw_with_retry(q, cookies)
     if r.status_code != 200:
-        print(f"  HTTP {r.status_code}", file=sys.stderr)
+        print(f"  HTTP {r.status_code} (dumping full body):", file=sys.stderr)
+        print(f"  {r.text[:1500]}", file=sys.stderr)
         return []
     try:
         payload = r.json()
     except Exception as exc:
         print(f"  parse failed: {exc}", file=sys.stderr)
+        print(f"  raw: {r.text[:500]}", file=sys.stderr)
         return []
     if "errors" in payload and payload["errors"]:
-        print(f"  GQL errors:",
-              [e.get("message", "?")[:120] for e in payload["errors"][:2]],
-              file=sys.stderr)
+        print(f"  GQL errors:", file=sys.stderr)
+        for e in payload["errors"][:3]:
+            print(f"    {e.get('message', '?')[:300]}", file=sys.stderr)
         return []
     return (payload.get("data") or {}).get("leagues") or []
 

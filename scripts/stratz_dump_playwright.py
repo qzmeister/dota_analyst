@@ -555,7 +555,8 @@ def _fetch_league_standings(cookies: Dict[str, str], league_id: int
 
 
 def dump_premium_teams(cookies: Dict[str, str], limit: int,
-                        min_months_ago: int = 0) -> None:
+                        min_months_ago: int = 0,
+                        min_prize_pool: int = 0) -> None:
     """v0.7.27: discover teams that ACTUALLY PLAYED in premium
     leagues (PROFESSIONAL/MAJOR/PREMIUM/INTERNATIONAL), regardless
     of their overall win rate.  This is what the user asked for
@@ -567,14 +568,26 @@ def dump_premium_teams(cookies: Dict[str, str], limit: int,
     in MAJOR+ 3 years ago but is now a different roster
     shouldn't be 'premium' based on those old appearances.
 
+    v0.7.38: added `min_prize_pool` (CLI: 4th arg, in USD).
+    Stratz's MAJOR/INTERNATIONAL tiers are too narrow for the
+    recency window -- only TI 2025 in the last 18 months.  Most
+    real-money tournaments (Riyadh Masters, ESL One, DreamLeague,
+    BLAST Slam, BetBoom Dacha) are tagged PROFESSIONAL with
+    $1M+ prize pools.  We want to keep them.
+
     Strategy:
       1) Query top `limit` premium leagues (active, with prize
          pool).  If min_months_ago > 0, also require
-         startDateTime > (now - min_months_ago)
+         startDateTime > (now - min_months_ago).  Use take=200
+         internally when a prize filter is requested (so we
+         have enough headroom to find enough qualifying leagues).
       2) For each league, fetch standings (teamId + prize)
       3) Aggregate: per-team -> { leagues: [...], total_prize,
          max_tier, premium_leagues_count }
       4) Sort by premium_leagues_count desc
+      5) If min_prize_pool > 0, drop leagues with prizePool < it
+         AFTER receiving them (Stratz doesn't support prizePool
+         as a filter arg, so we filter client-side).
 
     Output filename:
       - stratz_premium_teams.json          (no recency filter)
@@ -594,11 +607,27 @@ def dump_premium_teams(cookies: Dict[str, str], limit: int,
         )
         print(f"  recency filter: leagues since {cutoff_iso} "
               f"({min_months_ago} months ago)")
-    leagues = _discover_premium_leagues(cookies, take=limit,
+    if min_prize_pool > 0:
+        print(f"  prize filter:   prizePool >= ${min_prize_pool:,}")
+    # v0.7.38: when applying a prize filter, query more leagues
+    # than the requested `limit` so we have headroom to drop
+    # the small ones.
+    query_take = max(limit, 200) if min_prize_pool > 0 else limit
+    leagues = _discover_premium_leagues(cookies, take=query_take,
                                          min_start_ts=min_start_ts)
     if not leagues:
         print("  no premium leagues returned; try a smaller `limit` "
               "or check the GQL errors above")
+        return
+    # v0.7.38: client-side prize filter.  Stratz doesn't
+    # expose prizePool as a filterable arg on LeagueRequestType.
+    if min_prize_pool > 0:
+        before = len(leagues)
+        leagues = [lg for lg in leagues
+                   if (lg.get("prizePool") or 0) >= min_prize_pool]
+        print(f"  prize filter: {before} -> {len(leagues)} leagues")
+    if not leagues:
+        print("  no leagues passed the prize filter; lower min_prize_pool")
         return
     print(f"  found {len(leagues)} premium-eligible leagues:")
     for lg in leagues[:10]:
@@ -924,7 +953,8 @@ def main() -> int:
     elif mode == "premium":
         if len(sys.argv) < 3:
             print("ERROR: `premium` mode needs a league count, "
-                  "e.g. `premium 50` or `premium 50 12` (recency)",
+                  "e.g. `premium 50` or `premium 50 12` (recency) or "
+                  "`premium 50 18 250000` (recency + prize filter)",
                   file=sys.stderr)
             return 1
         limit = int(sys.argv[2])
@@ -933,7 +963,13 @@ def main() -> int:
         # filter, output to stratz_premium_teams.json.  >0 =
         # recency filter, output to stratz_premium_teams_recent.json.
         min_months_ago = int(sys.argv[3]) if len(sys.argv) >= 4 else 0
-        dump_premium_teams(cookies, limit, min_months_ago=min_months_ago)
+        # v0.7.38: optional 4th arg = min_prize_pool in USD.
+        # Stratz tags many big-money tournaments as PROFESSIONAL
+        # rather than MAJOR, so tier alone misses them.
+        min_prize_pool = int(sys.argv[4]) if len(sys.argv) >= 5 else 0
+        dump_premium_teams(cookies, limit,
+                            min_months_ago=min_months_ago,
+                            min_prize_pool=min_prize_pool)
     elif mode == "premium-print":
         # v0.7.34: read stratz_premium_teams.json and print top-20.
         # No Stratz call.  Useful for re-displaying the result of

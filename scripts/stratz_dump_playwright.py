@@ -478,13 +478,24 @@ def _discover_premium_leagues(cookies: Dict[str, str], take: int,
     date.  User feedback: a team that played in MAJOR+ 3 years
     ago but is now a different roster shouldn't be 'premium'
     based on those old appearances.
+
+    v0.7.39: re-included PROFESSIONAL in the tier filter.  Why:
+    when combined with the prize-pool filter (v0.7.38), the
+    PROFESSIONAL-with-tiny-prize-pool local LANs get dropped
+    anyway, but the big-money Riyadh/ESL/BLAST/DreamLeague
+    tournaments that Stratz tags PROFESSIONAL come back.  v0.7.38
+    'premium 50 24 250000' returned only TI 2024+2025 because
+    the MAJOR+INTERNATIONAL filter alone catches too few.
+
+    Net filter: leagues with tier in [PROFESSIONAL, MAJOR,
+    INTERNATIONAL] AND prizePool >= client-side threshold.
     """
     extra_filter = ""
     if min_start_ts is not None:
         extra_filter = f", startDateTime: {min_start_ts}"
     q = (
         '{ leagues(request: { '
-        'tiers: [MAJOR, INTERNATIONAL], '
+        'tiers: [PROFESSIONAL, MAJOR, INTERNATIONAL], '
         'requirePrizePool: true, '
         f'take: {take} '
         f'{extra_filter} '

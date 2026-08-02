@@ -56,12 +56,14 @@ HEADERS = {
 # v0.7.23: Stratz free tier caps `teams(teamIds: [...])` at 5 IDs
 # per request.  50/100 chunked queries return
 #   "You have surpassed the maximum take value of : 5"
-# 5 IDs * 1 req every 0.6s = 0.83 req/s ≈ 50 req/min -- close
-# to but under the 30 req/min free tier; the cookie warmup uses
-# a couple of requests, so a bit of margin is wise.  If we hit
-# 429 in practice, bump CHUNK_SLEEP_SEC up.
+# v0.7.24: 540 teams / 5 per chunk = 108 chunks.  At TEAM_CHUNK_SLEEP_SEC
+# = 1.0s, that's 108s of sleep + ~30-60s of actual request time
+# + ~30s warmup = ~3-4 min total.  If Stratz throws 429 / "rate
+# limit" mid-run, _post_raw_with_retry() backs off exponentially
+# (1s -> 2s -> 4s -> 8s) and retries up to 4 times before giving
+# up on the chunk.
 TEAM_CHUNK_SIZE = 5
-TEAM_CHUNK_SLEEP_SEC = 0.6
+TEAM_CHUNK_SLEEP_SEC = 1.0
 
 
 def _key() -> str:
@@ -317,7 +319,7 @@ def dump_top_teams(cookies: Dict[str, str], limit: int) -> None:
         chunk = team_ids[chunk_start:chunk_start + TEAM_CHUNK_SIZE]
         ids_csv = ", ".join(str(i) for i in chunk)
         q = "{ teams(teamIds: [" + ids_csv + "]) { " + fields + " } }"
-        r = _post_raw(q, cookies)
+        r = _post_raw_with_retry(q, cookies)
         if r.status_code == 200:
             try:
                 payload = r.json()
@@ -413,6 +415,46 @@ def _post_raw(query: str, cookies: Dict[str, str]) -> requests.Response:
         sess.cookies.set(k, v)
     body = json.dumps({"query": query})
     return sess.post(ENDPOINT, data=body, timeout=60)
+
+
+def _post_raw_with_retry(query: str, cookies: Dict[str, str],
+                          max_retries: int = 4) -> requests.Response:
+    """v0.7.24: same as _post_raw but retries on 429 / rate
+    limit with exponential backoff (1s -> 2s -> 4s -> 8s).
+
+    The Stratz free tier is 30 req/min.  540 teams / 5 per
+    chunk = 108 chunks at TEAM_CHUNK_SLEEP_SEC = 1.0s already
+    pushes us to ~50-60 req/min during the actual dump, so a
+    few 429s are likely.  Better to wait and retry than to
+    fail the whole run.
+    """
+    last_exc: Optional[Exception] = None
+    for attempt in range(max_retries + 1):
+        try:
+            r = _post_raw(query, cookies)
+        except Exception as exc:
+            last_exc = exc
+            if attempt == max_retries:
+                raise
+            backoff = 2 ** attempt
+            print(f"    POST exception: {type(exc).__name__}; "
+                  f"backoff {backoff}s (attempt {attempt+1}/{max_retries})",
+                  file=sys.stderr)
+            time.sleep(backoff)
+            continue
+        if r.status_code == 429:
+            if attempt == max_retries:
+                return r
+            backoff = 2 ** attempt
+            print(f"    429 rate limit; backoff {backoff}s "
+                  f"(attempt {attempt+1}/{max_retries})", file=sys.stderr)
+            time.sleep(backoff)
+            continue
+        return r
+    if last_exc:
+        raise last_exc
+    # unreachable
+    return _post_raw(query, cookies)
 
 
 def _dump_top_teams_legacy(cookies: Dict[str, str], limit: int) -> None:

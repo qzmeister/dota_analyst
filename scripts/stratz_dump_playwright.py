@@ -15,11 +15,20 @@ Usage (Windows):
     pip install playwright requests
     playwright install chromium
     set STRATZ_API_KEY=<key>
-    python stratz_dump_playwright.py teams 200
+    python stratz_dump_playwright.py probe
+    python stratz_dump_playwright.py teams 540
+    python stratz_dump_playwright.py expand 200
     python stratz_dump_playwright.py matches 5000
 
-Output: stratz_teams.json / stratz_matches.json in the
-parent directory.
+Output (next to the script, in C:\\Users\\artka\\Downloads when
+run from there):
+    stratz_schema_discovery.json   (probe: full __type output)
+    stratz_teams.json              (teams: winCount/lossCount per seed)
+    stratz_teams_expanded.json     (expand: NEW teams via leagues)
+    stratz_matches.json            (matches: full payload per id)
+
+Schema findings (v0.7.20) and pipeline plan are in
+docs/STRATZ_SCHEMA_NOTES.md.
 """
 from __future__ import annotations
 
@@ -27,6 +36,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -217,42 +227,115 @@ def _load_existing_team_ids() -> Optional[List[int]]:
 
 
 def dump_top_teams(cookies: Dict[str, str], limit: int) -> None:
-    """Query Stratz for teams by their IDs (from our
-    v18_top_teams.json).  Stratz doesn't have a 'top teams'
-    field; we provide the IDs and sort by whatever rating
-    field is actually on TeamType (discovered via probe)."""
+    """v0.7.21: enrich our 540 seed teams with Stratz's
+    winCount / lossCount / lastMatchDateTime.
+
+    v0.7.20 __type introspection confirmed the TeamType field
+    list (see docs/STRATZ_SCHEMA_NOTES.md):
+      - id, name, tag, isPro, isLocked, countryCode, countryName
+      - winCount, lossCount, lastMatchDateTime, dateCreated
+
+    No `rating` field exists -- Stratz's skill proxy is just
+    win_count / (win_count + loss_count), plus recency filter on
+    lastMatchDateTime.
+
+    Output: stratz_teams.json next to the script, with
+    `win_rate` and `last_match_iso` pre-computed for v18 to
+    consume directly.
+
+    For each chunk of 50 teamIds we send a single GraphQL query.
+    With 540 teams we need 11 queries at ~0.5s each = ~6s total.
+    """
     team_ids = _load_existing_team_ids()
     if not team_ids:
-        print("  no v18_top_teams.json found -- run probe first",
-              "then we need to seed with team_ids from somewhere")
+        print("  no v18_top_teams.json found -- need team IDs to seed.",
+              "Either run scripts/compute_team_ratings.py first,",
+              "or run the `expand` mode after fixing network access.")
         return
     team_ids = team_ids[:limit]
+    print(f"  loaded {len(team_ids)} seed team_ids from v18_top_teams.json")
+    # v0.7.21: full field set.  All confirmed present by probe.
+    # `coachSteamAccountId` is skipped -- not useful for tier rating.
+    fields = (
+        "id name tag isPro isLocked countryCode countryName "
+        "winCount lossCount lastMatchDateTime dateCreated"
+    )
     all_rows: List[Dict[str, Any]] = []
+    failed_chunks = 0
     for chunk_start in range(0, len(team_ids), 50):
         chunk = team_ids[chunk_start:chunk_start + 50]
         ids_csv = ", ".join(str(i) for i in chunk)
-        # Conservative field selection -- only `id name tag`,
-        # which we KNOW exist (the user's first successful
-        # query used them).  We'll discover other fields via
-        # probe and re-query if needed.
-        q = '{ teams(teamIds: [' + ids_csv + ']) { id name tag } }'
+        q = "{ teams(teamIds: [" + ids_csv + "]) { " + fields + " } }"
         r = _post_raw(q, cookies)
         if r.status_code == 200:
             try:
                 payload = r.json()
+                if "errors" in payload and payload["errors"]:
+                    print(f"  chunk {chunk_start//50}: GQL errors:",
+                          [e.get("message", "?")[:80] for e in payload["errors"][:2]])
                 rows = (payload.get("data") or {}).get("teams") or []
                 all_rows.extend([x for x in rows if x])
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"  chunk {chunk_start//50}: parse failed: {exc}")
+                failed_chunks += 1
+        else:
+            print(f"  chunk {chunk_start//50}: HTTP {r.status_code}")
+            failed_chunks += 1
+        if chunk_start // 50 % 3 == 0 and chunk_start > 0:
+            print(f"    [{chunk_start + len(chunk)}/{len(team_ids)}]  "
+                  f"saved={len(all_rows)}")
         time.sleep(0.3)
     if not all_rows:
         print("  no team data returned; run `probe` to see why")
         return
-    out = PRO_ROOT / "stratz_teams.json"
-    out.write_text(json.dumps(all_rows, indent=2), encoding="utf-8")
-    print(f"  saved {len(all_rows)} teams to {out}")
-    for r in all_rows[:5]:
-        print(f"    {r.get('id'):>10d}  {r.get('name'):>25s}  ({r.get('tag')})")
+    # v0.7.21: compute win_rate and last_match_iso for v18
+    # consumption.  Filter out teams with 0 games.
+    enriched: List[Dict[str, Any]] = []
+    for row in all_rows:
+        wc = row.get("winCount") or 0
+        lc = row.get("lossCount") or 0
+        if wc + lc == 0:
+            continue
+        lmd = row.get("lastMatchDateTime")
+        row["win_rate"] = round(wc / (wc + lc), 4)
+        row["games_total"] = wc + lc
+        if lmd:
+            try:
+                row["last_match_iso"] = (
+                    datetime.utcfromtimestamp(int(lmd)).isoformat() + "Z"
+                )
+            except Exception:
+                row["last_match_iso"] = None
+        else:
+            row["last_match_iso"] = None
+        enriched.append(row)
+    # Save next to the script (Downloads dir) so the user can
+    # easily copy it into the project later.
+    out = Path(__file__).resolve().parent / "stratz_teams.json"
+    out.write_text(json.dumps(enriched, indent=2, default=str),
+                   encoding="utf-8")
+    print(f"  saved {len(enriched)} teams to {out}")
+    print(f"  file size: {out.stat().st_size / 1024:.1f} KB")
+    if failed_chunks:
+        print(f"  WARNING: {failed_chunks} chunks failed; "
+              f"may have fewer teams than expected")
+    # Show top 5 by win_rate (min 30 games to filter noise)
+    top = [r for r in enriched if r["games_total"] >= 30]
+    top.sort(key=lambda r: -r["win_rate"])
+    print(f"  top 5 by win_rate (>=30 games):")
+    for r in top[:5]:
+        last = r.get("last_match_iso") or "?"
+        print(f"    {r.get('id'):>10d}  win_rate={r['win_rate']:.3f}  "
+              f"games={r['games_total']:>5d}  last={last}  "
+              f"{r.get('name', '?')[:25]}")
+    # Bottom 5
+    bot = sorted(top, key=lambda r: r["win_rate"])
+    print(f"  bottom 5 by win_rate (>=30 games):")
+    for r in bot[:5]:
+        last = r.get("last_match_iso") or "?"
+        print(f"    {r.get('id'):>10d}  win_rate={r['win_rate']:.3f}  "
+              f"games={r['games_total']:>5d}  last={last}  "
+              f"{r.get('name', '?')[:25]}")
 
 
 # --------------------------------------------------------------------------- #

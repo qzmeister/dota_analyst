@@ -29,8 +29,7 @@ def _key() -> str:
     return k
 
 
-def _gql(query: str) -> tuple[bool, dict, str]:
-    """Returns (ok, parsed_or_empty_dict, raw_body_text)."""
+def _gql(query: str) -> dict:
     body = json.dumps({"query": query}).encode("utf-8")
     req = urllib.request.Request(
         ENDPOINT, data=body,
@@ -44,74 +43,60 @@ def _gql(query: str) -> tuple[bool, dict, str]:
         with urllib.request.urlopen(req, timeout=30) as r:
             raw = r.read().decode("utf-8", errors="replace")
             try:
-                return (True, json.loads(raw), raw[:200])
+                return json.loads(raw)
             except Exception:
-                return (False, {}, raw[:400])
+                print(f"  (non-JSON body, {len(raw)} bytes):",
+                      file=sys.stderr)
+                print("    " + raw[:400], file=sys.stderr)
+                return {"errors": [{"message": "non-JSON body"}]}
     except urllib.error.HTTPError as e:
         raw = e.read().decode("utf-8", errors="replace")
         try:
-            return (True, json.loads(raw), raw[:200])
+            return json.loads(raw)
         except Exception:
-            return (False, {}, f"HTTP {e.code}: {raw[:300]}")
+            print(f"  HTTP {e.code} (non-JSON body): {raw[:300]}",
+                  file=sys.stderr)
+            return {"errors": [{"message": f"non-JSON HTTP {e.code}"}]}
     except Exception as e:
-        return (False, {}, f"{type(e).__name__}: {e}")
+        return {"errors": [{"message": f"{type(e).__name__}: {e}"}]}
 
 
 def main() -> int:
     print("=" * 78)
-    print("Stratz query pattern probe -- trying many shapes")
+    print("Stratz raw-response probe -- dumps the full JSON shape")
     print("=" * 78)
     print()
 
-    # The user's previous run got "Unknown argument 'take'" and
-    # then "Unknown argument 'orderBy'", which means the field
-    # accepts DIFFERENT arguments than my first guess.  The
-    # Stratz docs (from memory) use `request: { ... }` input
-    # object patterns.  Let's probe exhaustively.
+    # 1. The "leagues(take:1) { id name }" query -- should always
+    # return a list.  Dump the FULL JSON so we can see if it
+    # returns a list, a connection object, or something else.
+    print("--- Test 1: full JSON dump of leagues(take:1) ---")
+    q = '{ leagues(take: 1) { id name } }'
+    payload = _gql(q)
+    print(json.dumps(payload, indent=2)[:1500])
+    print()
 
-    candidates = [
-        # teams patterns
-        ('teams(request: { take: 5, isPro: true })',
-         '{ teams(request: { take: 5, isPro: true }) { id name rating } }'),
-        ('teams(request: { take: 5 })',
-         '{ teams(request: { take: 5 }) { id name rating } }'),
-        ('teams(request: { isPro: true })',
-         '{ teams(request: { isPro: true }) { id name rating } }'),
-        ('teams(request: { isPro: true, take: 5 }, take: 5)',
-         '{ teams(request: { isPro: true, take: 5 }, take: 5) { id name rating } }'),
-        ('topTeams(take: 5)',
-         '{ topTeams(take: 5) { id name rating } }'),
-        ('proTeams(take: 5)',
-         '{ proTeams(take: 5) { id name rating } }'),
-        # matches patterns
-        ('matches(request: { take: 5 })',
-         '{ matches(request: { take: 5 }) { id } }'),
-        ('matches(request: { take: 5, orderBy: START_DATE_TIME_DESC })',
-         '{ matches(request: { take: 5, orderBy: START_DATE_TIME_DESC }) { id } }'),
-        # league / hero -- should always work
-        ('leagues(take: 1) (sanity check)',
-         '{ leagues(take: 1) { id name } }'),
-        ('heroes(take: 1) (sanity check)',
-         '{ heroes(take: 1) { id displayName } }'),
-    ]
-    for label, q in candidates:
-        ok, payload, raw = _gql(q)
-        if "errors" in payload:
-            errs = [e.get("message", "?")[:120] for e in payload["errors"]]
-            print(f"  {label}")
-            print(f"    ERR: {errs[0] if errs else '?'}")
-        else:
-            data = payload.get("data", {})
-            key = list(data.keys())[0] if data else "?"
-            val = data.get(key)
-            if isinstance(val, list):
-                first = val[0] if val else None
-                print(f"  {label}")
-                print(f"    OK  list[{len(val)}]  first={str(first)[:150]}")
-            else:
-                print(f"  {label}")
-                print(f"    OK  {val}")
-        print()
+    # 2. Same for teams
+    print("--- Test 2: full JSON dump of teams(request: { take: 5, isPro: true }) ---")
+    q = '{ teams(request: { take: 5, isPro: true }) { id name rating } }'
+    payload = _gql(q)
+    print(json.dumps(payload, indent=2)[:1500])
+    print()
+
+    # 3. Try the connection.nodes pattern (Stratz / Relay convention)
+    print("--- Test 3: teams with .nodes wrapper ---")
+    q = '{ teams(request: { take: 5, isPro: true }) { nodes { id name rating } } }'
+    payload = _gql(q)
+    print(json.dumps(payload, indent=2)[:1500])
+    print()
+
+    # 4. Try matches with .nodes
+    print("--- Test 4: matches with .nodes wrapper ---")
+    q = '{ matches(request: { take: 3 }) { nodes { id startDateTime } } }'
+    payload = _gql(q)
+    print(json.dumps(payload, indent=2)[:1500])
+    print()
+
     return 0
 
 

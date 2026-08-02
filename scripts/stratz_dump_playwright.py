@@ -56,14 +56,13 @@ HEADERS = {
 # v0.7.23: Stratz free tier caps `teams(teamIds: [...])` at 5 IDs
 # per request.  50/100 chunked queries return
 #   "You have surpassed the maximum take value of : 5"
-# v0.7.24: 540 teams / 5 per chunk = 108 chunks.  At TEAM_CHUNK_SLEEP_SEC
-# = 1.0s, that's 108s of sleep + ~30-60s of actual request time
-# + ~30s warmup = ~3-4 min total.  If Stratz throws 429 / "rate
-# limit" mid-run, _post_raw_with_retry() backs off exponentially
-# (1s -> 2s -> 4s -> 8s) and retries up to 4 times before giving
-# up on the chunk.
+# v0.7.25: 540 teams / 5 per chunk = 108 chunks.  At 0.5s
+# sleep that's 54s of sleep + ~30-90s request time + ~30s
+# warmup = 114-174s -- fits under the 180s PowerShell default
+# timeout.  _post_raw_with_retry() (v0.7.24) handles the few
+# 429s that come from creeping over the 30 req/min limit.
 TEAM_CHUNK_SIZE = 5
-TEAM_CHUNK_SLEEP_SEC = 1.0
+TEAM_CHUNK_SLEEP_SEC = 0.5
 
 
 def _key() -> str:

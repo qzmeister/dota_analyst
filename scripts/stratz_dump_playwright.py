@@ -128,24 +128,33 @@ def probe(cookies: Dict[str, str]) -> None:
     can see which shape Stratz actually returns."""
     candidates = [
         ("leagues(take:1) sanity", '{ leagues(take: 1) { id name } }'),
-        ("teams(request: take+isPro)",
-         '{ teams(request: { take: 5, isPro: true }) { id name tag rating wins losses } }'),
-        ("teams(request) with nodes",
-         '{ teams(request: { take: 5, isPro: true }) { nodes { id name rating } } }'),
-        ("matches(request) with nodes",
-         '{ matches(request: { take: 3 }) { nodes { id startDateTime duration leagueId patch radiantTeamId direTeamId radiantWin } } }'),
+        ("topTeams (no args, no fields)", '{ topTeams { id } }'),
+        ("proTeams (no args, no fields)", '{ proTeams { id } }'),
+        ("teams isPro direct",
+         '{ teams(isPro: true) { id name } }'),
+        ("teams direct (no args)",
+         '{ teams { id name } }'),
+        # Error extractor -- dumps the FULL error so we can
+        # see the valid argument names from the response
+        ("teams(request) FULL ERROR", '{ teams(request: { take: 1, isPro: true }) { id } }'),
     ]
     for label, q in candidates:
         print(f"--- {label} ---")
-        data = _gql_with_cookies(q, None, cookies)
-        if data is None:
-            print("  (no data, see errors above)")
-        else:
-            # Pretty-print, but truncate long lists
-            s = json.dumps(data, indent=2, default=str)
-            if len(s) > 1500:
-                s = s[:1500] + f"\n... ({len(s)-1500} more bytes)"
-            print(s)
+        # Hit the API directly so we see the raw GraphQL error
+        sess = requests.Session()
+        sess.headers.update(HEADERS)
+        sess.headers["Authorization"] = f"Bearer {_key()}"
+        for k, v in cookies.items():
+            sess.cookies.set(k, v)
+        body = json.dumps({"query": q})
+        r = sess.post(ENDPOINT, data=body, timeout=60)
+        print(f"  HTTP {r.status_code}")
+        try:
+            payload = r.json()
+            print(f"  full JSON:")
+            print("  " + json.dumps(payload, indent=2, default=str)[:1500].replace("\n", "\n  "))
+        except Exception:
+            print(f"  non-JSON: {r.text[:400]}")
         print()
 
 

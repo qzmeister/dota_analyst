@@ -503,60 +503,43 @@ def _fetch_league_standings(cookies: Dict[str, str], league_id: int
     + their prize).  Returns {id, name, tier, prizePool, standings: [...]}
     or None on failure.
 
-    v0.7.30: surface GQL errors to stderr instead of silent
-    skip.  The first premium run (v0.7.29) returned
-    'no team data aggregated' with no clue why standings
-    didn't return data for the 5 premium-eligible leagues.
-
-    v0.7.31: try the most-likely-valid signatures in order
-    (v0.7.30 showed 'SYNTAX_ERROR: Unexpected }' meaning
-    standings needs args).  Order chosen by likelihood of
-    success on Stratz:
-      1) standings(take: 100)        -- Relay connection
-      2) standings(request: { take: 100 }) -- Stratz-style
-    Stop on the first one that returns HTTP 200.
-
-    v0.7.32: removed silent fallback.  Both v0.7.31 variants
-    returned 400 for all 32 MAJOR+INTERNATIONAL leagues.
-    Print the actual GQL error message for each variant so
-    we can see what's wrong.
+    v0.7.33: from the v0.7.32 probe (LeagueType + TeamPrizeType
+    introspection) we now know:
+      - standings takes NO args (args: [])
+      - TeamPrizeType field for prize is `prizeAmount` (Float),
+        NOT `prize` (which doesn't exist)
+      - teamId is correct as-is
+    So the right query is just:
+      { league(id: X) { ... standings { teamId prizeAmount } } }
+    No try-multiple-variants needed any more.
     """
-    candidates = [
-        ("standings(take: 100)",
-         f'{{ league(id: {league_id}) {{ '
-         f'id name displayName tier prizePool '
-         f'standings(take: 100) {{ teamId prize }} '
-         f'}}}}'),
-        ("standings(request: { take: 100 })",
-         f'{{ league(id: {league_id}) {{ '
-         f'id name displayName tier prizePool '
-         f'standings(request: {{ take: 100 }}) {{ teamId prize }} '
-         f'}}}}'),
-    ]
-    for label, q in candidates:
-        r = _post_raw_with_retry(q, cookies)
-        if r.status_code != 200:
-            # print the actual error so we can see what's wrong
-            err = r.text[:300].replace("\n", " ")
-            print(f"    league({league_id}) {label}: "
-                  f"HTTP {r.status_code} -- {err}", file=sys.stderr)
-            continue
-        try:
-            payload = r.json()
-        except Exception as exc:
-            print(f"    league({league_id}) {label}: parse failed: {exc}",
-                  file=sys.stderr)
-            continue
-        if "errors" in payload and payload["errors"]:
-            for e in payload["errors"][:2]:
-                msg = e.get("message", "?").replace("\n", " ")
-                print(f"    league({league_id}) {label}: GQL error: "
-                      f"{msg[:300]}", file=sys.stderr)
-            continue
-        league = (payload.get("data") or {}).get("league")
-        if league:
-            return league
-    return None
+    q = (
+        f'{{ league(id: {league_id}) {{ '
+        f'id name displayName tier prizePool '
+        f'standings {{ teamId prizeAmount standing }} '
+        f'}}}}'
+    )
+    r = _post_raw_with_retry(q, cookies)
+    if r.status_code != 200:
+        print(f"    league({league_id}): HTTP {r.status_code} "
+              f"-- {r.text[:200]}", file=sys.stderr)
+        return None
+    try:
+        payload = r.json()
+    except Exception as exc:
+        print(f"    league({league_id}): parse failed: {exc}",
+              file=sys.stderr)
+        return None
+    if "errors" in payload and payload["errors"]:
+        for e in payload["errors"][:2]:
+            print(f"    league({league_id}): GQL error: "
+                  f"{e.get('message', '?')[:200]}", file=sys.stderr)
+        return None
+    league = (payload.get("data") or {}).get("league")
+    if not league:
+        print(f"    league({league_id}): league is null", file=sys.stderr)
+        return None
+    return league
 
 
 def dump_premium_teams(cookies: Dict[str, str], limit: int) -> None:
@@ -620,10 +603,10 @@ def dump_premium_teams(cookies: Dict[str, str], limit: int) -> None:
                 "max_tier": None,
                 "max_tier_ordinal": -1,
             })
-            prize = s.get("prize") or 0
+            prize = s.get("prizeAmount") or 0
             entry["leagues"].append({
                 **league_info,
-                "prize": prize,
+                "prizeAmount": prize,
             })
             entry["total_prize"] += prize
             tier = league_info["tier"]

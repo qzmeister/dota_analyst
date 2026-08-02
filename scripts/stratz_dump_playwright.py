@@ -124,18 +124,19 @@ def _gql_with_cookies(query: str, variables: Optional[Dict[str, Any]],
 # --------------------------------------------------------------------------- #
 
 def probe(cookies: Dict[str, str]) -> None:
-    """v0.7.17 schema discovery: find out what fields
-    TeamType and MatchType actually have, and what the
-    matches() query shape is.
+    """Schema discovery via __type introspection.
 
-    v0.7.16 found via error responses that:
-      - `teams(teamIds: [Int]!)` is the only valid args
-      - topTeams / proTeams don't exist
-      - TeamType doesn't have rating/wins/losses
+    Phase 1 (v0.7.17): TeamType / MatchType / DotaQuery
+    Phase 2 (v0.7.20): LeagueRequestType input shape,
+                        leaderboard structure, sample leagues
+                        call -- we need to know how to find
+                        teamIds we don't have in our seed.
 
-    So we use __type introspection to discover the real
-    field names, then query by teamIds."""
+    Each result is both printed AND saved to
+    stratz_schema_discovery.json so we have a permanent record
+    (network is flaky, output truncation is risky)."""
     queries = [
+        # ---- Phase 1: what we already know works ----
         ("TeamType fields (what's on a team object)",
          '{ __type(name: "TeamType") { fields { name type { name kind ofType { name } } } } }'),
         ("MatchType fields (what's on a match object)",
@@ -147,25 +148,57 @@ def probe(cookies: Dict[str, str]) -> None:
          'name args { name type { name kind ofType { name } } } } } }'),
         ("teams(teamIds:[9572001]) sanity",
          '{ teams(teamIds: [9572001]) { id name tag } }'),
+        # ---- Phase 2: team discovery path ----
+        ("LeagueRequestType input shape (for leagues() filter)",
+         '{ __type(name: "LeagueRequestType") { inputFields { '
+         'name type { name kind ofType { name kind ofType { name } } } } } }'),
+        ("LeagueType fields (what's on a league object)",
+         '{ __type(name: "LeagueType") { fields { name type { name kind ofType { name } } } } }'),
+        ("leaderboard { __typename } (what does it return?)",
+         '{ leaderboard { __typename } }'),
+        ("leagues(request: { take: 5 }) { id name tier } (sample)",
+         '{ leagues(request: { take: 5 }) { id name tier } }'),
+        ("teams(teamIds:[9572001]) with win/loss/iso/etc fields",
+         '{ teams(teamIds: [9572001]) { '
+         'id name tag isPro isLocked countryCode countryName '
+         'winCount lossCount lastMatchDateTime dateCreated '
+         '} }'),
     ]
+    all_results: Dict[str, Any] = {}
     for label, q in queries:
         print(f"--- {label} ---")
         r = _post_raw(q, cookies)
         print(f"  HTTP {r.status_code}")
         try:
             payload = r.json()
+            all_results[label] = payload
             if "errors" in payload:
                 print("  ERRORS:")
                 for e in payload["errors"][:3]:
                     print(f"    {e.get('message', '?')[:300]}")
             else:
                 s = json.dumps(payload, indent=2, default=str)
-                if len(s) > 3000:
-                    s = s[:3000] + f"\n... ({len(s)-3000} more bytes)"
+                # v0.7.20: increased truncation limit from 3000 to
+                # 50000 bytes so we can read most nested types
+                # without losing structure.  Full result is still
+                # saved to JSON file below.
+                if len(s) > 50000:
+                    s = s[:50000] + f"\n... ({len(s)-50000} more bytes)"
                 print(f"  {s}")
         except Exception:
             print(f"  non-JSON: {r.text[:300]}")
+            all_results[label] = {"_raw": r.text[:1000]}
         print()
+    # v0.7.20: persist full output (no truncation) so we
+    # have a permanent record even if the network drops.
+    # Save next to the script (Downloads dir when run from
+    # there) rather than PRO_ROOT, which would land in
+    # C:\Users\artka\ when this script lives in Downloads.
+    out = Path(__file__).resolve().parent / "stratz_schema_discovery.json"
+    out.write_text(json.dumps(all_results, indent=2, default=str),
+                   encoding="utf-8")
+    print(f"saved full output to {out}")
+    print(f"file size: {out.stat().st_size / 1024:.1f} KB")
 
 
 def _load_existing_team_ids() -> Optional[List[int]]:

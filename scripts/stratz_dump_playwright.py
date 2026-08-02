@@ -124,38 +124,102 @@ def _gql_with_cookies(query: str, variables: Optional[Dict[str, Any]],
 # --------------------------------------------------------------------------- #
 
 def probe(cookies: Dict[str, str]) -> None:
-    """Dump the raw JSON of a few candidate queries so we
-    can see which shape Stratz actually returns."""
-    candidates = [
-        ("leagues(take:1) sanity", '{ leagues(take: 1) { id name } }'),
-        ("topTeams (no args, no fields)", '{ topTeams { id } }'),
-        ("proTeams (no args, no fields)", '{ proTeams { id } }'),
-        ("teams isPro direct",
-         '{ teams(isPro: true) { id name } }'),
-        ("teams direct (no args)",
-         '{ teams { id name } }'),
-        # Error extractor -- dumps the FULL error so we can
-        # see the valid argument names from the response
-        ("teams(request) FULL ERROR", '{ teams(request: { take: 1, isPro: true }) { id } }'),
+    """v0.7.17 schema discovery: find out what fields
+    TeamType and MatchType actually have, and what the
+    matches() query shape is.
+
+    v0.7.16 found via error responses that:
+      - `teams(teamIds: [Int]!)` is the only valid args
+      - topTeams / proTeams don't exist
+      - TeamType doesn't have rating/wins/losses
+
+    So we use __type introspection to discover the real
+    field names, then query by teamIds."""
+    queries = [
+        ("TeamType fields (what's on a team object)",
+         '{ __type(name: "TeamType") { fields { name type { name kind ofType { name } } } } }'),
+        ("MatchType fields (what's on a match object)",
+         '{ __type(name: "MatchType") { fields { name type { name kind ofType { name } } } } }'),
+        ("DotaQuery root fields + args (top-level queries)",
+         '{ __type(name: "DotaQuery") { fields { name args { name } } } }'),
+        ("matches(args) -- what args does it take?",
+         '{ __type(name: "DotaQuery") { fields(includeDeprecated: true) { '
+         'name args { name type { name kind ofType { name } } } } } }'),
+        ("teams(teamIds:[9572001]) sanity",
+         '{ teams(teamIds: [9572001]) { id name tag } }'),
     ]
-    for label, q in candidates:
+    for label, q in queries:
         print(f"--- {label} ---")
-        # Hit the API directly so we see the raw GraphQL error
-        sess = requests.Session()
-        sess.headers.update(HEADERS)
-        sess.headers["Authorization"] = f"Bearer {_key()}"
-        for k, v in cookies.items():
-            sess.cookies.set(k, v)
-        body = json.dumps({"query": q})
-        r = sess.post(ENDPOINT, data=body, timeout=60)
+        r = _post_raw(q, cookies)
         print(f"  HTTP {r.status_code}")
         try:
             payload = r.json()
-            print(f"  full JSON:")
-            print("  " + json.dumps(payload, indent=2, default=str)[:1500].replace("\n", "\n  "))
+            if "errors" in payload:
+                print("  ERRORS:")
+                for e in payload["errors"][:3]:
+                    print(f"    {e.get('message', '?')[:300]}")
+            else:
+                s = json.dumps(payload, indent=2, default=str)
+                if len(s) > 3000:
+                    s = s[:3000] + f"\n... ({len(s)-3000} more bytes)"
+                print(f"  {s}")
         except Exception:
-            print(f"  non-JSON: {r.text[:400]}")
+            print(f"  non-JSON: {r.text[:300]}")
         print()
+
+
+def _load_existing_team_ids() -> Optional[List[int]]:
+    """Load team_ids from our v18_top_teams.json so we can
+    seed the `teams(teamIds: ...)` query.  Stratz's `teams`
+    field is gated by `teamIds: [Int]!` -- we can't query
+    'all teams' or 'top teams', we have to provide IDs."""
+    p = PRO_ROOT / "ml_data" / "imports" / "v18_top_teams.json"
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return [int(t["team_id"]) for t in data if t.get("team_id") is not None]
+    except Exception:
+        return None
+
+
+def dump_top_teams(cookies: Dict[str, str], limit: int) -> None:
+    """Query Stratz for teams by their IDs (from our
+    v18_top_teams.json).  Stratz doesn't have a 'top teams'
+    field; we provide the IDs and sort by whatever rating
+    field is actually on TeamType (discovered via probe)."""
+    team_ids = _load_existing_team_ids()
+    if not team_ids:
+        print("  no v18_top_teams.json found -- run probe first",
+              "then we need to seed with team_ids from somewhere")
+        return
+    team_ids = team_ids[:limit]
+    all_rows: List[Dict[str, Any]] = []
+    for chunk_start in range(0, len(team_ids), 50):
+        chunk = team_ids[chunk_start:chunk_start + 50]
+        ids_csv = ", ".join(str(i) for i in chunk)
+        # Conservative field selection -- only `id name tag`,
+        # which we KNOW exist (the user's first successful
+        # query used them).  We'll discover other fields via
+        # probe and re-query if needed.
+        q = '{ teams(teamIds: [' + ids_csv + ']) { id name tag } }'
+        r = _post_raw(q, cookies)
+        if r.status_code == 200:
+            try:
+                payload = r.json()
+                rows = (payload.get("data") or {}).get("teams") or []
+                all_rows.extend([x for x in rows if x])
+            except Exception:
+                pass
+        time.sleep(0.3)
+    if not all_rows:
+        print("  no team data returned; run `probe` to see why")
+        return
+    out = PRO_ROOT / "stratz_teams.json"
+    out.write_text(json.dumps(all_rows, indent=2), encoding="utf-8")
+    print(f"  saved {len(all_rows)} teams to {out}")
+    for r in all_rows[:5]:
+        print(f"    {r.get('id'):>10d}  {r.get('name'):>25s}  ({r.get('tag')})")
 
 
 # --------------------------------------------------------------------------- #

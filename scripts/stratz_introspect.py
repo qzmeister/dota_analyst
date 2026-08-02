@@ -37,9 +37,20 @@ def _gql(query: str) -> dict:
     )
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
-            return json.loads(r.read().decode("utf-8"))
+            raw = r.read()
+            return json.loads(raw.decode("utf-8"))
     except urllib.error.HTTPError as e:
-        return json.loads(e.read().decode("utf-8"))
+        raw = e.read()
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except Exception:
+            # body isn't JSON -- print the first 400 chars so
+            # the user can see what Stratz / Cloudflare returned
+            print(f"  HTTP {e.code} (non-JSON body, {len(raw)} bytes):",
+                  file=sys.stderr)
+            print("    " + raw[:400].decode("utf-8", errors="replace"),
+                  file=sys.stderr)
+            return {"errors": [{"message": f"non-JSON body (HTTP {e.code})"}]}
 
 
 def main() -> int:

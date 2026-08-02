@@ -441,7 +441,8 @@ TIER_ORDER = {
 }
 
 
-def _discover_premium_leagues(cookies: Dict[str, str], take: int
+def _discover_premium_leagues(cookies: Dict[str, str], take: int,
+                                min_start_ts: Optional[int] = None
                                 ) -> List[Dict[str, Any]]:
     """Query top premium leagues (PROFESSIONAL/MAJOR/PREMIUM/
     INTERNATIONAL, with prize pool, not ended, ordered desc).
@@ -470,12 +471,23 @@ def _discover_premium_leagues(cookies: Dict[str, str], take: int
     We want MAJOR+INTERNATIONAL only.  Also dropped
     `leagueEnded: false` -- DPC off-season means we'd get 0
     otherwise.  Top `take` leagues by recency is what we want.
+
+    v0.7.37: added `min_start_ts` for recency filter.  When set
+    (e.g. last 12 months), adds `startDateTime: {ts}` to the
+    request so we only get leagues that STARTED after that
+    date.  User feedback: a team that played in MAJOR+ 3 years
+    ago but is now a different roster shouldn't be 'premium'
+    based on those old appearances.
     """
+    extra_filter = ""
+    if min_start_ts is not None:
+        extra_filter = f", startDateTime: {min_start_ts}"
     q = (
         '{ leagues(request: { '
         'tiers: [MAJOR, INTERNATIONAL], '
         'requirePrizePool: true, '
         f'take: {take} '
+        f'{extra_filter} '
         '}) { id name displayName tier prizePool startDateTime endDateTime } }'
     )
     r = _post_raw_with_retry(q, cookies)
@@ -542,27 +554,48 @@ def _fetch_league_standings(cookies: Dict[str, str], league_id: int
     return league
 
 
-def dump_premium_teams(cookies: Dict[str, str], limit: int) -> None:
+def dump_premium_teams(cookies: Dict[str, str], limit: int,
+                        min_months_ago: int = 0) -> None:
     """v0.7.27: discover teams that ACTUALLY PLAYED in premium
     leagues (PROFESSIONAL/MAJOR/PREMIUM/INTERNATIONAL), regardless
     of their overall win rate.  This is what the user asked for
     when they pointed out: a team winning 80% in tier-3 amateur
     leagues is NOT the same as a team winning 60% in MAJOR+.
 
+    v0.7.37: added `min_months_ago` (CLI: 3rd arg) for recency
+    filter on league startDateTime.  Why: a team that played
+    in MAJOR+ 3 years ago but is now a different roster
+    shouldn't be 'premium' based on those old appearances.
+
     Strategy:
-      1) Query top `limit` premium leagues (active, with prize pool)
+      1) Query top `limit` premium leagues (active, with prize
+         pool).  If min_months_ago > 0, also require
+         startDateTime > (now - min_months_ago)
       2) For each league, fetch standings (teamId + prize)
       3) Aggregate: per-team -> { leagues: [...], total_prize,
          max_tier, premium_leagues_count }
       4) Sort by premium_leagues_count desc
 
-    Output: stratz_premium_teams.json next to the script.
-
-    Timing: `limit` chunks * (~1-2s request + 0.5s sleep).
-    With limit=50 this fits in ~120s, with limit=100 in ~210s
-    (over the 180s PowerShell default; see v0.7.25).
+    Output filename:
+      - stratz_premium_teams.json          (no recency filter)
+      - stratz_premium_teams_recent.json   (with recency filter)
     """
-    leagues = _discover_premium_leagues(cookies, take=limit)
+    min_start_ts: Optional[int] = None
+    if min_months_ago > 0:
+        # v0.7.37: filter to leagues that started within the
+        # last `min_months_ago` months.  30 days per month
+        # approximation; the user is picking a rough recency
+        # window anyway.
+        now_ts = int(datetime.now(tz=timezone.utc).timestamp())
+        min_start_ts = now_ts - (min_months_ago * 30 * 86400)
+        cutoff_iso = (
+            datetime.fromtimestamp(min_start_ts, tz=timezone.utc)
+            .strftime("%Y-%m-%d")
+        )
+        print(f"  recency filter: leagues since {cutoff_iso} "
+              f"({min_months_ago} months ago)")
+    leagues = _discover_premium_leagues(cookies, take=limit,
+                                         min_start_ts=min_start_ts)
     if not leagues:
         print("  no premium leagues returned; try a smaller `limit` "
               "or check the GQL errors above")
@@ -637,7 +670,12 @@ def dump_premium_teams(cookies: Dict[str, str], limit: int) -> None:
         })
     enriched.sort(key=lambda r: (-r["premium_leagues_count"],
                                   -r["total_prize"]))
-    out = Path(__file__).resolve().parent / "stratz_premium_teams.json"
+    # v0.7.37: separate output file for recency-filtered runs
+    # so the unfiltered v0.7.33 result isn't clobbered.
+    fname = ("stratz_premium_teams_recent.json"
+             if min_months_ago > 0
+             else "stratz_premium_teams.json")
+    out = Path(__file__).resolve().parent / fname
     out.write_text(json.dumps(enriched, indent=2, default=str),
                    encoding="utf-8")
     print(f"  saved {len(enriched)} teams to {out}")
@@ -886,16 +924,28 @@ def main() -> int:
     elif mode == "premium":
         if len(sys.argv) < 3:
             print("ERROR: `premium` mode needs a league count, "
-                  "e.g. `premium 50`", file=sys.stderr)
+                  "e.g. `premium 50` or `premium 50 12` (recency)",
+                  file=sys.stderr)
             return 1
-        dump_premium_teams(cookies, int(sys.argv[2]))
+        limit = int(sys.argv[2])
+        # v0.7.37: optional 3rd arg = min_months_ago for recency
+        # filter on league startDateTime.  0 (or omitted) = no
+        # filter, output to stratz_premium_teams.json.  >0 =
+        # recency filter, output to stratz_premium_teams_recent.json.
+        min_months_ago = int(sys.argv[3]) if len(sys.argv) >= 4 else 0
+        dump_premium_teams(cookies, limit, min_months_ago=min_months_ago)
     elif mode == "premium-print":
         # v0.7.34: read stratz_premium_teams.json and print top-20.
         # No Stratz call.  Useful for re-displaying the result of
         # a 'premium N' run without burning more API quota.
         n = int(sys.argv[2]) if len(sys.argv) >= 3 else 20
+        # v0.7.37: optional 2nd arg selects which file to read
+        # (stratz_premium_teams.json or stratz_premium_teams_recent.json)
+        fname = "stratz_premium_teams.json"
+        if len(sys.argv) >= 4 and sys.argv[3] == "recent":
+            fname = "stratz_premium_teams_recent.json"
         _print_premium_top(
-            Path(__file__).resolve().parent / "stratz_premium_teams.json",
+            Path(__file__).resolve().parent / fname,
             top_n=n,
         )
         return 0

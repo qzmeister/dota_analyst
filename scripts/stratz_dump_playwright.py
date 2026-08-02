@@ -488,7 +488,13 @@ def _fetch_league_standings(cookies: Dict[str, str], league_id: int
                              ) -> Optional[Dict[str, Any]]:
     """Query a single league's standings (teams that participated
     + their prize).  Returns {id, name, tier, prizePool, standings: [...]}
-    or None on failure."""
+    or None on failure.
+
+    v0.7.30: surface GQL errors to stderr instead of silent
+    skip.  The first premium run (v0.7.29) returned
+    'no team data aggregated' with no clue why standings
+    didn't return data for the 5 premium-eligible leagues.
+    """
     q = (
         f'{{ league(id: {league_id}) {{ '
         'id name displayName tier prizePool '
@@ -497,15 +503,26 @@ def _fetch_league_standings(cookies: Dict[str, str], league_id: int
     )
     r = _post_raw_with_retry(q, cookies)
     if r.status_code != 200:
+        print(f"    league({league_id}): HTTP {r.status_code} "
+              f"-- {r.text[:200]}", file=sys.stderr)
         return None
     try:
         payload = r.json()
-    except Exception:
+    except Exception as exc:
+        print(f"    league({league_id}): parse failed: {exc}",
+              file=sys.stderr)
         return None
     if "errors" in payload and payload["errors"]:
-        # silent skip -- some leagues may not have standings
+        for e in payload["errors"][:2]:
+            print(f"    league({league_id}): GQL error: "
+                  f"{e.get('message', '?')[:200]}", file=sys.stderr)
         return None
-    return (payload.get("data") or {}).get("league")
+    league = (payload.get("data") or {}).get("league")
+    if not league:
+        print(f"    league({league_id}): no data returned "
+              f"(league is null)", file=sys.stderr)
+        return None
+    return league
 
 
 def dump_premium_teams(cookies: Dict[str, str], limit: int) -> None:
@@ -533,7 +550,13 @@ def dump_premium_teams(cookies: Dict[str, str], limit: int) -> None:
         print("  no premium leagues returned; try a smaller `limit` "
               "or check the GQL errors above")
         return
-    print(f"  found {len(leagues)} premium-eligible leagues")
+    print(f"  found {len(leagues)} premium-eligible leagues:")
+    for lg in leagues[:10]:
+        nm = lg.get("displayName") or lg.get("name") or f"id={lg.get('id')}"
+        print(f"    id={lg.get('id'):>5d}  tier={lg.get('tier'):<13s}  "
+              f"prize=${(lg.get('prizePool') or 0):>10d}  {nm[:50]}")
+    if len(leagues) > 10:
+        print(f"    ... and {len(leagues) - 10} more")
     team_data: Dict[int, Dict[str, Any]] = {}
     for i, league in enumerate(leagues):
         lid = league.get("id")

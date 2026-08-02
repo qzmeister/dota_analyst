@@ -162,47 +162,87 @@ def probe(cookies: Dict[str, str]) -> None:
 # Mode 2: dump top teams
 # --------------------------------------------------------------------------- #
 
+def _post_raw(query: str, cookies: Dict[str, str]) -> requests.Response:
+    """POST a GraphQL query and return the raw response, so
+    callers can dump the full JSON when needed."""
+    sess = requests.Session()
+    sess.headers.update(HEADERS)
+    sess.headers["Authorization"] = f"Bearer {_key()}"
+    for k, v in cookies.items():
+        sess.cookies.set(k, v)
+    body = json.dumps({"query": query})
+    return sess.post(ENDPOINT, data=body, timeout=60)
+
+
 def dump_top_teams(cookies: Dict[str, str], limit: int) -> None:
     """Take ~5x what we need and sort client-side by rating
     (Stratz's `teams` doesn't accept orderBy -- confirmed in
     the user's first run, "Unknown argument 'orderBy' on
     field 'teams' of type 'DotaQuery'.")."""
     take = max(limit * 5, 1000)
-    # Try the .nodes pattern first; fall back to direct list
-    q_nodes = ('{ teams(request: { take: ' + str(take) +
-               ', isPro: true }) { nodes { id name tag rating wins losses lastMatchDateTime } } }')
-    data = _gql_with_cookies(q_nodes, None, cookies)
-    rows: List[Dict[str, Any]] = []
-    if data and "teams" in data and data["teams"]:
-        t = data["teams"]
-        if isinstance(t, dict) and "nodes" in t:
-            rows = [n for n in t["nodes"] if n]
-        elif isinstance(t, list):
-            rows = t
-    if not rows:
-        # Try the simpler shape
-        q_simple = ('{ teams(request: { take: ' + str(take) +
-                    ', isPro: true }) { id name tag rating wins losses lastMatchDateTime } }')
-        data = _gql_with_cookies(q_simple, None, cookies)
-        if data and "teams" in data:
-            t = data["teams"]
-            if isinstance(t, list):
-                rows = t
-            elif isinstance(t, dict):
-                rows = [t]
-    if not rows:
-        print("  no teams data -- run `probe` to see the actual shape")
-        return
-    rows = [r for r in rows if r and r.get("rating") is not None]
-    rows.sort(key=lambda r: -(r.get("rating") or 0))
-    rows = rows[:limit]
-    out = PRO_ROOT / "stratz_teams.json"
-    out.write_text(json.dumps(rows, indent=2), encoding="utf-8")
-    print(f"  saved {len(rows)} teams to {out}")
-    for r in rows[:5]:
-        print(f"    {r.get('id'):>10d}  rating={r.get('rating'):>7.1f}  "
-              f"{r.get('name'):>25s}  ({r.get('tag')})  "
-              f"wins={r.get('wins')}  losses={r.get('losses')}")
+    # Try several candidate query shapes; print the full
+    # raw error response for each one that fails so the
+    # user can see exactly what Stratz expects.
+    candidates = [
+        ('{ teams(request: { take: ' + str(take) + ', isPro: true }) '
+         '{ nodes { id name tag rating wins losses lastMatchDateTime } } }'),
+        ('{ teams(request: { take: ' + str(take) + ', isPro: true }) '
+         '{ id name tag rating wins losses lastMatchDateTime } }'),
+        ('{ topTeams { id name tag rating wins losses } }'),
+        ('{ proTeams { id name tag rating wins losses } }'),
+        ('{ teams(isPro: true) { id name rating } }'),
+    ]
+    for q in candidates:
+        r = _post_raw(q, cookies)
+        print(f"  tried: {q[:80]}...")
+        print(f"  HTTP {r.status_code}")
+        if r.status_code == 200:
+            try:
+                payload = r.json()
+                data = payload.get("data", {})
+                t = data.get("teams") or data.get("topTeams") or data.get("proTeams")
+                if t is None:
+                    print(f"  200 but no data: {json.dumps(payload)[:300]}")
+                    continue
+                if isinstance(t, dict) and "nodes" in t:
+                    rows = [n for n in t["nodes"] if n]
+                elif isinstance(t, list):
+                    rows = [n for n in t if n]
+                else:
+                    rows = [t]
+                rows = [r for r in rows if r and r.get("rating") is not None]
+                if not rows:
+                    print(f"  200 but no rows: {json.dumps(payload)[:300]}")
+                    continue
+                rows.sort(key=lambda r: -(r.get("rating") or 0))
+                rows = rows[:limit]
+                out = PRO_ROOT / "stratz_teams.json"
+                out.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+                print(f"  saved {len(rows)} teams to {out}")
+                for r2 in rows[:5]:
+                    print(f"    {r2.get('id'):>10d}  rating={r2.get('rating'):>7.1f}  "
+                          f"{r2.get('name'):>25s}  ({r2.get('tag')})  "
+                          f"wins={r2.get('wins')}  losses={r2.get('losses')}")
+                return
+            except Exception as exc:
+                print(f"  200 but parse failed: {exc}")
+                continue
+        else:
+            # 400 / etc -- print the full body so the user
+            # can see the full error message and the
+            # valid argument list (Stratz returns
+            # extensions.allowedArgumentNames or similar).
+            try:
+                payload = r.json()
+                print(f"  full error JSON:")
+                print("  " + json.dumps(payload, indent=2, default=str)[:1500]
+                      .replace("\n", "\n  "))
+            except Exception:
+                print(f"  body: {r.text[:300]}")
+    print()
+    print("  no candidate query shape worked.")
+    print("  hint: try `python stratz_dump_playwright.py probe`")
+    print("        to see all 6 candidate queries and their errors.")
 
 
 # --------------------------------------------------------------------------- #

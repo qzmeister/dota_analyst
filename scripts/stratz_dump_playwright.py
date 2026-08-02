@@ -36,7 +36,7 @@ import json
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -363,8 +363,14 @@ def dump_top_teams(cookies: Dict[str, str], limit: int) -> None:
         row["games_total"] = wc + lc
         if lmd:
             try:
+                # v0.7.26: use timezone-aware datetime to avoid
+                # DeprecationWarning on datetime.utcfromtimestamp()
+                # in Python 3.12+.  Output format is identical
+                # (ISO 8601 with trailing 'Z').
                 row["last_match_iso"] = (
-                    datetime.utcfromtimestamp(int(lmd)).isoformat() + "Z"
+                    datetime.fromtimestamp(int(lmd), timezone.utc)
+                    .isoformat()
+                    .replace("+00:00", "Z")
                 )
             except Exception:
                 row["last_match_iso"] = None

@@ -515,37 +515,47 @@ def _fetch_league_standings(cookies: Dict[str, str], league_id: int
       1) standings(take: 100)        -- Relay connection
       2) standings(request: { take: 100 }) -- Stratz-style
     Stop on the first one that returns HTTP 200.
+
+    v0.7.32: removed silent fallback.  Both v0.7.31 variants
+    returned 400 for all 32 MAJOR+INTERNATIONAL leagues.
+    Print the actual GQL error message for each variant so
+    we can see what's wrong.
     """
     candidates = [
-        f'{{ league(id: {league_id}) {{ '
-        f'id name displayName tier prizePool '
-        f'standings(take: 100) {{ teamId prize }} '
-        f'}}}}',
-        f'{{ league(id: {league_id}) {{ '
-        f'id name displayName tier prizePool '
-        f'standings(request: {{ take: 100 }}) {{ teamId prize }} '
-        f'}}}}',
+        ("standings(take: 100)",
+         f'{{ league(id: {league_id}) {{ '
+         f'id name displayName tier prizePool '
+         f'standings(take: 100) {{ teamId prize }} '
+         f'}}}}'),
+        ("standings(request: { take: 100 })",
+         f'{{ league(id: {league_id}) {{ '
+         f'id name displayName tier prizePool '
+         f'standings(request: {{ take: 100 }}) {{ teamId prize }} '
+         f'}}}}'),
     ]
-    for q in candidates:
+    for label, q in candidates:
         r = _post_raw_with_retry(q, cookies)
         if r.status_code != 200:
-            # try next variant
+            # print the actual error so we can see what's wrong
+            err = r.text[:300].replace("\n", " ")
+            print(f"    league({league_id}) {label}: "
+                  f"HTTP {r.status_code} -- {err}", file=sys.stderr)
             continue
         try:
             payload = r.json()
         except Exception as exc:
-            print(f"    league({league_id}): parse failed: {exc}",
+            print(f"    league({league_id}) {label}: parse failed: {exc}",
                   file=sys.stderr)
             continue
         if "errors" in payload and payload["errors"]:
-            # try next variant
+            for e in payload["errors"][:2]:
+                msg = e.get("message", "?").replace("\n", " ")
+                print(f"    league({league_id}) {label}: GQL error: "
+                      f"{msg[:300]}", file=sys.stderr)
             continue
         league = (payload.get("data") or {}).get("league")
         if league:
             return league
-    # All variants failed -- print last error for diagnosis
-    print(f"    league({league_id}): all standings variants failed",
-          file=sys.stderr)
     return None
 
 

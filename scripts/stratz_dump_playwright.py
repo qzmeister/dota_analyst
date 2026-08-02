@@ -624,11 +624,15 @@ def dump_premium_teams(cookies: Dict[str, str], limit: int) -> None:
     for tid, d in team_data.items():
         d_sorted = sorted(d["leagues"],
                           key=lambda l: -(l.get("prizePool") or 0))
+        # v0.7.34: prizeAmount is Float on Stratz; round to int
+        # for clean output.  The fractional cents come from
+        # currency conversion or percentage-based prize splits.
+        total_prize = int(round(d["total_prize"]))
         enriched.append({
             "team_id": tid,
             "premium_leagues_count": len(d["leagues"]),
             "max_tier": d["max_tier"],
-            "total_prize": d["total_prize"],
+            "total_prize": total_prize,
             "leagues": d_sorted,
         })
     enriched.sort(key=lambda r: (-r["premium_leagues_count"],
@@ -638,12 +642,28 @@ def dump_premium_teams(cookies: Dict[str, str], limit: int) -> None:
                    encoding="utf-8")
     print(f"  saved {len(enriched)} teams to {out}")
     print(f"  file size: {out.stat().st_size / 1024:.1f} KB")
-    print(f"  top 20 by premium_leagues_count:")
-    for r in enriched[:20]:
+    _print_premium_top(out, top_n=20)
+
+
+def _print_premium_top(json_path: Path, top_n: int = 20) -> None:
+    """v0.7.34: print top N from the stratz_premium_teams.json
+    file, sorted by premium_leagues_count.  Standalone so the
+    CLI can call this without re-querying Stratz."""
+    if not json_path.exists():
+        print(f"  {json_path} does not exist; run 'premium N' first")
+        return
+    try:
+        rows = json.loads(json_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"  parse {json_path}: {exc}")
+        return
+    print(f"  top {top_n} of {len(rows)} by premium_leagues_count:")
+    for r in rows[:top_n]:
         names = ", ".join(
             (l.get("name") or f"id={l['id']}")[:25]
             for l in r["leagues"][:3]
         )
+        # v0.7.34: total_prize is now int (rounded), so :d is safe
         print(f"    {r['team_id']:>10d}  leagues={r['premium_leagues_count']:>3d}  "
               f"max={r['max_tier']:<13s}  prize=${r['total_prize']:>10d}  "
               f"{names[:60]}")
@@ -865,6 +885,16 @@ def main() -> int:
                   "e.g. `premium 50`", file=sys.stderr)
             return 1
         dump_premium_teams(cookies, int(sys.argv[2]))
+    elif mode == "premium-print":
+        # v0.7.34: read stratz_premium_teams.json and print top-20.
+        # No Stratz call.  Useful for re-displaying the result of
+        # a 'premium N' run without burning more API quota.
+        n = int(sys.argv[2]) if len(sys.argv) >= 3 else 20
+        _print_premium_top(
+            Path(__file__).resolve().parent / "stratz_premium_teams.json",
+            top_n=n,
+        )
+        return 0
     elif mode == "matches":
         if len(sys.argv) < 3:
             print("ERROR: `matches` mode needs a count, e.g. `matches 5000`",

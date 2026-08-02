@@ -450,10 +450,16 @@ def _discover_premium_leagues(cookies: Dict[str, str], take: int
     v0.7.28: also dumps the FULL error body on HTTP 400 / GQL
     errors so the next failure mode is visible immediately
     instead of just 'no leagues returned'.
+
+    v0.7.29: removed PREMIUM from the tier list -- second run
+    of 'premium 50' (after v0.7.28 fix) returned
+    'In element #3: [Expected type LeagueTier, found PREMIUM]'
+    so PREMIUM is NOT a valid LeagueTier enum value on Stratz.
+    Kept PROFESSIONAL, MAJOR, INTERNATIONAL.
     """
     q = (
         '{ leagues(request: { '
-        'tiers: [PROFESSIONAL, MAJOR, PREMIUM, INTERNATIONAL], '
+        'tiers: [PROFESSIONAL, MAJOR, INTERNATIONAL], '
         'requirePrizePool: true, '
         f'take: {take}, '
         'leagueEnded: false '

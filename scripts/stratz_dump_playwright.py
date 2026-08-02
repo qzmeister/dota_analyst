@@ -191,9 +191,14 @@ def probe(cookies: Dict[str, str]) -> None:
         ("TeamPrizeType fields (what's in standings)",
          '{ __type(name: "TeamPrizeType") { fields { name type { name kind ofType { name } } } } }'),
         ("LeagueType.standings args (does it take take/skip?)",
-         '{ __type(name: "LeagueType") { fields { name args { name } } } }'),
-        ("league(id:17599) { standings { __typename } } (sanity)",
-         '{ league(id: 17599) { id tier standings { __typename } } }'),
+         '{ __type(name: "LeagueType") { fields(includeDeprecated: true) { '
+         'name args { name type { name kind ofType { name } } } } } }'),
+        ("league(id:17508) standings(take: 100) variant 1",
+         '{ league(id: 17508) { id tier standings(take: 100) { teamId prize } } }'),
+        ("league(id:17508) standings(request: { take: 100 }) variant 2",
+         '{ league(id: 17508) { id tier standings(request: { take: 100 }) { teamId prize } } }'),
+        ("league(id:17508) standings(request: { take: 100, skip: 0 }) variant 3",
+         '{ league(id: 17508) { id tier standings(request: { take: 100, skip: 0 }) { teamId prize } } }'),
     ]
     all_results: Dict[str, Any] = {}
     for label, q in queries:
@@ -455,14 +460,22 @@ def _discover_premium_leagues(cookies: Dict[str, str], take: int
     of 'premium 50' (after v0.7.28 fix) returned
     'In element #3: [Expected type LeagueTier, found PREMIUM]'
     so PREMIUM is NOT a valid LeagueTier enum value on Stratz.
-    Kept PROFESSIONAL, MAJOR, INTERNATIONAL.
+
+    v0.7.31: dropped PROFESSIONAL too -- the 5 leagues the v0.7.29
+    run returned were all 'PROFESSIONAL' (local LANs, $1K-$100K
+    prize pools), NOT the kind of premium we want.  Stratz uses:
+      PROFESSIONAL  = local/regional pro LANs
+      MAJOR         = premier tournaments (DPC Div I, Majors)
+      INTERNATIONAL = world cups / TI
+    We want MAJOR+INTERNATIONAL only.  Also dropped
+    `leagueEnded: false` -- DPC off-season means we'd get 0
+    otherwise.  Top `take` leagues by recency is what we want.
     """
     q = (
         '{ leagues(request: { '
-        'tiers: [PROFESSIONAL, MAJOR, INTERNATIONAL], '
+        'tiers: [MAJOR, INTERNATIONAL], '
         'requirePrizePool: true, '
-        f'take: {take}, '
-        'leagueEnded: false '
+        f'take: {take} '
         '}) { id name displayName tier prizePool startDateTime endDateTime } }'
     )
     r = _post_raw_with_retry(q, cookies)
@@ -494,35 +507,46 @@ def _fetch_league_standings(cookies: Dict[str, str], league_id: int
     skip.  The first premium run (v0.7.29) returned
     'no team data aggregated' with no clue why standings
     didn't return data for the 5 premium-eligible leagues.
+
+    v0.7.31: try the most-likely-valid signatures in order
+    (v0.7.30 showed 'SYNTAX_ERROR: Unexpected }' meaning
+    standings needs args).  Order chosen by likelihood of
+    success on Stratz:
+      1) standings(take: 100)        -- Relay connection
+      2) standings(request: { take: 100 }) -- Stratz-style
+    Stop on the first one that returns HTTP 200.
     """
-    q = (
+    candidates = [
         f'{{ league(id: {league_id}) {{ '
-        'id name displayName tier prizePool '
-        'standings { teamId prize } '
-        '} }}'
-    )
-    r = _post_raw_with_retry(q, cookies)
-    if r.status_code != 200:
-        print(f"    league({league_id}): HTTP {r.status_code} "
-              f"-- {r.text[:200]}", file=sys.stderr)
-        return None
-    try:
-        payload = r.json()
-    except Exception as exc:
-        print(f"    league({league_id}): parse failed: {exc}",
-              file=sys.stderr)
-        return None
-    if "errors" in payload and payload["errors"]:
-        for e in payload["errors"][:2]:
-            print(f"    league({league_id}): GQL error: "
-                  f"{e.get('message', '?')[:200]}", file=sys.stderr)
-        return None
-    league = (payload.get("data") or {}).get("league")
-    if not league:
-        print(f"    league({league_id}): no data returned "
-              f"(league is null)", file=sys.stderr)
-        return None
-    return league
+        f'id name displayName tier prizePool '
+        f'standings(take: 100) {{ teamId prize }} '
+        f'}}}}',
+        f'{{ league(id: {league_id}) {{ '
+        f'id name displayName tier prizePool '
+        f'standings(request: {{ take: 100 }}) {{ teamId prize }} '
+        f'}}}}',
+    ]
+    for q in candidates:
+        r = _post_raw_with_retry(q, cookies)
+        if r.status_code != 200:
+            # try next variant
+            continue
+        try:
+            payload = r.json()
+        except Exception as exc:
+            print(f"    league({league_id}): parse failed: {exc}",
+                  file=sys.stderr)
+            continue
+        if "errors" in payload and payload["errors"]:
+            # try next variant
+            continue
+        league = (payload.get("data") or {}).get("league")
+        if league:
+            return league
+    # All variants failed -- print last error for diagnosis
+    print(f"    league({league_id}): all standings variants failed",
+          file=sys.stderr)
+    return None
 
 
 def dump_premium_teams(cookies: Dict[str, str], limit: int) -> None:

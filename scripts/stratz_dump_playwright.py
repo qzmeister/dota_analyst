@@ -53,6 +53,16 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 }
 
+# v0.7.23: Stratz free tier caps `teams(teamIds: [...])` at 5 IDs
+# per request.  50/100 chunked queries return
+#   "You have surpassed the maximum take value of : 5"
+# 5 IDs * 1 req every 0.6s = 0.83 req/s ≈ 50 req/min -- close
+# to but under the 30 req/min free tier; the cookie warmup uses
+# a couple of requests, so a bit of margin is wise.  If we hit
+# 429 in practice, bump CHUNK_SLEEP_SEC up.
+TEAM_CHUNK_SIZE = 5
+TEAM_CHUNK_SLEEP_SEC = 0.6
+
 
 def _key() -> str:
     k = os.environ.get("STRATZ_API_KEY")
@@ -290,6 +300,9 @@ def dump_top_teams(cookies: Dict[str, str], limit: int) -> None:
         return
     team_ids = team_ids[:limit]
     print(f"  loaded {len(team_ids)} seed team_ids from v18_top_teams.json")
+    print(f"  chunking: {TEAM_CHUNK_SIZE} ids/req, "
+          f"{TEAM_CHUNK_SLEEP_SEC}s sleep "
+          f"≈ {TEAM_CHUNK_SIZE/TEAM_CHUNK_SLEEP_SEC:.1f} ids/s")
     # v0.7.21: full field set.  All confirmed present by probe.
     # `coachSteamAccountId` is skipped -- not useful for tier rating.
     fields = (
@@ -298,8 +311,10 @@ def dump_top_teams(cookies: Dict[str, str], limit: int) -> None:
     )
     all_rows: List[Dict[str, Any]] = []
     failed_chunks = 0
-    for chunk_start in range(0, len(team_ids), 50):
-        chunk = team_ids[chunk_start:chunk_start + 50]
+    total_chunks = (len(team_ids) + TEAM_CHUNK_SIZE - 1) // TEAM_CHUNK_SIZE
+    for chunk_idx, chunk_start in enumerate(range(0, len(team_ids),
+                                                   TEAM_CHUNK_SIZE)):
+        chunk = team_ids[chunk_start:chunk_start + TEAM_CHUNK_SIZE]
         ids_csv = ", ".join(str(i) for i in chunk)
         q = "{ teams(teamIds: [" + ids_csv + "]) { " + fields + " } }"
         r = _post_raw(q, cookies)
@@ -307,20 +322,30 @@ def dump_top_teams(cookies: Dict[str, str], limit: int) -> None:
             try:
                 payload = r.json()
                 if "errors" in payload and payload["errors"]:
-                    print(f"  chunk {chunk_start//50}: GQL errors:",
-                          [e.get("message", "?")[:80] for e in payload["errors"][:2]])
+                    err_msgs = [e.get("message", "?")[:100]
+                                for e in payload["errors"][:2]]
+                    # 429 / rate-limit / chunk-too-big: print
+                    # full body once for diagnosis, then bail
+                    # if the same error repeats.
+                    print(f"  chunk {chunk_idx}/{total_chunks}: GQL errors: "
+                          f"{err_msgs}")
+                    if ("surpassed the maximum take" in err_msgs[0]
+                            or "rate limit" in err_msgs[0].lower()):
+                        print(f"  -> Stratz hard limit hit. Aborting this "
+                              f"chunk; adjust TEAM_CHUNK_SIZE.")
+                    failed_chunks += 1
                 rows = (payload.get("data") or {}).get("teams") or []
                 all_rows.extend([x for x in rows if x])
             except Exception as exc:
-                print(f"  chunk {chunk_start//50}: parse failed: {exc}")
+                print(f"  chunk {chunk_idx}/{total_chunks}: parse failed: {exc}")
                 failed_chunks += 1
         else:
-            print(f"  chunk {chunk_start//50}: HTTP {r.status_code}")
+            print(f"  chunk {chunk_idx}/{total_chunks}: HTTP {r.status_code}")
             failed_chunks += 1
-        if chunk_start // 50 % 3 == 0 and chunk_start > 0:
+        if chunk_idx % 20 == 0 and chunk_idx > 0:
             print(f"    [{chunk_start + len(chunk)}/{len(team_ids)}]  "
                   f"saved={len(all_rows)}")
-        time.sleep(0.3)
+        time.sleep(TEAM_CHUNK_SLEEP_SEC)
     if not all_rows:
         print("  no team data returned; run `probe` to see why")
         return

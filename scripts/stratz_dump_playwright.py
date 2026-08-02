@@ -17,14 +17,14 @@ Usage (Windows):
     set STRATZ_API_KEY=<key>
     python stratz_dump_playwright.py probe
     python stratz_dump_playwright.py teams 540
-    python stratz_dump_playwright.py expand 200
+    python stratz_dump_playwright.py premium 50
     python stratz_dump_playwright.py matches 5000
 
 Output (next to the script, in C:\\Users\\artka\\Downloads when
 run from there):
     stratz_schema_discovery.json   (probe: full __type output)
     stratz_teams.json              (teams: winCount/lossCount per seed)
-    stratz_teams_expanded.json     (expand: NEW teams via leagues)
+    stratz_premium_teams.json      (premium: teams from MAJOR+ leagues)
     stratz_matches.json            (matches: full payload per id)
 
 Schema findings (v0.7.20) and pipeline plan are in
@@ -184,6 +184,16 @@ def probe(cookies: Dict[str, str]) -> None:
          'id name tag isPro isLocked countryCode countryName '
          'winCount lossCount lastMatchDateTime dateCreated '
          '} }'),
+        # ---- Phase 3 (v0.7.27): premium-team discovery path ----
+        # user pointed out: a team winning 80% in tier-3 amateur
+        # leagues is NOT the same as a team winning 60% in MAJOR+.
+        # Need standings (which teams played in premium leagues).
+        ("TeamPrizeType fields (what's in standings)",
+         '{ __type(name: "TeamPrizeType") { fields { name type { name kind ofType { name } } } } }'),
+        ("LeagueType.standings args (does it take take/skip?)",
+         '{ __type(name: "LeagueType") { fields { name args { name } } } }'),
+        ("league(id:17599) { standings { __typename } } (sanity)",
+         '{ league(id: 17599) { id tier standings { __typename } } }'),
     ]
     all_results: Dict[str, Any] = {}
     for label, q in queries:
@@ -407,6 +417,182 @@ def dump_top_teams(cookies: Dict[str, str], limit: int) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Mode 2.5 (v0.7.27): dump premium teams via LeagueType.standings
+# --------------------------------------------------------------------------- #
+
+# LeagueTier ordinals, used to compute a team's "max tier"
+# (highest-tier league they participated in).
+TIER_ORDER = {
+    "AMATEUR": 0,
+    "PROFESSIONAL": 1,
+    "MAJOR": 2,
+    "PREMIUM": 3,
+    "INTERNATIONAL": 4,
+    # DPC tier names seen in some Stratz responses
+    "DPC_QUAL": 1,
+    "DPC_DIV1": 2,
+    "DPC_DIV2": 1,
+    None: -1,
+}
+
+
+def _discover_premium_leagues(cookies: Dict[str, str], take: int
+                                ) -> List[Dict[str, Any]]:
+    """Query top premium leagues (PROFESSIONAL/MAJOR/PREMIUM/
+    INTERNATIONAL, with prize pool, not ended, ordered desc).
+    Returns the list of league summaries (id, name, tier, ...)."""
+    q = (
+        '{ leagues(request: { '
+        'tiers: [PROFESSIONAL, MAJOR, PREMIUM, INTERNATIONAL], '
+        'requirePrizePool: true, '
+        f'take: {take}, '
+        'leagueEnded: false, '
+        'orderBy: DESC '
+        '}) { id name displayName tier prizePool startDateTime endDateTime } }'
+    )
+    r = _post_raw_with_retry(q, cookies)
+    if r.status_code != 200:
+        print(f"  HTTP {r.status_code}", file=sys.stderr)
+        return []
+    try:
+        payload = r.json()
+    except Exception as exc:
+        print(f"  parse failed: {exc}", file=sys.stderr)
+        return []
+    if "errors" in payload and payload["errors"]:
+        print(f"  GQL errors:",
+              [e.get("message", "?")[:120] for e in payload["errors"][:2]],
+              file=sys.stderr)
+        return []
+    return (payload.get("data") or {}).get("leagues") or []
+
+
+def _fetch_league_standings(cookies: Dict[str, str], league_id: int
+                             ) -> Optional[Dict[str, Any]]:
+    """Query a single league's standings (teams that participated
+    + their prize).  Returns {id, name, tier, prizePool, standings: [...]}
+    or None on failure."""
+    q = (
+        f'{{ league(id: {league_id}) {{ '
+        'id name displayName tier prizePool '
+        'standings { teamId prize } '
+        '} }}'
+    )
+    r = _post_raw_with_retry(q, cookies)
+    if r.status_code != 200:
+        return None
+    try:
+        payload = r.json()
+    except Exception:
+        return None
+    if "errors" in payload and payload["errors"]:
+        # silent skip -- some leagues may not have standings
+        return None
+    return (payload.get("data") or {}).get("league")
+
+
+def dump_premium_teams(cookies: Dict[str, str], limit: int) -> None:
+    """v0.7.27: discover teams that ACTUALLY PLAYED in premium
+    leagues (PROFESSIONAL/MAJOR/PREMIUM/INTERNATIONAL), regardless
+    of their overall win rate.  This is what the user asked for
+    when they pointed out: a team winning 80% in tier-3 amateur
+    leagues is NOT the same as a team winning 60% in MAJOR+.
+
+    Strategy:
+      1) Query top `limit` premium leagues (active, with prize pool)
+      2) For each league, fetch standings (teamId + prize)
+      3) Aggregate: per-team -> { leagues: [...], total_prize,
+         max_tier, premium_leagues_count }
+      4) Sort by premium_leagues_count desc
+
+    Output: stratz_premium_teams.json next to the script.
+
+    Timing: `limit` chunks * (~1-2s request + 0.5s sleep).
+    With limit=50 this fits in ~120s, with limit=100 in ~210s
+    (over the 180s PowerShell default; see v0.7.25).
+    """
+    leagues = _discover_premium_leagues(cookies, take=limit)
+    if not leagues:
+        print("  no premium leagues returned; try a smaller `limit` "
+              "or check the GQL errors above")
+        return
+    print(f"  found {len(leagues)} premium-eligible leagues")
+    team_data: Dict[int, Dict[str, Any]] = {}
+    for i, league in enumerate(leagues):
+        lid = league.get("id")
+        if lid is None:
+            continue
+        standings = _fetch_league_standings(cookies, int(lid))
+        if not standings:
+            # League may be private, ended without standings, etc.
+            time.sleep(TEAM_CHUNK_SLEEP_SEC)
+            continue
+        league_info = {
+            "id": lid,
+            "name": standings.get("displayName") or standings.get("name")
+                    or league.get("displayName") or league.get("name"),
+            "tier": standings.get("tier") or league.get("tier"),
+            "prizePool": standings.get("prizePool") or league.get("prizePool"),
+            "startDateTime": league.get("startDateTime"),
+        }
+        s_list = standings.get("standings") or []
+        for s in s_list:
+            if not s or s.get("teamId") is None:
+                continue
+            tid = int(s["teamId"])
+            entry = team_data.setdefault(tid, {
+                "leagues": [],
+                "total_prize": 0,
+                "max_tier": None,
+                "max_tier_ordinal": -1,
+            })
+            prize = s.get("prize") or 0
+            entry["leagues"].append({
+                **league_info,
+                "prize": prize,
+            })
+            entry["total_prize"] += prize
+            tier = league_info["tier"]
+            ord_ = TIER_ORDER.get(tier, -1)
+            if ord_ > entry["max_tier_ordinal"]:
+                entry["max_tier_ordinal"] = ord_
+                entry["max_tier"] = tier
+        if i % 10 == 0 and i > 0:
+            print(f"    [{i}/{len(leagues)}]  teams={len(team_data)}")
+        time.sleep(TEAM_CHUNK_SLEEP_SEC)
+    if not team_data:
+        print("  no team data aggregated; check standings probe output")
+        return
+    enriched: List[Dict[str, Any]] = []
+    for tid, d in team_data.items():
+        d_sorted = sorted(d["leagues"],
+                          key=lambda l: -(l.get("prizePool") or 0))
+        enriched.append({
+            "team_id": tid,
+            "premium_leagues_count": len(d["leagues"]),
+            "max_tier": d["max_tier"],
+            "total_prize": d["total_prize"],
+            "leagues": d_sorted,
+        })
+    enriched.sort(key=lambda r: (-r["premium_leagues_count"],
+                                  -r["total_prize"]))
+    out = Path(__file__).resolve().parent / "stratz_premium_teams.json"
+    out.write_text(json.dumps(enriched, indent=2, default=str),
+                   encoding="utf-8")
+    print(f"  saved {len(enriched)} teams to {out}")
+    print(f"  file size: {out.stat().st_size / 1024:.1f} KB")
+    print(f"  top 20 by premium_leagues_count:")
+    for r in enriched[:20]:
+        names = ", ".join(
+            (l.get("name") or f"id={l['id']}")[:25]
+            for l in r["leagues"][:3]
+        )
+        print(f"    {r['team_id']:>10d}  leagues={r['premium_leagues_count']:>3d}  "
+              f"max={r['max_tier']:<13s}  prize=${r['total_prize']:>10d}  "
+              f"{names[:60]}")
+
+
+# --------------------------------------------------------------------------- #
 # Mode 2: dump top teams
 # --------------------------------------------------------------------------- #
 
@@ -616,6 +802,12 @@ def main() -> int:
                   file=sys.stderr)
             return 1
         dump_top_teams(cookies, int(sys.argv[2]))
+    elif mode == "premium":
+        if len(sys.argv) < 3:
+            print("ERROR: `premium` mode needs a league count, "
+                  "e.g. `premium 50`", file=sys.stderr)
+            return 1
+        dump_premium_teams(cookies, int(sys.argv[2]))
     elif mode == "matches":
         if len(sys.argv) < 3:
             print("ERROR: `matches` mode needs a count, e.g. `matches 5000`",
@@ -623,7 +815,8 @@ def main() -> int:
             return 1
         dump_matches(cookies, int(sys.argv[2]))
     else:
-        print(f"unknown mode: {mode}.  Use 'probe', 'teams', or 'matches'.")
+        print(f"unknown mode: {mode}.  "
+              f"Use 'probe', 'teams', 'premium', or 'matches'.")
         return 1
     return 0
 

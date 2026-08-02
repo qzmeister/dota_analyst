@@ -238,15 +238,15 @@ def _post_raw(query: str, cookies: Dict[str, str]) -> requests.Response:
     return sess.post(ENDPOINT, data=body, timeout=60)
 
 
-def dump_top_teams(cookies: Dict[str, str], limit: int) -> None:
-    """Take ~5x what we need and sort client-side by rating
-    (Stratz's `teams` doesn't accept orderBy -- confirmed in
-    the user's first run, "Unknown argument 'orderBy' on
-    field 'teams' of type 'DotaQuery'.")."""
+def _dump_top_teams_legacy(cookies: Dict[str, str], limit: int) -> None:
+    """LEGACY: tries 6 candidate query shapes that all returned
+    400.  Kept for reference (and so we can re-test if Stratz's
+    schema ever changes).  NOT wired into the CLI -- the real
+    path is dump_top_teams() above, which seeds from
+    v18_top_teams.json + uses the field list we discover via
+    __type introspection in `probe` mode.
+    """
     take = max(limit * 5, 1000)
-    # Try several candidate query shapes; print the full
-    # raw error response for each one that fails so the
-    # user can see exactly what Stratz expects.
     candidates = [
         ('{ teams(request: { take: ' + str(take) + ', isPro: true }) '
          '{ nodes { id name tag rating wins losses lastMatchDateTime } } }'),
@@ -377,16 +377,26 @@ def dump_matches(cookies: Dict[str, str], target: int) -> None:
 def main() -> int:
     if not _key():
         return 1
-    if len(sys.argv) < 3:
+    if len(sys.argv) < 2:
         print(__doc__)
         return 1
     mode = sys.argv[1].lower()
     cookies = _warm_up_cookies()
     if mode == "probe":
+        # `probe` takes no extra arg -- the third argv slot is ignored
+        # (kept for backward-compat: `probe 0` still works).
         probe(cookies)
     elif mode == "teams":
+        if len(sys.argv) < 3:
+            print("ERROR: `teams` mode needs a count, e.g. `teams 200`",
+                  file=sys.stderr)
+            return 1
         dump_top_teams(cookies, int(sys.argv[2]))
     elif mode == "matches":
+        if len(sys.argv) < 3:
+            print("ERROR: `matches` mode needs a count, e.g. `matches 5000`",
+                  file=sys.stderr)
+            return 1
         dump_matches(cookies, int(sys.argv[2]))
     else:
         print(f"unknown mode: {mode}.  Use 'probe', 'teams', or 'matches'.")

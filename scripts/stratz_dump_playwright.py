@@ -663,9 +663,13 @@ def _print_premium_top(json_path: Path, top_n: int = 20) -> None:
             (l.get("name") or f"id={l['id']}")[:25]
             for l in r["leagues"][:3]
         )
-        # v0.7.34: total_prize is now int (rounded), so :d is safe
+        # v0.7.35: defend against old files where total_prize
+        # is still float (Stratz prizeAmount is Float).  Cast
+        # at print-time so this works for any file regardless
+        # of which script version produced it.
+        prize = int(round(r.get("total_prize") or 0))
         print(f"    {r['team_id']:>10d}  leagues={r['premium_leagues_count']:>3d}  "
-              f"max={r['max_tier']:<13s}  prize=${r['total_prize']:>10d}  "
+              f"max={r['max_tier']:<13s}  prize=${prize:>10d}  "
               f"{names[:60]}")
 
 

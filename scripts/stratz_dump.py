@@ -78,19 +78,30 @@ def _gql(query: str, variables: Optional[Dict[str, Any]] = None,
 # --------------------------------------------------------------------------- #
 
 def dump_top_teams(limit: int) -> None:
-    """Top N teams by Stratz rating.  Saves to stratz_teams.json."""
+    """Top N teams by Stratz rating.  Saves to stratz_teams.json.
+
+    Stratz's `teams` field on DotaQuery doesn't support orderBy
+    (the GraphQL error we got from the user's first run was
+    "Unknown argument 'orderBy' on field 'teams'").  We fetch
+    a larger slice of teams and sort client-side by rating.
+    """
+    # Take 5x what we need; some teams have null/missing rating
+    take = max(limit * 5, 1000)
     q = """
     query TopTeams($take: Int!) {
-      teams(orderBy: RATING, take: $take) {
+      teams(take: $take) {
         id name tag rating wins losses lastMatchDateTime
       }
     }
     """
-    data = _gql(q, {"take": limit})
+    data = _gql(q, {"take": take})
     if not data or "teams" not in data:
         print("  no data returned")
         return
-    rows = [t for t in data["teams"] if t]
+    rows = [t for t in data["teams"] if t and t.get("rating") is not None]
+    # Sort client-side by rating desc, then trim to limit
+    rows.sort(key=lambda t: -(t.get("rating") or 0))
+    rows = rows[:limit]
     out = Path(__file__).parent.parent / "stratz_teams.json"
     out.write_text(json.dumps(rows, indent=2), encoding="utf-8")
     print(f"  saved {len(rows)} teams to {out}")

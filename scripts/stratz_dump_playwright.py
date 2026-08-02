@@ -215,15 +215,51 @@ def _load_existing_team_ids() -> Optional[List[int]]:
     """Load team_ids from our v18_top_teams.json so we can
     seed the `teams(teamIds: ...)` query.  Stratz's `teams`
     field is gated by `teamIds: [Int]!` -- we can't query
-    'all teams' or 'top teams', we have to provide IDs."""
-    p = PRO_ROOT / "ml_data" / "imports" / "v18_top_teams.json"
-    if not p.exists():
-        return None
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-        return [int(t["team_id"]) for t in data if t.get("team_id") is not None]
-    except Exception:
-        return None
+    'all teams' or 'top teams', we have to provide IDs.
+
+    v0.7.22: search multiple candidate locations because
+    the script can live in Downloads (PRO_ROOT = C:\\Users\\artka)
+    OR in the project's scripts/ dir (PRO_ROOT = project root).
+    """
+    # v0.7.22: hardcoded fallback for the project root, since
+    # when this script is in Downloads, PRO_ROOT is the user's
+    # home dir, not the project.
+    DEFAULT_PROJECT_ROOT = Path(
+        r"C:\Users\artka\.minimax\workspace\dota_analyst"
+    )
+    candidates = []
+    # 1) env var override (DOTA_ANALYST_HOME or DOTA_ANALYST_ROOT)
+    env = os.environ.get("DOTA_ANALYST_HOME") or os.environ.get("DOTA_ANALYST_ROOT")
+    if env:
+        candidates.append(Path(env) / "ml_data" / "imports" / "v18_top_teams.json")
+    # 2) PRO_ROOT (works when script lives in project/scripts/)
+    candidates.append(PRO_ROOT / "ml_data" / "imports" / "v18_top_teams.json")
+    # 3) hardcoded default project root
+    candidates.append(
+        DEFAULT_PROJECT_ROOT / "ml_data" / "imports" / "v18_top_teams.json"
+    )
+    # 4) CWD-relative (works when run from project root)
+    candidates.append(
+        Path.cwd() / "ml_data" / "imports" / "v18_top_teams.json"
+    )
+    # 5) parent of CWD (works when run from project/scripts/)
+    candidates.append(
+        Path.cwd().parent / "ml_data" / "imports" / "v18_top_teams.json"
+    )
+    for p in candidates:
+        if p.exists():
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                ids = [int(t["team_id"]) for t in data
+                       if t.get("team_id") is not None]
+                print(f"  seed: {p}  ({len(ids)} teams)")
+                return ids
+            except Exception as exc:
+                print(f"  seed: {p}  parse failed: {exc}", file=sys.stderr)
+    print(f"  seed: no v18_top_teams.json found.  tried:", file=sys.stderr)
+    for p in candidates:
+        print(f"    - {p}", file=sys.stderr)
+    return None
 
 
 def dump_top_teams(cookies: Dict[str, str], limit: int) -> None:

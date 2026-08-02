@@ -184,7 +184,16 @@ def dump_matches(target: int) -> None:
 # --------------------------------------------------------------------------- #
 
 def main() -> int:
+    if not _key():
+        print("ERROR: STRATZ_API_KEY env var is not set.", file=sys.stderr)
+        print("  Windows: set STRATZ_API_KEY=eyJ...", file=sys.stderr)
+        print("  Linux:   export STRATZ_API_KEY=eyJ...", file=sys.stderr)
+        return 1
     if len(sys.argv) < 3:
+        print("ERROR: missing arguments.", file=sys.stderr)
+        print("  Usage:  python stratz_dump.py teams 200", file=sys.stderr)
+        print("          python stratz_dump.py matches 5000", file=sys.stderr)
+        print()
         print(__doc__)
         return 1
     mode = sys.argv[1].lower()
@@ -195,10 +204,18 @@ def main() -> int:
         n = int(sys.argv[2])
         dump_matches(n)
     else:
-        print(f"unknown mode: {mode}.  Use 'teams' or 'matches'.")
+        print(f"ERROR: unknown mode {mode!r}.  Use 'teams' or 'matches'.",
+              file=sys.stderr)
         return 1
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        rc = main()
+    except KeyboardInterrupt:
+        rc = 130
+    except Exception as exc:
+        print(f"FATAL: {type(exc).__name__}: {exc}", file=sys.stderr)
+        rc = 1
+    raise SystemExit(rc)

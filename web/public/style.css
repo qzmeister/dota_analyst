@@ -564,7 +564,19 @@ body {
   width: 1px; background: rgba(255, 255, 255, .22);
   pointer-events: none;
 }
-.winrow { display: flex; justify-content: space-between; font-size: 11px; margin-top: 4px; }
+/* v0.7.53: winrow text readability.
+   The bar is red on conf-low (|pr-50|<10) which left white text
+   unreadable.  Switch the labels to team colours (radiant green
+   / dire red) so the team identity carries the contrast, bump
+   weight, and push the row a couple of pixels clear of the bar. */
+.winrow {
+  display: flex; justify-content: space-between;
+  font-size: 11px; font-weight: 700; letter-spacing: .2px;
+  margin-top: 6px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .55);
+}
+.winrow .r { color: var(--radiant); }
+.winrow .d { color: var(--dire); }
 .tag-level { padding: 1px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; }
 .lvl-High { background: rgba(248,81,73,.2); color: var(--dire); }
 .lvl-Medium { background: rgba(240,136,62,.2); color: var(--live); }

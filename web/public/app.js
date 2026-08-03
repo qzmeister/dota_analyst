@@ -750,11 +750,11 @@ function liveCard(c) {
             if (confidence >= 20)      confCls = "conf-high";
             else if (confidence >= 10) confCls = "conf-med";
             const confLabel = confidence >= 20 ? "высокая" : (confidence >= 10 ? "средняя" : "низкая");
-            return `<div class="winbar ${confCls}" title="Уверенность: ${confLabel} (${confidence.toFixed(0)}pp от 50%)">
+            return `<div class="winbar ${confCls}">
               <div class="winbar-fill" style="width:${pr}%"></div>
               <div class="winbar-track"></div>
             </div>
-            <div class="winrow"><span class="r">${c.radiant_team.name} ${pr}%</span><span class="d">${100 - pr}% ${c.dire_team.name}</span></div>`;
+            <div class="winrow" title="Уверенность: ${confLabel} (${confidence.toFixed(0)}pp от 50%)"><span class="r">${c.radiant_team.name} ${pr}%</span><span class="d">${100 - pr}% ${c.dire_team.name}</span></div>`;
           })()}
         </div>
         <div class="pbox">

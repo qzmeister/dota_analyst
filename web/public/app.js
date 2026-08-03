@@ -711,22 +711,33 @@ function liveCard(c) {
       <div class="live-header">
         ${sideBlock(c.radiant_team, draft.radiant_picks, draft.radiant_bans, "radiant", radiantLeads)}
         <div class="live-center">
-          <div class="live-score">${(() => {
-            const r = Number(c.live_score?.radiant || 0);
-            const d = Number(c.live_score?.dire || 0);
-            // v0.7.51: green for the team with more kills, red for
-            // the one with fewer.  Tied → both neutral.  Sign is
-            // also encoded in the colour, but the numeric value
-            // remains unambiguous so colour-blind users can still
-            // see who's ahead from the numbers alone.
-            const rCls = r > d ? " r-ahead" : (r < d ? " r-behind" : "");
-            const dCls = d > r ? " d-ahead" : (d < r ? " d-behind" : "");
-            return `<span class="r${rCls}">${c.live_score.radiant}</span><span class="sep">:</span><span class="d${dCls}">${c.live_score.dire}</span>`;
-          })()}</div>
-          <div class="live-clock">⏱ ${fmtClock(c.game_time)}</div>
+          ${/* v0.7.54: series score is the headline (DLTV-style) —
+              big number in the centre, leader highlighted.  The
+              in-game kill score moves to a labelled "Игра N" row
+              underneath so the two numbers can't be confused. */""}
+          <div class="live-series-head ${seriesTied ? "tied" : (radiantLeads ? "r-leads" : "d-leads")}">
+            <span class="lss-label">серия</span>
+            <span class="lss-score">${c.series_score_a}<span class="sep">–</span>${c.series_score_b}</span>
+            ${seriesTied ? "" : `<span class="lss-who">${radiantLeads ? c.radiant_team.name : c.dire_team.name} ведёт</span>`}
+          </div>
+          ${c.live_score ? `<div class="live-game-row">
+            <span class="lgr-label">игра ${c.game_no}</span>
+            <span class="live-score">${(() => {
+              const r = Number(c.live_score?.radiant || 0);
+              const d = Number(c.live_score?.dire || 0);
+              // v0.7.51: green for the team with more kills, red for
+              // the one with fewer.  Tied → both neutral.  Sign is
+              // also encoded in the colour, but the numeric value
+              // remains unambiguous so colour-blind users can still
+              // see who's ahead from the numbers alone.
+              const rCls = r > d ? " r-ahead" : (r < d ? " r-behind" : "");
+              const dCls = d > r ? " d-ahead" : (d < r ? " d-behind" : "");
+              return `<span class="r${rCls}">${c.live_score.radiant}</span><span class="sep">:</span><span class="d${dCls}">${c.live_score.dire}</span>`;
+            })()}</span>
+            <span class="lgr-clock">⏱ ${fmtClock(c.game_time)}</span>
+          </div>` : ""}
           ${goldLine}
           ${towerLine}
-          <div class="live-series-score ${seriesTied ? "tied" : (radiantLeads ? "r-leads" : "d-leads")}">серия ${c.series_score_a}–${c.series_score_b}${seriesTied ? "" : " · " + (radiantLeads ? c.radiant_team.name : c.dire_team.name) + " ведёт"}</div>
         </div>
         ${sideBlock(c.dire_team, draft.dire_picks, draft.dire_bans, "dire", direLeads)}
       </div>

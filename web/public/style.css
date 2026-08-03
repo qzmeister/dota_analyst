@@ -438,6 +438,71 @@ body {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 4px; min-width: 90px;
 }
+/* v0.7.54: series score is the headline.  Big number in the
+   centre, leader highlighted, "серия" label above.  This matches
+   the DLTV layout (where the big centre number is the series
+   score, not the in-game kill count) so the two numbers can't be
+   confused for each other. */
+.live-center .live-series-head {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  margin-bottom: 2px;
+}
+.live-center .lss-label {
+  font-size: 9px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .6px;
+}
+.live-center .lss-score {
+  font-size: 22px; font-weight: 800; line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.live-center .lss-score .sep { color: var(--muted); margin: 0 3px; font-size: 16px; font-weight: 600; }
+.live-center .lss-who {
+  font-size: 10px; color: var(--muted);
+  font-weight: 600; letter-spacing: .2px;
+}
+/* v0.7.50 → v0.7.54: when one side leads the series, paint the
+   series score green so the centre column reads "the leader is
+   on this side" without the user having to memorise the a/b
+   mapping.  The team-name itself is also painted green on its
+   side-block (see `.side-block-name.leading`). */
+.live-center .live-series-head.r-leads .lss-score,
+.live-center .live-series-head.d-leads .lss-score,
+.live-center .live-series-head.r-leads .lss-who,
+.live-center .live-series-head.d-leads .lss-who {
+  color: #3ddc84;
+}
+.live-center .live-series-head.tied .lss-score { color: var(--text); }
+/* v0.7.54: in-game kill score is a labelled secondary row below
+   the series score.  Subtle background pill so it reads as
+   "extra info" rather than competing with the series headline. */
+.live-center .live-game-row {
+  display: flex; align-items: baseline; gap: 6px;
+  font-size: 12px; margin-top: 4px;
+  padding: 2px 8px;
+  background: rgba(255, 255, 255, .04);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.live-center .lgr-label {
+  font-size: 9px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .4px;
+  font-weight: 700;
+}
+.live-center .lgr-clock {
+  font-size: 11px; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.live-center .live-game-row .live-score {
+  font-size: 14px; font-weight: 700;
+  margin: 0;
+}
+.live-center .live-game-row .live-score .sep {
+  font-size: 11px; margin: 0 3px;
+}
+/* Legacy aliases — kept so anything in the wild that still
+   references the old class names doesn't break.  The new markup
+   uses `.live-series-head` / `.live-game-row` exclusively. */
 .live-center .live-score { margin: 0; font-size: 22px; }
 .live-center .live-clock {
   font-size: 12px; color: var(--muted);
@@ -447,11 +512,6 @@ body {
   font-size: 10px; color: var(--muted);
   text-transform: uppercase; letter-spacing: .3px;
 }
-/* v0.7.50: when one side leads the series, paint the series-score
-   line green too so the whole centre column reads "the leader is
-   on this side" without the user having to memorise the a/b
-   mapping.  The team-name itself is also painted green on its
-   side-block (see `.side-block-name.leading`). */
 .live-center .live-series-score.r-leads,
 .live-center .live-series-score.d-leads {
   color: #3ddc84;

@@ -273,6 +273,25 @@ body {
   display: flex; align-items: center; gap: 6px;
   font-size: 13px; font-weight: 700; color: var(--text);
 }
+/* v0.7.50: green-highlight the team that's leading the series
+   (DLTV-style: easy to spot who's up at a glance).  Sits on top of
+   the existing `radiant` / `dire` colour so the leading-side
+   border colour isn't overridden. */
+.side-block-name.leading {
+  color: #3ddc84;
+}
+.side-block-name.leading .series-lead-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(61, 220, 132, .18);
+  color: #3ddc84;
+  margin-left: 2px;
+  border: 1px solid rgba(61, 220, 132, .35);
+}
 .side-block-name img, .side-block-name .team-logo-placeholder {
   width: 22px; height: 22px; border-radius: 4px;
   object-fit: contain; background: var(--bg-elev);
@@ -365,6 +384,19 @@ body {
 .live-center .live-series-score {
   font-size: 10px; color: var(--muted);
   text-transform: uppercase; letter-spacing: .3px;
+}
+/* v0.7.50: when one side leads the series, paint the series-score
+   line green too so the whole centre column reads "the leader is
+   on this side" without the user having to memorise the a/b
+   mapping.  The team-name itself is also painted green on its
+   side-block (see `.side-block-name.leading`). */
+.live-center .live-series-score.r-leads,
+.live-center .live-series-score.d-leads {
+  color: #3ddc84;
+  font-weight: 600;
+}
+.live-center .live-series-score.tied {
+  color: var(--muted);
 }
 .live-center .live-gold {
   text-align: center; font-size: 12px;

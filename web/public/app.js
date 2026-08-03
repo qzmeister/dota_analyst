@@ -631,7 +631,19 @@ function liveCard(c) {
   // collapse — always visible) so the user can see what was taken
   // away without clicking a toggle.  Smaller + desaturated to keep
   // the visual hierarchy clear (picks > bans).
-  const sideBlock = (team, picks, bans, sideClass) => {
+  // v0.7.50: highlight the team that's leading the series.  The
+  // card has `series_score_a` (radiant's wins) and `series_score_b`
+  // (dire's wins).  When one side is ahead, colour that side's
+  // name green and add a "ведёт" badge — DLTV's colour-coded dots
+  // are easier to read at a glance than the bare "серия 0-1" text
+  // (user feedback 2026-08-03: "надо смотреть на предыдущие карты,
+  // чтобы понимать какая команда ведёт" — fix that friction).
+  const sa = Number(c.series_score_a || 0);
+  const sb = Number(c.series_score_b || 0);
+  const radiantLeads = sa > sb;
+  const direLeads    = sb > sa;
+  const seriesTied   = sa === sb;
+  const sideBlock = (team, picks, bans, sideClass, isLeading) => {
     const heroCells = (picks || []).map((h) => {
       const inner = h.image
         ? `<img src="${h.image}" title="${h.name || ""}" onerror="this.parentNode.innerHTML='<div class=ph>${h.name || "?"}</div>'"/>`
@@ -650,8 +662,15 @@ function liveCard(c) {
     const banRow = (bans || []).length === 0
       ? ""
       : `<div class="side-block-bans-label">BANS</div><div class="side-block-bans">${banCells}</div>`;
+    // Mark the leading side with a `leading` class (CSS paints the
+    // name in green) and append a small "ведёт" badge.  For tied
+    // series we don't paint anything — both names stay neutral.
+    const leadingCls = isLeading ? " leading" : "";
+    const leadingBadge = isLeading
+      ? `<span class="series-lead-badge" title="Лидирует в серии ${sa}–${sb}">ведёт</span>`
+      : "";
     return `<div class="side-block ${sideClass}">
-      <div class="side-block-name">${teamLogo(team)} <span>${team.name}</span></div>
+      <div class="side-block-name${leadingCls}">${teamLogo(team)} <span>${team.name}</span>${leadingBadge}</div>
       <div class="side-block-heroes">${heroCells}${ph}</div>
       ${banRow}
     </div>`;
@@ -660,15 +679,15 @@ function liveCard(c) {
     <div class="card live-card">
       <div class="event"><span>${c.event} · Игра ${c.game_no}</span><span class="bo-tag">${c.bo}</span></div>
       <div class="live-header">
-        ${sideBlock(c.radiant_team, draft.radiant_picks, draft.radiant_bans, "radiant")}
+        ${sideBlock(c.radiant_team, draft.radiant_picks, draft.radiant_bans, "radiant", radiantLeads)}
         <div class="live-center">
           <div class="live-score"><span class="r">${c.live_score.radiant}</span><span class="sep">:</span><span class="d">${c.live_score.dire}</span></div>
           <div class="live-clock">⏱ ${fmtClock(c.game_time)}</div>
           ${goldLine}
           ${towerLine}
-          <div class="live-series-score">серия ${c.series_score_a}–${c.series_score_b}</div>
+          <div class="live-series-score ${seriesTied ? "tied" : (radiantLeads ? "r-leads" : "d-leads")}">серия ${c.series_score_a}–${c.series_score_b}${seriesTied ? "" : " · " + (radiantLeads ? c.radiant_team.name : c.dire_team.name) + " ведёт"}</div>
         </div>
-        ${sideBlock(c.dire_team, draft.dire_picks, draft.dire_bans, "dire")}
+        ${sideBlock(c.dire_team, draft.dire_picks, draft.dire_bans, "dire", direLeads)}
       </div>
 
       <div class="pred">

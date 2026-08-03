@@ -522,20 +522,22 @@ def _discover_premium_leagues(cookies: Dict[str, str], take: int,
 
 def _fetch_league_standings(cookies: Dict[str, str], league_id: int
                              ) -> Optional[Dict[str, Any]]:
-    """Query a single league's standings (teams that participated
-    + their prize).  Returns {id, name, tier, prizePool, standings: [...]}
-    or None on failure.
+    """Query a single league and return both standings (if any)
+    AND match-derived team participation.
 
-    v0.7.33: from the v0.7.32 probe (LeagueType + TeamPrizeType
-    introspection) we now know:
-      - standings takes NO args (args: [])
-      - TeamPrizeType field for prize is `prizeAmount` (Float),
-        NOT `prize` (which doesn't exist)
-      - teamId is correct as-is
-    So the right query is just:
-      { league(id: X) { ... standings { teamId prizeAmount } } }
-    No try-multiple-variants needed any more.
+    v0.7.42: v0.7.41 showed Stratz.com UI has 16 teams listed
+    for The International 2025 but the GraphQL `standings` field
+    returns an empty array for that league.  The teams shown in
+    the UI are sourced from `matches` (each match has
+    radiantTeamId/direTeamId) or `nodeGroups` (bracket structure).
+
+    New strategy: try standings first, then falls back to matches
+    if standings is empty.  Returns:
+      {id, name, tier, prizePool, standings: [...],
+       team_ids_from_matches: [int, ...]}
+    so the caller can pick whichever signal is richer.
     """
+    # First: try standings (the v0.7.33 path)
     q = (
         f'{{ league(id: {league_id}) {{ '
         f'id name displayName tier prizePool '
@@ -543,25 +545,61 @@ def _fetch_league_standings(cookies: Dict[str, str], league_id: int
         f'}}}}'
     )
     r = _post_raw_with_retry(q, cookies)
-    if r.status_code != 200:
-        print(f"    league({league_id}): HTTP {r.status_code} "
-              f"-- {r.text[:200]}", file=sys.stderr)
-        return None
-    try:
-        payload = r.json()
-    except Exception as exc:
-        print(f"    league({league_id}): parse failed: {exc}",
+    league: Optional[Dict[str, Any]] = None
+    if r.status_code == 200:
+        try:
+            payload = r.json()
+        except Exception:
+            payload = None
+        if payload and not payload.get("errors"):
+            league = (payload.get("data") or {}).get("league")
+
+    if not league:
+        print(f"    league({league_id}): standings query failed",
               file=sys.stderr)
         return None
-    if "errors" in payload and payload["errors"]:
-        for e in payload["errors"][:2]:
-            print(f"    league({league_id}): GQL error: "
-                  f"{e.get('message', '?')[:200]}", file=sys.stderr)
-        return None
-    league = (payload.get("data") or {}).get("league")
-    if not league:
-        print(f"    league({league_id}): league is null", file=sys.stderr)
-        return None
+
+    # If standings came back non-empty, we're done.
+    if league.get("standings"):
+        league["team_ids_from_matches"] = []
+        return league
+
+    # Standings empty -- try matches(request: { take: 1000 }).
+    # LeagueMatchesRequestType probably takes { take, skip, ... }.
+    # Stratz may not backfill `standings` for new leagues
+    # but `matches` is always populated.
+    q2 = (
+        f'{{ league(id: {league_id}) {{ '
+        f'matches(request: {{ take: 1000 }}) '
+        f'{{ id radiantTeamId direTeamId didRadiantWin }} '
+        f'}}}}'
+    )
+    r2 = _post_raw_with_retry(q2, cookies)
+    if r2.status_code != 200:
+        print(f"    league({league_id}): matches fallback also failed "
+              f"(HTTP {r2.status_code})", file=sys.stderr)
+        league["team_ids_from_matches"] = []
+        return league
+    try:
+        payload2 = r2.json()
+    except Exception:
+        payload2 = None
+    if not payload2 or payload2.get("errors"):
+        league["team_ids_from_matches"] = []
+        return league
+
+    matches = (((payload2.get("data") or {}).get("league") or {})
+                .get("matches") or [])
+    team_ids: List[int] = []
+    for m in matches:
+        for k in ("radiantTeamId", "direTeamId"):
+            tid = m.get(k)
+            if tid is not None and tid not in team_ids:
+                team_ids.append(int(tid))
+    league["team_ids_from_matches"] = team_ids
+    print(f"    league({league_id}) {league.get('displayName') or '?':<35s}  "
+          f"standings=[], matches -> {len(team_ids)} unique teamIds",
+          file=sys.stderr)
     return league
 
 
@@ -697,12 +735,39 @@ def dump_premium_teams(cookies: Dict[str, str], limit: int,
             "startDateTime": league.get("startDateTime"),
         }
         s_list = standings.get("standings") or []
-        # v0.7.41: if the league has no standings, count it.
-        if not s_list:
+        # v0.7.42: if standings is empty but matches gave us
+        # team_ids_from_matches, use those as a fallback signal
+        # (no prize, but at least we know the team played in the
+        # league).
+        team_ids_from_matches = standings.get("team_ids_from_matches") or []
+        if not s_list and not team_ids_from_matches:
             print(f"    league({lid}) {league_info['name'][:30]}: "
-                  f"standings is empty (Stratz may not have it yet)",
+                  f"no standings AND no matches -- skipped",
                   file=sys.stderr)
             no_standings_leagues += 1
+            time.sleep(TEAM_CHUNK_SLEEP_SEC)
+            continue
+        if not s_list and team_ids_from_matches:
+            # Use match-derived team list.  No prize info, but
+            # we still credit the team with "played in this
+            # league" and tag total_prize as 0.
+            for tid in team_ids_from_matches:
+                entry = team_data.setdefault(tid, {
+                    "leagues": [],
+                    "total_prize": 0,
+                    "max_tier": None,
+                    "max_tier_ordinal": -1,
+                })
+                entry["leagues"].append({
+                    **league_info,
+                    "prizeAmount": 0,
+                    "from_matches": True,
+                })
+                tier = league_info["tier"]
+                ord_ = TIER_ORDER.get(tier, -1)
+                if ord_ > entry["max_tier_ordinal"]:
+                    entry["max_tier_ordinal"] = ord_
+                    entry["max_tier"] = tier
             time.sleep(TEAM_CHUNK_SLEEP_SEC)
             continue
         for s in s_list:

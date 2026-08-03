@@ -247,6 +247,21 @@ body {
 .live-score .r { color: var(--radiant); }
 .live-score .d { color: var(--dire); }
 .live-score .sep { color: var(--muted); margin: 0 6px; font-size: 14px; }
+/* v0.7.51: live score ahead/behind.  Green when the side has
+   more kills than the other, faded-red when it has fewer.
+   Keeps the original radiant/dire hue so the user still knows
+   which side is which — we just layer a semantic tint on top
+   via opacity + colour. */
+.live-score .r.r-ahead,
+.live-score .d.d-ahead {
+  color: #3ddc84;
+  text-shadow: 0 0 8px rgba(61, 220, 132, .35);
+}
+.live-score .r.r-behind,
+.live-score .d.d-behind {
+  opacity: .55;
+  color: #ff6b6b;
+}
 
 /* v0.3.24h: live card DLTV-style layout — three columns: team
    side (name + 5 hero icons), center (kills / clock / gold), team
@@ -269,6 +284,29 @@ body {
 }
 .live-header .side-block.radiant { border-color: rgba(255, 184, 0, .35); }
 .live-header .side-block.dire    { border-color: rgba(180, 60, 60, .35); }
+/* v0.7.51: hero win-rate delta badge.  Sits in the top-right
+   corner of each hero icon.  Positive delta is green (this
+   hero carries the team past 50% baseline), negative is red.
+   We use a small uppercase "pp" suffix so the unit is
+   immediately clear without having to read the tooltip. */
+.hero { position: relative; }
+.hero-wr-badge {
+  position: absolute;
+  top: 2px; right: 2px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  letter-spacing: .3px;
+  pointer-events: auto;
+  z-index: 2;
+  background: rgba(0, 0, 0, .65);
+  border: 1px solid transparent;
+}
+.hero-wr-badge.wr-pos { color: #3ddc84; border-color: rgba(61, 220, 132, .55); }
+.hero-wr-badge.wr-neg { color: #ff6b6b; border-color: rgba(255, 107, 107, .55); }
+
 .side-block-name {
   display: flex; align-items: center; gap: 6px;
   font-size: 13px; font-weight: 700; color: var(--text);
@@ -482,8 +520,26 @@ body {
 .pbox .pval { font-size: 15px; font-weight: 700; margin-top: 2px; }
 .pbox .psub { font-size: 11px; color: var(--muted); }
 
-.winbar { height: 8px; border-radius: 4px; background: var(--dire); overflow: hidden; margin-top: 6px; }
-.winbar > div { height: 100%; background: var(--radiant); }
+.winbar { height: 8px; border-radius: 4px; background: var(--dire); overflow: hidden; margin-top: 6px; position: relative; }
+.winbar > div { height: 100%; }
+/* v0.7.51: confidence-coloured winbar.  The fill is one of three
+   colour bands (red/orange low, yellow medium, green high) based
+   on how far `pr` is from 50% — the wider the gap, the more
+   confident the model is, and the more saturated the colour.
+   This replaces the previous "always radiant-green" bar so a
+   50.5/49.5 prediction no longer looks just as confident as a
+   75/25 one. */
+.winbar.conf-low .winbar-fill  { background: #ff6b6b; }
+.winbar.conf-med .winbar-fill  { background: #f0b840; }
+.winbar.conf-high .winbar-fill { background: #3ddc84; box-shadow: 0 0 6px rgba(61, 220, 132, .45); }
+/* `winbar-track` is a faint overlay to mark the 50% pivot so
+   the user can see at a glance how far each side has to go to
+   the next 25pp band. */
+.winbar .winbar-track {
+  position: absolute; top: 0; bottom: 0; left: 50%;
+  width: 1px; background: rgba(255, 255, 255, .22);
+  pointer-events: none;
+}
 .winrow { display: flex; justify-content: space-between; font-size: 11px; margin-top: 4px; }
 .tag-level { padding: 1px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; }
 .lvl-High { background: rgba(248,81,73,.2); color: var(--dire); }

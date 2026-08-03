@@ -359,7 +359,27 @@ function heroIcon(h, cls = "") {
   const playerLine = pn
     ? `<div class="hero-player" data-country="${pc || ""}">${pn}</div>`
     : "";
-  return `<div class="hero ${cls}">${inner}${playerLine}</div>`;
+  // v0.7.51: win-rate delta badge.  The backend's `win_rate` is
+  // the hero's overall pick-rate win% in the DLTV dataset; 50%
+  // is the baseline.  We surface the delta in percentage points
+  // (pp) on the corner of the icon so the user can see at a
+  // glance which side of the draft the model rates higher.
+  // Colour-coded: green when positive, red when negative, with
+  // sign shown explicitly (UI never relies on colour alone for
+  // sign — accessibility).  Hidden for heroes without a
+  // computed win_rate (e.g. the very newest heroes).
+  let deltaBadge = "";
+  const wr = Number(h.win_rate);
+  if (Number.isFinite(wr) && wr > 0) {
+    const pp = (wr - 50);
+    if (Math.abs(pp) >= 0.5) {
+      const sign = pp > 0 ? "+" : "−";
+      const cls2 = pp > 0 ? "wr-pos" : "wr-neg";
+      const title = `Win rate ${wr.toFixed(1)}% (baseline 50%, delta ${sign}${Math.abs(pp).toFixed(1)}pp)`;
+      deltaBadge = `<div class="hero-wr-badge ${cls2}" title="${title}">${sign}${Math.abs(pp).toFixed(1)}pp</div>`;
+    }
+  }
+  return `<div class="hero ${cls}">${inner}${playerLine}${deltaBadge}</div>`;
 }
 function fmtDate(iso) {
   if (!iso) return "";
@@ -681,7 +701,18 @@ function liveCard(c) {
       <div class="live-header">
         ${sideBlock(c.radiant_team, draft.radiant_picks, draft.radiant_bans, "radiant", radiantLeads)}
         <div class="live-center">
-          <div class="live-score"><span class="r">${c.live_score.radiant}</span><span class="sep">:</span><span class="d">${c.live_score.dire}</span></div>
+          <div class="live-score">${(() => {
+            const r = Number(c.live_score?.radiant || 0);
+            const d = Number(c.live_score?.dire || 0);
+            // v0.7.51: green for the team with more kills, red for
+            // the one with fewer.  Tied → both neutral.  Sign is
+            // also encoded in the colour, but the numeric value
+            // remains unambiguous so colour-blind users can still
+            // see who's ahead from the numbers alone.
+            const rCls = r > d ? " r-ahead" : (r < d ? " r-behind" : "");
+            const dCls = d > r ? " d-ahead" : (d < r ? " d-behind" : "");
+            return `<span class="r${rCls}">${c.live_score.radiant}</span><span class="sep">:</span><span class="d${dCls}">${c.live_score.dire}</span>`;
+          })()}</div>
           <div class="live-clock">⏱ ${fmtClock(c.game_time)}</div>
           ${goldLine}
           ${towerLine}
@@ -694,8 +725,27 @@ function liveCard(c) {
         <div class="pbox full">
           <div class="plabel">Победитель</div>
           <div class="pval">${w.team || "—"} · ${w.probability ?? "—"}%</div>
-          <div class="winbar"><div style="width:${pr}%"></div></div>
-          <div class="winrow"><span class="r">${c.radiant_team.name} ${pr}%</span><span class="d">${100 - pr}% ${c.dire_team.name}</span></div>
+          ${(() => {
+            // v0.7.51: confidence bar — paint the winbar fill in a
+            // colour band that reflects how strong the prediction
+            // is, not just the radiant share.  We measure confidence
+            // as `|pr - 50|` so a 75/25 split is "strong" (~25
+            // confidence) and a 51/49 is "weak" (~1).  Three
+            // bands: low (red/orange), medium (yellow), high
+            // (green).  The fill is split into a "for" segment
+            // (radiant) and an "against" segment (dire) so the
+            // user can see both sides at a glance.
+            const confidence = Math.abs(Number(pr) - 50);
+            let confCls = "conf-low";
+            if (confidence >= 20)      confCls = "conf-high";
+            else if (confidence >= 10) confCls = "conf-med";
+            const confLabel = confidence >= 20 ? "высокая" : (confidence >= 10 ? "средняя" : "низкая");
+            return `<div class="winbar ${confCls}" title="Уверенность: ${confLabel} (${confidence.toFixed(0)}pp от 50%)">
+              <div class="winbar-fill" style="width:${pr}%"></div>
+              <div class="winbar-track"></div>
+            </div>
+            <div class="winrow"><span class="r">${c.radiant_team.name} ${pr}%</span><span class="d">${100 - pr}% ${c.dire_team.name}</span></div>`;
+          })()}
         </div>
         <div class="pbox">
           <div class="plabel">Киллы (потенциал)</div>

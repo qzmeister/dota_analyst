@@ -199,6 +199,20 @@ def probe(cookies: Dict[str, str]) -> None:
          '{ league(id: 17508) { id tier standings(request: { take: 100 }) { teamId prize } } }'),
         ("league(id:17508) standings(request: { take: 100, skip: 0 }) variant 3",
          '{ league(id: 17508) { id tier standings(request: { take: 100, skip: 0 }) { teamId prize } } }'),
+        # ---- Phase 4 (v0.7.43): the user provided a Stratz UI
+        # screenshot for The International 2025 showing 16 teams
+        # in the "Команды" section.  The API `standings` field
+        # returns [] for that league.  Need to find the right
+        # shape to query matches / nodeGroups / tables.
+        ("LeagueMatchesRequestType (args for league.matches)",
+         '{ __type(name: "LeagueMatchesRequestType") { inputFields { '
+         'name type { name kind ofType { name kind ofType { name } } } } } }'),
+        ("LeagueNodeGroupType (what's in nodeGroups)",
+         '{ __type(name: "LeagueNodeGroupType") { fields { name type { name kind ofType { name } } } } }'),
+        ("LeagueTableType (what's in tables)",
+         '{ __type(name: "LeagueTableType") { fields { name type { name kind ofType { name } } } } }'),
+        ("league(18324) matches(request: { take: 50 }) sanity",
+         '{ league(id: 18324) { id matches(request: { take: 50 }) { id radiantTeamId } } }'),
     ]
     all_results: Dict[str, Any] = {}
     for label, q in queries:

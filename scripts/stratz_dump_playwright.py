@@ -565,6 +565,33 @@ def _fetch_league_standings(cookies: Dict[str, str], league_id: int
     return league
 
 
+def _save_partial(team_data: Dict[int, Dict[str, Any]],
+                  leagues: List[Dict[str, Any]], progress: int) -> None:
+    """v0.7.40: write a .partial.json dump so a Stratz SSLError
+    or ConnectTimeout doesn't lose the whole run.  Replaced
+    on the next partial save (overwrite).  Final dump overwrites
+    it with a sorted, integer-total_prize version.
+    """
+    out = Path(__file__).resolve().parent / "stratz_premium_teams.partial.json"
+    enriched = []
+    for tid, d in team_data.items():
+        enriched.append({
+            "team_id": tid,
+            "premium_leagues_count": len(d["leagues"]),
+            "max_tier": d["max_tier"],
+            "total_prize": int(round(d["total_prize"])),
+            "leagues": d["leagues"],
+        })
+    enriched.sort(key=lambda r: (-r["premium_leagues_count"],
+                                  -r["total_prize"]))
+    out.write_text(json.dumps(
+        {"progress_leagues": progress,
+         "total_leagues": len(leagues),
+         "teams": enriched},
+        indent=2, default=str), encoding="utf-8")
+    print(f"    [partial save] {len(enriched)} teams after {progress}/{len(leagues)} leagues -> {out.name}")
+
+
 def dump_premium_teams(cookies: Dict[str, str], limit: int,
                         min_months_ago: int = 0,
                         min_prize_pool: int = 0) -> None:
@@ -689,6 +716,14 @@ def dump_premium_teams(cookies: Dict[str, str], limit: int,
                 entry["max_tier"] = tier
         if i % 10 == 0 and i > 0:
             print(f"    [{i}/{len(leagues)}]  teams={len(team_data)}")
+        # v0.7.40: incremental save every 5 leagues so a crash
+        # (Stratz SSLError / ConnectTimeout) doesn't lose the
+        # whole run.  Save format is the same enriched list
+        # but written to a .partial.json next to the final
+        # output file.  If the run completes, we overwrite the
+        # final file and remove the partial.
+        if (i + 1) % 5 == 0 and i > 0 and team_data:
+            _save_partial(team_data, leagues, i + 1)
         time.sleep(TEAM_CHUNK_SLEEP_SEC)
     if not team_data:
         print("  no team data aggregated; check standings probe output")
@@ -720,6 +755,11 @@ def dump_premium_teams(cookies: Dict[str, str], limit: int,
                    encoding="utf-8")
     print(f"  saved {len(enriched)} teams to {out}")
     print(f"  file size: {out.stat().st_size / 1024:.1f} KB")
+    # v0.7.40: clean up the partial file on success
+    partial = out.parent / "stratz_premium_teams.partial.json"
+    if partial.exists():
+        partial.unlink()
+        print(f"  removed partial {partial.name}")
     _print_premium_top(out, top_n=20)
 
 
@@ -764,19 +804,18 @@ def _post_raw(query: str, cookies: Dict[str, str]) -> requests.Response:
     for k, v in cookies.items():
         sess.cookies.set(k, v)
     body = json.dumps({"query": query})
-    return sess.post(ENDPOINT, data=body, timeout=60)
+    return sess.post(ENDPOINT, data=body, timeout=90)
 
 
 def _post_raw_with_retry(query: str, cookies: Dict[str, str],
-                          max_retries: int = 4) -> requests.Response:
+                          max_retries: int = 6) -> requests.Response:
     """v0.7.24: same as _post_raw but retries on 429 / rate
     limit with exponential backoff (1s -> 2s -> 4s -> 8s).
 
-    The Stratz free tier is 30 req/min.  540 teams / 5 per
-    chunk = 108 chunks at TEAM_CHUNK_SLEEP_SEC = 1.0s already
-    pushes us to ~50-60 req/min during the actual dump, so a
-    few 429s are likely.  Better to wait and retry than to
-    fail the whole run.
+    v0.7.40: bumped max_retries 4 -> 6 and the timeout 60 -> 90
+    because v0.7.39 saw 4 consecutive ConnectTimeout errors
+    that the previous retry budget couldn't recover from.
+    Backoff: 1, 2, 4, 8, 16, 32 seconds.
     """
     last_exc: Optional[Exception] = None
     for attempt in range(max_retries + 1):

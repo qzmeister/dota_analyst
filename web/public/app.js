@@ -379,7 +379,22 @@ function heroIcon(h, cls = "") {
       deltaBadge = `<div class="hero-wr-badge ${cls2}" title="${title}">${sign}${Math.abs(pp).toFixed(1)}pp</div>`;
     }
   }
-  return `<div class="hero ${cls}">${inner}${playerLine}${deltaBadge}</div>`;
+  // v0.7.55: per-(player, hero) stats.  Backend ships
+  // `player_games` + `player_wr` when the player+hero combo is in
+  // our 5k-match corpus.  Rendered as a red "N | X%" badge in the
+  // bottom-right corner, matching DLTV's player card.  Skip when
+  // either field is missing OR the sample size is too small to be
+  // meaningful (< 2 games).
+  let playerStatsBadge = "";
+  const pg = Number(h.player_games);
+  const pwr = Number(h.player_wr);
+  if (Number.isFinite(pg) && pg >= 2 && Number.isFinite(pwr)) {
+    const pct = (pwr * 100).toFixed(0);
+    const sampleNote = pg < 5 ? " (мало игр — ориентируйся осторожно)" : "";
+    const title = `${h.player_name || "Игрок"} на ${h.name || "герое"}: ${pg} игр, ${pct}% побед в нашем корпусе full_matches.${sampleNote}`;
+    playerStatsBadge = `<div class="hero-player-stats" title="${title}">${pg} | ${pct}%</div>`;
+  }
+  return `<div class="hero ${cls}">${inner}${playerLine}${deltaBadge}${playerStatsBadge}</div>`;
 }
 function fmtDate(iso) {
   if (!iso) return "";
@@ -747,25 +762,38 @@ function liveCard(c) {
           <div class="plabel">Победитель</div>
           <div class="pval">${w.team || "—"} · ${w.probability ?? "—"}%</div>
           ${(() => {
-            // v0.7.51: confidence bar — paint the winbar fill in a
-            // colour band that reflects how strong the prediction
-            // is, not just the radiant share.  We measure confidence
-            // as `|pr - 50|` so a 75/25 split is "strong" (~25
-            // confidence) and a 51/49 is "weak" (~1).  Three
-            // bands: low (red/orange), medium (yellow), high
-            // (green).  The fill is split into a "for" segment
-            // (radiant) and an "against" segment (dire) so the
-            // user can see both sides at a glance.
+            // v0.7.55: prediction bar (winbar) and confidence bar
+            // are now two SEPARATE elements.  v0.7.51 had the
+            // confidence painted as the fill colour of the winbar,
+            // but the two concepts got visually fused — the user
+            // saw a red bar and read it as "model picks Dire", not
+            // "model is uncertain".  Splitting them lets the winbar
+            // read predictably (red side = dire, green side =
+            // radiant, regardless of confidence) and the confidence
+            // bar sits underneath as a separate, colour-coded
+            // strength indicator.
+            //
+            // Confidence is still `|pr - 50|` in pp; same three
+            // bands (low < 10, med 10..20, high >= 20).
             const confidence = Math.abs(Number(pr) - 50);
             let confCls = "conf-low";
             if (confidence >= 20)      confCls = "conf-high";
             else if (confidence >= 10) confCls = "conf-med";
             const confLabel = confidence >= 20 ? "высокая" : (confidence >= 10 ? "средняя" : "низкая");
-            return `<div class="winbar ${confCls}">
+            // Confidence fill width is a linear 0..30 pp → 0..100%
+            // bar so the visual length also conveys strength, not
+            // just the colour band.
+            const confPct = Math.min(100, Math.round((confidence / 30) * 100));
+            return `<div class="winbar">
               <div class="winbar-fill" style="width:${pr}%"></div>
               <div class="winbar-track"></div>
             </div>
-            <div class="winrow" title="Уверенность: ${confLabel} (${confidence.toFixed(0)}pp от 50%)"><span class="r">${c.radiant_team.name} ${pr}%</span><span class="d">${100 - pr}% ${c.dire_team.name}</span></div>`;
+            <div class="winrow" title="Уверенность: ${confLabel} (${confidence.toFixed(0)}pp от 50%)"><span class="r">${c.radiant_team.name} ${pr}%</span><span class="d">${100 - pr}% ${c.dire_team.name}</span></div>
+            <div class="conf-bar ${confCls}" title="Уверенность модели: ${confLabel} (${confidence.toFixed(0)}pp от равного 50/50)">
+              <span class="conf-bar-label">уверенность</span>
+              <span class="conf-bar-track"><span class="conf-bar-fill" style="width:${confPct}%"></span></span>
+              <span class="conf-bar-text">${confLabel} · ${confidence.toFixed(0)}pp</span>
+            </div>`;
           })()}
         </div>
         <div class="pbox">

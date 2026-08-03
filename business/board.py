@@ -223,6 +223,23 @@ def _hero_card(hero: Optional[Dict], hero_id: Optional[int],
         out["player_slug"] = player_slug
     if player_country:
         out["player_country"] = player_country
+    # v0.7.55: per-(player, hero) stats from `player_hero_stats`.
+    # Looked up by the same `player_name` (lowercased inside the
+    # module) and the hero's steam id (which is `hero_id` in our
+    # card — both DLTV and full_matches use the valve_id namespace).
+    # Returns `player_games` + `player_wr` (0..1) so the UI can
+    # render a DLTV-style "N | X%" badge next to the win-rate
+    # delta.  Coverage depends on the corpus; missing pairs simply
+    # omit both fields.
+    try:
+        from . import player_hero_stats as _phs  # type: ignore
+        stats = _phs.get(player_name, hero_id)
+    except Exception:
+        stats = None
+    if stats:
+        games, _wins, wr = stats
+        out["player_games"] = int(games)
+        out["player_wr"] = round(float(wr), 4)
     return out
 
 

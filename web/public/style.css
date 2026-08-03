@@ -306,6 +306,28 @@ body {
 }
 .hero-wr-badge.wr-pos { color: #3ddc84; border-color: rgba(61, 220, 132, .55); }
 .hero-wr-badge.wr-neg { color: #ff6b6b; border-color: rgba(255, 107, 107, .55); }
+/* v0.7.55: per-(player, hero) stats — "N | X%" DLTV-style badge.
+   Red background, white text, sits in the bottom-right of the
+   hero icon.  We deliberately use the same red as DLTV (not
+   green/red by win rate) because the badge is informational,
+   not directional — it's "how often does this player win on
+   this hero" not "is this hero good". */
+.hero-player-stats {
+  position: absolute;
+  bottom: 2px; right: 2px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  letter-spacing: .3px;
+  pointer-events: auto;
+  z-index: 2;
+  background: rgba(220, 38, 38, .92);     /* tailwind red-600-ish */
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, .18);
+  font-variant-numeric: tabular-nums;
+}
 
 .side-block-name {
   display: flex; align-items: center; gap: 6px;
@@ -606,16 +628,13 @@ body {
 
 .winbar { height: 8px; border-radius: 4px; background: var(--dire); overflow: hidden; margin-top: 6px; position: relative; }
 .winbar > div { height: 100%; }
-/* v0.7.51: confidence-coloured winbar.  The fill is one of three
-   colour bands (red/orange low, yellow medium, green high) based
-   on how far `pr` is from 50% — the wider the gap, the more
-   confident the model is, and the more saturated the colour.
-   This replaces the previous "always radiant-green" bar so a
-   50.5/49.5 prediction no longer looks just as confident as a
-   75/25 one. */
-.winbar.conf-low .winbar-fill  { background: #ff6b6b; }
-.winbar.conf-med .winbar-fill  { background: #f0b840; }
-.winbar.conf-high .winbar-fill { background: #3ddc84; box-shadow: 0 0 6px rgba(61, 220, 132, .45); }
+/* v0.7.55: the winbar is now strictly about the prediction split
+   (left = radiant %, right = dire %).  The confidence signal has
+   been moved to its own .conf-bar element below the winrow so the
+   two ideas stop competing for the same visual surface.  We
+   keep a neutral green fill so the bar reads predictably as
+   "radiant share" without any conf-tinting on top. */
+.winbar .winbar-fill { background: linear-gradient(90deg, var(--radiant) 0%, var(--radiant) 100%); }
 /* `winbar-track` is a faint overlay to mark the 50% pivot so
    the user can see at a glance how far each side has to go to
    the next 25pp band. */
@@ -623,6 +642,39 @@ body {
   position: absolute; top: 0; bottom: 0; left: 50%;
   width: 1px; background: rgba(255, 255, 255, .22);
   pointer-events: none;
+}
+/* v0.7.55: separate confidence bar.  Three colour bands (red
+   low, yellow med, green high) on the fill, plus a small label
+   on the left ("уверенность") and a text readout on the right
+   ("низкая · 4pp").  Sits in a 4px-tall track under the
+   winrow so it doesn't compete with the prediction bar. */
+.conf-bar {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 4px; font-size: 10px; line-height: 1;
+}
+.conf-bar-label {
+  color: var(--muted); text-transform: uppercase;
+  letter-spacing: .3px; font-weight: 600; flex-shrink: 0;
+}
+.conf-bar-track {
+  flex: 1; height: 4px; border-radius: 2px;
+  background: rgba(255, 255, 255, .08);
+  position: relative; overflow: hidden;
+}
+.conf-bar-fill {
+  display: block; height: 100%;
+  border-radius: 2px;
+  transition: width .25s ease;
+}
+.conf-bar.conf-low  .conf-bar-fill { background: #ff6b6b; }
+.conf-bar.conf-med  .conf-bar-fill { background: #f0b840; }
+.conf-bar.conf-high .conf-bar-fill {
+  background: #3ddc84;
+  box-shadow: 0 0 6px rgba(61, 220, 132, .45);
+}
+.conf-bar-text {
+  color: var(--muted); font-weight: 600;
+  font-variant-numeric: tabular-nums; flex-shrink: 0;
 }
 /* v0.7.53: winrow text readability.
    The bar is red on conf-low (|pr-50|<10) which left white text

@@ -16,9 +16,11 @@ Endpoints (called by the gateway, not by browsers):
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Dict, List
 
 from fastapi import FastAPI, Query
@@ -303,6 +305,15 @@ def get_leagues():
       - match counts derived from `_latest_auto_board` (no extra
         upstream work — the publisher did it for us).
 
+    v0.7.47: when DLTV's `/api/v1/events` is blocked (Cloudflare,
+    network) and `client.get_events()` returns [], fall back to a
+    pre-built local cache at `ml_data/imports/leagues_cache.json`.
+    The cache is built from the v17_match corpus (3403 matches,
+    32 unique leagues with `tier` classification) and is refreshed
+    by `scripts/build_leagues_cache.py` whenever new match files
+    land in the corpus.  This keeps the picker populated during
+    DLTV outages so the user can still filter.
+
     Leagues that have zero live/prematch/postmatch cards in the
     current auto-board still appear in the response with
     `match_count: 0` — the UI greys them out so the user knows
@@ -313,6 +324,26 @@ def get_leagues():
         events = client.get_events() or []
     except (DLTVError, HTTPClientError, UpstreamError):
         events = []
+
+    # v0.7.47: DLTV is blocked from this server's IP (Cloudflare).
+    # client.get_events() returns [] → empty picker.  Fall back to
+    # the on-disk cache so the user at least sees the 32 leagues
+    # we've actually trained on.  Once DLTV is reachable again the
+    # live `events` list takes over (it's a strictly larger set).
+    if not events:
+        cache_path = Path(__file__).resolve().parent.parent / "ml_data" / "imports" / "leagues_cache.json"
+        if cache_path.is_file():
+            try:
+                cached = json.loads(cache_path.read_text(encoding="utf-8"))
+                events = [
+                    {"id": L["id"], "title": L["title"], "is_active": L.get("is_active", True)}
+                    for L in cached
+                    if L.get("id") and L.get("title")
+                ]
+                log.info("leagues: DLTV returned empty; loaded %d leagues from %s",
+                         len(events), cache_path)
+            except Exception as exc:
+                log.warning("leagues: failed to load fallback cache %s: %s", cache_path, exc)
 
     # Per-league match count from the publisher's last board.
     counts: Dict[int, int] = {}

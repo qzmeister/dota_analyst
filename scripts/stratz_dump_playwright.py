@@ -578,13 +578,16 @@ def _fetch_league_standings(cookies: Dict[str, str], league_id: int
         league["team_ids_from_matches"] = []
         return league
 
-    # Standings empty -- try matches(request: { take: 1000 }).
-    # LeagueMatchesRequestType probably takes { take, skip, ... }.
-    # Stratz may not backfill `standings` for new leagues
-    # but `matches` is always populated.
+    # Standings empty -- try matches(request: { take, skip }).
+    # v0.7.44: from the v0.7.43 probe we know LeagueMatchesRequestType
+    # requires BOTH `take: Int!` AND `skip: Int!` (both NON_NULL).
+    # The first attempt with just `take: 1000` returned HTTP 400
+    # "Missing required field 'skip' of type 'Int'".
+    # Stratz may not backfill `standings` for new leagues but
+    # `matches` is always populated.
     q2 = (
         f'{{ league(id: {league_id}) {{ '
-        f'matches(request: {{ take: 1000 }}) '
+        f'matches(request: {{ take: 1000, skip: 0 }}) '
         f'{{ id radiantTeamId direTeamId didRadiantWin }} '
         f'}}}}'
     )

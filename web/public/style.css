@@ -330,6 +330,30 @@ body {
   margin-left: 2px;
   border: 1px solid rgba(61, 220, 132, .35);
 }
+/* v0.7.52: explicit RADIANT / DIRE label next to the team name.
+   Colour-matched to the side (radiant = amber, dire = red) so
+   the user can spot layout / data mismatches against DLTV
+   quickly — if the label says RADIANT but DLTV shows the team
+   on the right, something's stale in the /live cache. */
+.side-block-name .side-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .5px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-left: auto;
+  text-transform: uppercase;
+}
+.side-label-radiant {
+  background: rgba(255, 184, 0, .14);
+  color: var(--radiant);
+  border: 1px solid rgba(255, 184, 0, .35);
+}
+.side-label-dire {
+  background: rgba(255, 92, 92, .14);
+  color: var(--dire);
+  border: 1px solid rgba(255, 92, 92, .35);
+}
 .side-block-name img, .side-block-name .team-logo-placeholder {
   width: 22px; height: 22px; border-radius: 4px;
   object-fit: contain; background: var(--bg-elev);

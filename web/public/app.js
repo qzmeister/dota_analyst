@@ -682,6 +682,16 @@ function liveCard(c) {
     const banRow = (bans || []).length === 0
       ? ""
       : `<div class="side-block-bans-label">BANS</div><div class="side-block-bans">${banCells}</div>`;
+    // v0.7.52: explicit side label (RADIANT / DIRE) so the user
+    // can see at a glance which team is on which side of the
+    // map — DLTV's layout puts Radiant on the LEFT and Dire on
+    // the RIGHT, and our card does the same, but if the /live
+    // data has the wrong radiant_team_id for the current game
+    // (e.g. stale cache from before a side-swap) the layout
+    // will be misleading.  The label is colour-matched to the
+    // side (radiant = yellow, dire = red) so the user can spot
+    // the mismatch against the DLTV page they have open.
+    const sideLabel = sideClass === "radiant" ? "RADIANT" : "DIRE";
     // Mark the leading side with a `leading` class (CSS paints the
     // name in green) and append a small "ведёт" badge.  For tied
     // series we don't paint anything — both names stay neutral.
@@ -690,7 +700,7 @@ function liveCard(c) {
       ? `<span class="series-lead-badge" title="Лидирует в серии ${sa}–${sb}">ведёт</span>`
       : "";
     return `<div class="side-block ${sideClass}">
-      <div class="side-block-name${leadingCls}">${teamLogo(team)} <span>${team.name}</span>${leadingBadge}</div>
+      <div class="side-block-name${leadingCls}">${teamLogo(team)} <span>${team.name}</span>${leadingBadge}<span class="side-label side-label-${sideClass}">${sideLabel}</span></div>
       <div class="side-block-heroes">${heroCells}${ph}</div>
       ${banRow}
     </div>`;

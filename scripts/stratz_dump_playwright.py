@@ -605,18 +605,58 @@ def _fetch_league_standings(cookies: Dict[str, str], league_id: int
         league["team_ids_from_matches"] = []
         return league
 
-    matches = (((payload2.get("data") or {}).get("league") or {})
-                .get("matches") or [])
+    matches_data = ((payload2.get("data") or {}).get("league") or {})
+    matches = matches_data.get("matches") or []
+    # v0.7.45: diagnose empty matches -- is it [] or a GraphQL error
+    # we silenced, or did the schema change?
+    if not matches:
+        # Print the raw shape for one sample to stderr so we can see
+        # whether the field is just [] or there's something deeper.
+        sample = {k: v for k, v in matches_data.items() if k != "standings"}
+        print(f"    league({league_id}) {league.get('displayName') or '?':<35s}  "
+              f"matches=[], keys={list(matches_data.keys())}",
+              file=sys.stderr)
     team_ids: List[int] = []
     for m in matches:
         for k in ("radiantTeamId", "direTeamId"):
             tid = m.get(k)
             if tid is not None and tid not in team_ids:
                 team_ids.append(int(tid))
+
+    # v0.7.45: third fallback -- `tables(calculateTypeId: WIN)
+    # { tableTeams { ... } }`.  This was the field hinted at in
+    # the v0.7.43 probe (LeagueTableType has tableTeams).
+    # tables takes args: leagueStageTypeIds + calculateTypeId.
+    if not team_ids:
+        q3 = (
+            f'{{ league(id: {league_id}) {{ '
+            f'tables(calculateTypeId: WIN) '
+            f'{{ tableTeams {{ teamId }} }} '
+            f'}}}}'
+        )
+        r3 = _post_raw_with_retry(q3, cookies)
+        if r3.status_code == 200:
+            try:
+                payload3 = r3.json()
+            except Exception:
+                payload3 = None
+            if payload3 and not payload3.get("errors"):
+                tables_data = ((payload3.get("data") or {}).get("league") or {})
+                tables_obj = tables_data.get("tables") or {}
+                table_teams = tables_obj.get("tableTeams") or []
+                print(f"    league({league_id}) {league.get('displayName') or '?':<35s}  "
+                      f"matches=0, tables.tableTeams={len(table_teams)}",
+                      file=sys.stderr)
+                for t in table_teams:
+                    tid = t.get("teamId")
+                    if tid is not None and tid not in team_ids:
+                        team_ids.append(int(tid))
+
     league["team_ids_from_matches"] = team_ids
-    print(f"    league({league_id}) {league.get('displayName') or '?':<35s}  "
-          f"standings=[], matches -> {len(team_ids)} unique teamIds",
-          file=sys.stderr)
+    if team_ids:
+        print(f"    league({league_id}) {league.get('displayName') or '?':<35s}  "
+              f"-> {len(team_ids)} unique teamIds (from matches/tables)",
+              file=sys.stderr)
     return league
 
 

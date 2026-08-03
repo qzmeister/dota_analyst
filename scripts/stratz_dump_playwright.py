@@ -675,6 +675,7 @@ def dump_premium_teams(cookies: Dict[str, str], limit: int,
     if len(leagues) > 10:
         print(f"    ... and {len(leagues) - 10} more")
     team_data: Dict[int, Dict[str, Any]] = {}
+    no_standings_leagues = 0  # v0.7.41: track leagues with no standings
     for i, league in enumerate(leagues):
         lid = league.get("id")
         if lid is None:
@@ -682,6 +683,9 @@ def dump_premium_teams(cookies: Dict[str, str], limit: int,
         standings = _fetch_league_standings(cookies, int(lid))
         if not standings:
             # League may be private, ended without standings, etc.
+            # v0.7.41: count this as a no-data league so the
+            # post-run summary is honest about coverage.
+            no_standings_leagues += 1
             time.sleep(TEAM_CHUNK_SLEEP_SEC)
             continue
         league_info = {
@@ -693,6 +697,14 @@ def dump_premium_teams(cookies: Dict[str, str], limit: int,
             "startDateTime": league.get("startDateTime"),
         }
         s_list = standings.get("standings") or []
+        # v0.7.41: if the league has no standings, count it.
+        if not s_list:
+            print(f"    league({lid}) {league_info['name'][:30]}: "
+                  f"standings is empty (Stratz may not have it yet)",
+                  file=sys.stderr)
+            no_standings_leagues += 1
+            time.sleep(TEAM_CHUNK_SLEEP_SEC)
+            continue
         for s in s_list:
             if not s or s.get("teamId") is None:
                 continue
@@ -726,7 +738,10 @@ def dump_premium_teams(cookies: Dict[str, str], limit: int,
             _save_partial(team_data, leagues, i + 1)
         time.sleep(TEAM_CHUNK_SLEEP_SEC)
     if not team_data:
-        print("  no team data aggregated; check standings probe output")
+        print(f"  no team data aggregated after {len(leagues)} leagues "
+              f"({no_standings_leagues} had no standings). "
+              f"Likely Stratz hasn't populated standings for the "
+              f"recent tournaments yet.")
         return
     enriched: List[Dict[str, Any]] = []
     for tid, d in team_data.items():

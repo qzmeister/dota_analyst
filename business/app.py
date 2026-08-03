@@ -231,7 +231,8 @@ async def _lifespan(app: FastAPI):
     # interval — change with `ODDS_LIVE_POLL_SEC`.
     from . import odds_live
     odds_live.start_poller()
-    log.info("odds_live poller started (background thread, interval=%.1fs)",
+    log.info("odds_live poller started (backend=%s, interval=%.1fs)",
+             os.environ.get("ODDS_BACKEND", "stub"),
              odds_live.POLL_INTERVAL_SEC)
 
     try:
@@ -518,9 +519,16 @@ def _filter_auto_board(
     allowed = set(int(x) for x in (event_ids or []))
     watch_set = set(int(x) for x in (watch_ids or []))
     has_filter = bool(allowed) or bool(watch_set)
-    # If the user has no filter at all, return the auto-board as-is
-    # (already a public-shaped dict).
-    if not has_filter:
+    # v0.7.46: drop steam-only cards *unconditionally* (not just when
+    # the user has narrowed the board).  The previous short-circuit
+    # `if not has_filter: return dict(auto)` let 5 minor Chinese
+    # league cards (steam-18959 / 17924 / 19479 / 19924 / 18867 etc.)
+    # leak into the default unfiltered board — they're synth'd by
+    # `_steam_game_to_series` when DLTV has no /live/{id}.json entry,
+    # they never have a resolvable `event_id`, and the user explicitly
+    # asked not to see them.  We only ever skip this when the user has
+    # zero filter AND the global flag is off.
+    if not has_filter and not LIVE_HIDE_STEAM_ONLY:
         return dict(auto)
 
     def _keep(card: Dict[str, Any]) -> bool:
@@ -549,10 +557,16 @@ def _filter_auto_board(
         # No event_id (steam-only / unmapped scraper card): drop when
         # the user has narrowed the board.  This matches the strict
         # live filter in build_board() so server-side filtering and
-        # a fresh build behave identically.
-        if eid is None:
+        # a fresh build behave identically.  v0.7.46: in the
+        # *unfiltered* branch (LIVE_HIDE_STEAM_ONLY forced us through
+        # here), keep eid=None cards so legit unmapped pro matches
+        # still surface — the steam-only path is already covered by
+        # the explicit check above.
+        if eid is None and has_filter:
             return False
-        return int(eid) in allowed
+        if has_filter:
+            return int(eid) in allowed
+        return True
 
     return {
         "prematch": [c for c in (auto.get("prematch") or []) if _keep(c)],

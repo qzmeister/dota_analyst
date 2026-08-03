@@ -1,6 +1,13 @@
 "use strict";
 
-const API = "";
+// v0.7.46: when running without Docker (python -m uvicorn business.app:app
+// on :8000 + python -m http.server for the frontend on :8080), the
+// API lives on a different origin, so we point at it explicitly.
+// In Docker compose the nginx reverse proxy serves both on :80
+// and `const API = ""` was correct.  Keep the explicit host for
+// the no-Docker dev path; switch back to "" for compose if you
+// want nginx passthrough.
+const API = "http://localhost:8000";
 const LS_KEY = "dota_analyst_leagues";
 const LS_WATCH = "dota_analyst_watchlist";
 const LS_THEME = "dota_analyst_theme";

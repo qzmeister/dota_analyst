@@ -405,34 +405,7 @@ async def _run_session() -> None:
                     if not evt:
                         continue
                     channel = evt.get("channel") or ""
-                    # v0.7.48-debug: surface `__nd2_match_*` payloads
-                    # so we can see whether DLTV is actually pushing
-                    # live match state.  Throttled to once / 30s so it
-                    # doesn't flood the log on chatty matches.
                     if channel.startswith("__nd2_match_"):
-                        global _last_match_log_ts
-                        try:
-                            _last_match_log_ts
-                        except NameError:
-                            _last_match_log_ts = 0.0
-                        now = _now()
-                        if now - _last_match_log_ts >= 30.0:
-                            _last_match_log_ts = now
-                            try:
-                                sid_dbg = int(channel.rsplit("_", 1)[-1])
-                            except (ValueError, IndexError):
-                                sid_dbg = 0
-                            args_dbg = evt.get("args") or []
-                            pl_dbg = args_dbg[0] if args_dbg else {}
-                            if isinstance(pl_dbg, dict):
-                                log.info(
-                                    "dltv_socket: __nd2_match_%d received "
-                                    "(radiant_score=%s dire_score=%s game_time=%s)",
-                                    sid_dbg,
-                                    pl_dbg.get("radiant_score"),
-                                    pl_dbg.get("dire_score"),
-                                    pl_dbg.get("game_time"),
-                                )
                         try:
                             sid = int(channel.rsplit("_", 1)[-1])
                         except (ValueError, IndexError):

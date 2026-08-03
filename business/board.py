@@ -831,6 +831,49 @@ def _live_card(series: Dict, event_title: str) -> Dict:
     # v0.4.0-fix / bc792fb).  Empty dict is falsy, so the gold-overlay
     # block at the bottom of this function is a no-op when there's
     # nothing to overlay.
+    # v0.7.48: pull the dltv_socket state UP here (before the picks gate)
+    # so it's available for the score/time/lead overlay regardless of
+    # whether `m` already has picks.  Previously this whole block was
+    # gated behind `not m.get("radiant_picks") or m.get("dire_picks")`,
+    # so any post-draft live match (the common case) skipped the socket
+    # overlay entirely — the live card showed the static score from
+    # `/live/{id}.json` (cached, refreshed at most every 5s) instead of
+    # the real-time dltv_socket value (pushed every 1-2s during a live
+    # game).  Symptom: score 12-6 stuck for 30+s while dltv_socket logs
+    # showed radiant_score 7→22.  Now the socket is always the
+    # authoritative source for score/time/lead/nw; the dltv_browser
+    # cache stays as a fallback for picks/bans (which the socket is
+    # missing or unreliable for in late-game).
+    socket_state: Optional[Dict[str, Any]] = None
+    try:
+        from . import dltv_socket as _ds
+        if steam_id_for_lookup is not None:
+            socket_state = _ds.get_live_state(int(steam_id_for_lookup))
+    except Exception:
+        socket_state = None
+    # Apply the socket score/time/lead/nw overlay unconditionally.
+    # v0.7.48: was inside the `not m.get("radiant_picks")` gate, which
+    # skipped it for any post-draft live match.
+    if socket_state is not None:
+        rs = _coerce_int(socket_state.get("radiant_score"))
+        ds_ = _coerce_int(socket_state.get("dire_score"))
+        if rs is not None:
+            m["radiant_score"] = rs
+        if ds_ is not None:
+            m["dire_score"] = ds_
+        gt = _coerce_int(socket_state.get("game_time"))
+        if gt is not None:
+            m["game_time"] = gt
+        rnw = _coerce_int(socket_state.get("radiant_match_nw"))
+        if rnw is not None:
+            m["radiant_networth"] = rnw
+        dnw = _coerce_int(socket_state.get("dire_match_nw"))
+        if dnw is not None:
+            m["dire_networth"] = dnw
+        rl = _coerce_int(socket_state.get("radiant_lead"))
+        if rl is not None:
+            m["gold_lead_radiant"] = rl
+
     cached_state: Dict[str, Any] = {}
     if series_id is not None and not (m.get("radiant_picks") or m.get("dire_picks")):
         # v0.3.24: when the row came from the watchlist / steam fallback
@@ -964,60 +1007,15 @@ def _live_card(series: Dict, event_title: str) -> Dict:
             # the socket REPLACED in spirit, but we keep it around
             # as a slow fallback for picks during pre-pick / SSR
             # hydration).
-            socket_state = None
-            try:
-                from . import dltv_socket as _ds
-                if steam_id_for_lookup is not None:
-                    socket_state = _ds.get_live_state(int(steam_id_for_lookup))
-            except Exception:
-                socket_state = None
-
+            # v0.7.48: socket_state and the score/time/nw/lead overlay
+            # are now applied UPSTREAM (above, before the picks gate) so
+            # the live card gets real-time updates in every state, not
+            # only in the pre-pick phase.  See the new block above the
+            # `cached_state` declaration.  Below only the fast_picks /
+            # db.bans overlays remain, which are still gated because
+            # the socket's `db` payload drops bans once the game starts
+            # (we want the dltv_browser cache to win for bans in late game).
             if socket_state is not None:
-                # Socket is the primary source.  We always overlay
-                # score/time/lead/networth from the socket; the
-                # `cached_state` (dltv_browser) is only used as a
-                # fallback for fields the socket doesn't carry.
-                rs = _coerce_int(socket_state.get("radiant_score"))
-                ds_ = _coerce_int(socket_state.get("dire_score"))
-                if rs is not None:
-                    m["radiant_score"] = rs
-                if ds_ is not None:
-                    m["dire_score"] = ds_
-                gt = _coerce_int(socket_state.get("game_time"))
-                if gt is not None:
-                    m["game_time"] = gt
-                # Networth / lead.  DLTV ships `radiant_match_nw`
-                # and `radiant_lead`; we map to the cache keys the
-                # rest of the code already understands.
-                rnw = _coerce_int(socket_state.get("radiant_match_nw"))
-                if rnw is not None:
-                    m["radiant_networth"] = rnw
-                dnw = _coerce_int(socket_state.get("dire_match_nw"))
-                if dnw is not None:
-                    m["dire_networth"] = dnw
-                rl = _coerce_int(socket_state.get("radiant_lead"))
-                if rl is not None:
-                    m["gold_lead_radiant"] = rl
-                # Fast picks: when the socket has them AND the
-                # local `m` doesn't (e.g. we're between games or
-                # the watchlist adapter is laggy), take them from
-                # the socket.  `_fast_picks_to_map_entries` returns
-                # the same shape as the DLTV `db.first_team.picks`
-                # list, which `_live_card` already knows how to
-                # turn into hero cards via `_picks_to_heroes`.
-                fp = socket_state.get("fast_picks")
-                if isinstance(fp, dict):
-                    is_picks_ended = bool(socket_state.get("is_picks_ended"))
-                    ft_picks = fp.get("first_team") or []
-                    st_picks = fp.get("second_team") or []
-                    if is_picks_ended and (ft_picks or st_picks):
-                        socket_entries = _fast_picks_to_map_entries(
-                            ft_picks, st_picks, m, is_watchlist=is_watchlist
-                        )
-                        if socket_entries is not None:
-                            m["radiant_picks"] = socket_entries["radiant_picks"]
-                            m["dire_picks"]    = socket_entries["dire_picks"]
-                    m["gold_lead_radiant"] = rl
                 # Fast picks: when the socket has them AND the
                 # local `m` doesn't (e.g. we're between games or
                 # the watchlist adapter is laggy), take them from

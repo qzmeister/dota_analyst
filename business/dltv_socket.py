@@ -405,7 +405,34 @@ async def _run_session() -> None:
                     if not evt:
                         continue
                     channel = evt.get("channel") or ""
+                    # v0.7.48-debug: surface `__nd2_match_*` payloads
+                    # so we can see whether DLTV is actually pushing
+                    # live match state.  Throttled to once / 30s so it
+                    # doesn't flood the log on chatty matches.
                     if channel.startswith("__nd2_match_"):
+                        global _last_match_log_ts
+                        try:
+                            _last_match_log_ts
+                        except NameError:
+                            _last_match_log_ts = 0.0
+                        now = _now()
+                        if now - _last_match_log_ts >= 30.0:
+                            _last_match_log_ts = now
+                            try:
+                                sid_dbg = int(channel.rsplit("_", 1)[-1])
+                            except (ValueError, IndexError):
+                                sid_dbg = 0
+                            args_dbg = evt.get("args") or []
+                            pl_dbg = args_dbg[0] if args_dbg else {}
+                            if isinstance(pl_dbg, dict):
+                                log.info(
+                                    "dltv_socket: __nd2_match_%d received "
+                                    "(radiant_score=%s dire_score=%s game_time=%s)",
+                                    sid_dbg,
+                                    pl_dbg.get("radiant_score"),
+                                    pl_dbg.get("dire_score"),
+                                    pl_dbg.get("game_time"),
+                                )
                         try:
                             sid = int(channel.rsplit("_", 1)[-1])
                         except (ValueError, IndexError):
@@ -441,6 +468,12 @@ async def _run_session() -> None:
                                                     "first_is_radiant": bool(first.get("is_radiant")),
                                                 }
                                                 _bans_ts[sid] = _now()
+                                        # v0.7.48: signal the board-builder
+                                        # that live state changed.  Throttled
+                                        # in `_maybe_wake_build` so a chatty
+                                        # match (DLTV pushes every 1-2s)
+                                        # doesn't pile up rebuilds.
+                                        _maybe_wake_build()
                     elif channel == "__nd2_series":
                         # v0.4.0.3: the broadcast channel that pushes
                         # the live / upcoming / results lists.  We
@@ -503,6 +536,13 @@ async def _run_session() -> None:
                                 "live=%d upcoming=%d results=%d",
                                 len(new_live), len(new_upcoming), len(new_results),
                             )
+                            # v0.7.48: the series list (live + upcoming +
+                            # results) is the cheapest authoritative source
+                            # for "is there a new match in town?".  Wake
+                            # the board-builder so a brand-new live match
+                            # shows up in <1s instead of waiting for the
+                            # 5s periodic tick.
+                            _maybe_wake_build()
                 # Loop exited normally (should_stop)
                 return
         except Exception as exc:
@@ -615,6 +655,39 @@ def _socket_watchdog_loop() -> None:
 # subscriptions fresh, slow enough that a chatty publisher
 # doesn't pin us in reconnect loops.
 _FORCE_RECONNECT_MIN_SEC = 30.0
+
+# v0.7.48: throttle the board-builder wake-up.  DLTV pushes
+# `__nd2_match_*` updates every 1-2s during a live game; the
+# publisher's `build_board()` takes ~1-1.5s per call, so firing
+# the wake on every payload would pile up builds.  We cap the
+# wake cadence to once per `WAKE_BUILD_MIN_GAP_SEC`; the wake
+# itself is a single Event.set() so dropping it is free.
+_WAKE_BUILD_MIN_GAP_SEC = 1.0
+_last_wake_build_ts: float = 0.0
+_wake_build_lock = threading.Lock()
+
+
+def _maybe_wake_build() -> None:
+    """Thread-safe wake-up for the board-builder (v0.7.48).
+
+    Called from the socket recv loop after every data-bearing
+    payload.  No-ops if we already fired within the last
+    `_WAKE_BUILD_MIN_GAP_SEC` so a chatty match doesn't pile
+    up builds.  Imports are local so this file remains
+    importable even when `stream.py` is mid-startup.
+    """
+    global _last_wake_build_ts
+    now = _now()
+    with _wake_build_lock:
+        if now - _last_wake_build_ts < _WAKE_BUILD_MIN_GAP_SEC:
+            return
+        _last_wake_build_ts = now
+    try:
+        from .stream import wake_build
+        wake_build()
+    except Exception as exc:
+        # Don't let a missing/broken stream module kill the socket loop.
+        log.debug("dltv_socket: wake_build failed: %s", exc)
 
 
 def force_reconnect() -> None:

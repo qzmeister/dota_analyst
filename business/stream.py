@@ -27,6 +27,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Dict, List, Optional, Set
@@ -94,6 +95,70 @@ class MatchStream:
         self._last_hash: Optional[str] = None
         self._tick_id = 0
         self._lock = asyncio.Lock()
+        # v0.7.48: event-driven push.  `wakeup_event` is set from
+        # any thread (typically the dltv_socket thread after it
+        # receives a new live match or series payload) and consumed
+        # by `wait_for_wakeup()` from the publisher's asyncio loop.
+        # Bound it to the caller's running loop when subscribe() is
+        # first called (set lazily on first await).  Until then it
+        # sits in a "not-bound" state and `wait_for_wakeup()` falls
+        # back to a sleep.
+        self._wakeup_event: Optional[asyncio.Event] = None
+        # v0.7.48: explicit loop ref so threads without their own
+        # asyncio loop (the board-builder thread, dltv_socket
+        # thread) can still schedule `wakeup_event.set()` via
+        # `loop.call_soon_threadsafe()`.  Set by the publisher
+        # during startup.
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Pin the publisher's event loop.  Called once at startup
+        (from `board_publisher_loop` while it's still on the main
+        loop) so other threads can wake the SSE loop without
+        relying on `asyncio.get_running_loop()` (which only works
+        from inside an asyncio context)."""
+        self._loop = loop
+
+    # v0.7.48: thread-safe wake-up.  The dltv_socket thread calls
+    # this when it processes a data-bearing payload so the
+    # publisher loop can stop sleeping and rebuild immediately.
+    # Cheap (just sets an Event flag); coalesced naturally because
+    # the loop will only check the new auto-board once per wake-up
+    # and the next wake is at least `MIN_REBUILD_GAP_SEC` later.
+    def wake_up(self) -> None:
+        evt = self._wakeup_event
+        loop = self._loop
+        if evt is None or loop is None:
+            return  # publisher not started yet — periodic poll catches up
+        try:
+            loop.call_soon_threadsafe(evt.set)
+        except RuntimeError:
+            # Loop is closed (process shutting down) — periodic
+            # poll will catch up on next tick anyway.
+            pass
+
+    async def wait_for_wakeup(self, timeout: float) -> bool:
+        """Async wait for `wake_up()` (or `timeout`).
+
+        Returns True if woke up early, False on timeout.  Always
+        clears the event before returning so the next call waits
+        for a *new* wake-up (we coalesce bursts of payload events
+        into a single rebuild).
+
+        v0.7.48: created lazily on the caller's running loop so
+        the Event is bound to the publisher's main loop, not the
+        thread that first called MatchStream().
+        """
+        if self._wakeup_event is None:
+            self._wakeup_event = asyncio.Event()
+        evt = self._wakeup_event
+        try:
+            await asyncio.wait_for(evt.wait(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
+        finally:
+            evt.clear()
 
     @property
     def subscriber_count(self) -> int:
@@ -199,6 +264,41 @@ def reset_stream() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# v0.7.48: external wake-up for the board-builder thread.
+# --------------------------------------------------------------------------- #
+# The dltv_socket thread calls `wake_build()` after every data-bearing
+# payload (live match state, series list push).  The publisher's
+# `_build_loop` waits on this signal with a 5s timeout, so a payload
+# arriving in real time triggers a near-instant rebuild instead of
+# waiting for the next periodic tick.
+#
+# This is a thread-safe primitive (`threading.Event.set()` is atomic),
+# so it's safe to call from any thread.  We deliberately do NOT call
+# `stream.wake_up()` here — that's the *publish* signal (set by
+# `_build_loop` right after it has updated `_app._latest_auto_board`).
+# Two separate signals: one for "new data, please rebuild", one for
+# "rebuild done, please push SSE".
+
+# Module-level Event used by the publisher loop AND external callers.
+# Defined here (not inside `board_publisher_loop`) so other modules
+# can `set()` it from any thread.
+_BUILDER_WAKE = threading.Event()
+
+
+def wake_build() -> None:
+    """Signal the board-builder thread that new data is available.
+
+    Called by `dltv_socket` after it processes `__nd2_match_*` or
+    `__nd2_series` payloads.  The next `build_board()` run picks up
+    the latest dltv state and publishes the new board via SSE.
+
+    Thread-safe; no-op before the publisher loop has been started
+    (and after it has been stopped).
+    """
+    _BUILDER_WAKE.set()
+
+
+# --------------------------------------------------------------------------- #
 # Background poller — wired in `app.py` startup
 # --------------------------------------------------------------------------- #
 
@@ -243,6 +343,13 @@ async def board_publisher_loop(
 
     log.info("sse publisher loop started; interval=%.1fs", interval_sec)
 
+    # v0.7.48: pin our event loop so non-asyncio threads (build
+    # thread, dltv_socket thread) can wake the SSE side via
+    # `loop.call_soon_threadsafe(wakeup_event.set)`.  Without
+    # this binding, `asyncio.get_running_loop()` from those
+    # threads raises RuntimeError and `wake_up()` silently no-ops.
+    stream.bind_loop(asyncio.get_running_loop())
+
     # v0.4.0-cache: keep the last NON-EMPTY board as a fallback so the UI
     # never blanks out when the publisher build times out / hangs / returns
     # an empty payload.  The publisher thread can take 5-9 minutes per cycle
@@ -262,6 +369,10 @@ async def board_publisher_loop(
         )
 
     _stop = _threading.Event()
+    # v0.7.48: build-thread wake-up uses the module-level
+    # `_BUILDER_WAKE` so external callers (dltv_socket) can
+    # signal it.  Local `_stop` still owns the shutdown signal
+    # so cancelling doesn't depend on a flaky payload path.
 
     def _build_loop() -> None:
         log.info("sse publisher: board-builder thread started")
@@ -351,6 +462,11 @@ async def board_publisher_loop(
                         )
                 except Exception as exc:  # never let socket bugs kill the publisher
                     log.debug("dltv_socket subscribe failed: %s", exc)
+                # v0.7.48: notify the asyncio side that the auto-board
+                # has new content.  The publish loop's `wait_for_wakeup`
+                # returns immediately and ships the latest hash to the
+                # subscribers.
+                stream.wake_up()
             except (BoardBuildError, MLError, DiscoveryError, UpstreamError, InfraError) as exc:
                 log.warning("sse publisher build failed: %s", exc, exc_info=False)
             except Exception as exc:
@@ -359,8 +475,15 @@ async def board_publisher_loop(
                 # publisher.  Without this the SSE clients would keep
                 # getting the same stale auto-board for hours.
                 log.exception("sse publisher build crashed (recovered): %s", exc)
-            # Tick at interval_sec; break early if cancelled.
-            _stop.wait(interval_sec)
+            # v0.7.48: wait for the next tick OR an external wake.
+            # `interval_sec` is the safety net (a stuck dltv_socket
+            # won't starve the publisher forever); `_BUILDER_WAKE`
+            # is the fast path (set by `wake_build()` from any
+            # thread).  Clear after waking so the next call waits
+            # for a *new* signal — bursts of payload events get
+            # coalesced into a single rebuild.
+            _BUILDER_WAKE.wait(interval_sec)
+            _BUILDER_WAKE.clear()
         log.info("sse publisher: board-builder thread stopped")
 
     # v0.4.0.2: watchdog for the board-builder thread.  The thread
@@ -417,20 +540,25 @@ async def board_publisher_loop(
         target=_heartbeat_loop, name="publisher-watchdog", daemon=True
     ).start()
 
-    # The asyncio half just watches the cache and pushes SSE
-    # when something changed.  Sleep `interval_sec` between
-    # checks; the publisher's own throttle (publish_if_changed)
-    # de-dupes unchanged boards.
+    # v0.7.48: the asyncio half waits for `wait_for_wakeup(interval_sec)`
+    # instead of a fixed sleep — `wake_up()` (called by the build
+    # thread right after `_app._latest_auto_board` is updated) breaks
+    # the wait immediately so SSE subscribers see the new board
+    # within milliseconds of a DLTV payload.  The `interval_sec`
+    # timeout stays as a safety net in case `wake_up()` is missed
+    # (event-loop hiccup, missed `call_soon_threadsafe`, etc).
     try:
         while True:
             try:
-                await asyncio.sleep(interval_sec)
+                woke = await stream.wait_for_wakeup(interval_sec)
                 board = _app._latest_auto_board
                 if not board:
                     continue
                 delivered = await stream.publish_if_changed(board)
-                if delivered:
-                    log.debug("sse publish delivered to %d subscribers", delivered)
+                if delivered and not woke:
+                    log.debug("sse publish (poll) delivered to %d subscribers", delivered)
+                elif delivered:
+                    log.debug("sse publish (event) delivered to %d subscribers", delivered)
             except (BoardBuildError, MLError, DiscoveryError, UpstreamError, InfraError) as exc:
                 log.warning("sse publisher tick failed: %s", exc, exc_info=False)
             except Exception as exc:

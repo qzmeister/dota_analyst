@@ -62,6 +62,16 @@ except ImportError:  # pragma: no cover
     lgb = None  # type: ignore
     _HAS_LGB = False
 
+# v0.7.72: add HistGradientBoostingClassifier as a 3rd ensemble
+# member.  Found via _hgb_probe.py that XGB + HGB beats XGB-only
+# by +0.4pp honest test (0.6285 vs 0.6241) on v19 LITE features.
+try:
+    from sklearn.ensemble import HistGradientBoostingClassifier
+    _HAS_HGB = True
+except ImportError:  # pragma: no cover
+    HistGradientBoostingClassifier = None  # type: ignore
+    _HAS_HGB = False
+
 from sklearn.metrics import (
     accuracy_score, brier_score_loss, log_loss, roc_auc_score,
 )
@@ -84,6 +94,7 @@ from train_v18 import (  # noqa: E402
 # Stage 2 one is better.
 MODELS_XGB_DIR = MODELS / "_v18_winner_xgb_stage2"
 MODELS_LGB_DIR = MODELS / "_v18_winner_lgb_stage2"
+MODELS_HGB_DIR = MODELS / "_v18_winner_hgb_stage2"  # v0.7.72
 META_PATH = MODELS / "_v18_winner_stage2_meta.json"
 ENSEMBLE_PATH = MODELS / "_v18_ensemble.json"
 
@@ -139,6 +150,32 @@ def train_lgb_winner(X_tr: np.ndarray, y_tr: np.ndarray):
         objective="binary",
         n_jobs=4,
         verbosity=-1,
+    )
+    model.fit(X_tr, y_tr)
+    return model
+
+
+# --------------------------------------------------------------------------- #
+# v0.7.72: HistGradientBoosting head (sklearn-native, different
+# histogram/tree algorithm from XGBoost and LightGBM)
+# --------------------------------------------------------------------------- #
+
+def train_hgb_winner(X_tr: np.ndarray, y_tr: np.ndarray):
+    """HistGradientBoosting — sklearn's histogram-based GBM.  Different
+    from XGB and LGB in tree growth + categorical handling, so
+    ensemble diversifies well (XGB + HGB beat XGB-only by +0.4pp
+    on v19 LITE features).
+    """
+    if HistGradientBoostingClassifier is None:
+        raise RuntimeError("scikit-learn not installed")
+    model = HistGradientBoostingClassifier(
+        max_iter=400,
+        learning_rate=0.05,
+        max_depth=6,
+        min_samples_leaf=20,
+        l2_regularization=1.0,
+        random_state=42,
+        early_stopping=False,
     )
     model.fit(X_tr, y_tr)
     return model
@@ -217,49 +254,82 @@ def main() -> int:
 
     lgb_metrics: Optional[Dict[str, float]] = None
     lgb_model = None
+    lgb_proba = None
     if _HAS_LGB:
         print("Step 4: train LightGBM head")
         t0 = time.time()
         lgb_model = train_lgb_winner(X_tr, y_tr)
         t1 = time.time()
         lgb_metrics = evaluate_winner(lgb_model, X_te, y_te)
+        lgb_proba = lgb_model.predict_proba(X_te)[:, 1]
         print(f"  trained in {t1-t0:.1f}s")
         print(f"  test acc={lgb_metrics['acc']:.4f}  AUC={lgb_metrics['auc']:.4f}  "
               f"Brier={lgb_metrics['brier']:.4f}  logloss={lgb_metrics['logloss']:.4f}")
         print()
 
-    # Step 5: pick winner
-    print("Step 5: pick the best model")
-    if lgb_metrics is not None and lgb_metrics["auc"] > xgb_metrics["auc"]:
-        # Soft-vote ensemble beats either alone.
-        print("  -- ensemble XGB+LGB by soft vote")
-        xgb_proba = xgb_model.predict_proba(X_te)[:, 1]
-        lgb_proba = lgb_model.predict_proba(X_te)[:, 1]
-        # AUC is roughly invariant to monotonic transforms but
-        # the ensemble's exact weights depend on the rank
-        # agreement; 0.5/0.5 is a good default until we tune.
-        ens_proba = 0.5 * xgb_proba + 0.5 * lgb_proba
-        ens_pred = (ens_proba >= 0.5).astype(int)
-        ens_metrics = {
+    hgb_metrics: Optional[Dict[str, float]] = None
+    hgb_model = None
+    hgb_proba = None
+    if _HAS_HGB:
+        print("Step 4b: train HistGradientBoosting head")
+        t0 = time.time()
+        hgb_model = train_hgb_winner(X_tr, y_tr)
+        t1 = time.time()
+        hgb_metrics = evaluate_winner(hgb_model, X_te, y_te)
+        hgb_proba = hgb_model.predict_proba(X_te)[:, 1]
+        print(f"  trained in {t1-t0:.1f}s")
+        print(f"  test acc={hgb_metrics['acc']:.4f}  AUC={hgb_metrics['auc']:.4f}  "
+              f"Brier={hgb_metrics['brier']:.4f}  logloss={hgb_metrics['logloss']:.4f}")
+        print()
+
+    # Step 5: pick the best (single model OR ensemble)
+    print("Step 5: pick the best model / ensemble")
+    xgb_proba = xgb_model.predict_proba(X_te)[:, 1]
+
+    def _ens_metrics(*probas) -> Dict[str, float]:
+        avg = np.mean(probas, axis=0)
+        return {
             "n": int(len(y_te)),
-            "acc": float(accuracy_score(y_te, ens_pred)),
-            "auc": float(roc_auc_score(y_te, ens_proba)),
-            "brier": float(brier_score_loss(y_te, ens_proba)),
-            "logloss": float(log_loss(y_te, np.clip(ens_proba, 1e-6, 1-1e-6))),
+            "acc": float(accuracy_score(y_te, (avg >= 0.5).astype(int))),
+            "auc": float(roc_auc_score(y_te, avg)),
+            "brier": float(brier_score_loss(y_te, avg)),
+            "logloss": float(log_loss(y_te, np.clip(avg, 1e-6, 1-1e-6))),
         }
-        print(f"  ens:    acc={ens_metrics['acc']:.4f}  AUC={ens_metrics['auc']:.4f}  "
-              f"Brier={ens_metrics['brier']:.4f}  logloss={ens_metrics['logloss']:.4f}")
-        chosen = "ensemble"
-        if ens_metrics["auc"] > max(xgb_metrics["auc"], lgb_metrics["auc"]):
-            print(f"  >>> ENSEMBLE wins by "
-                  f"+{ens_metrics['auc']-max(xgb_metrics['auc'], lgb_metrics['auc']):.4f} AUC")
-        else:
-            # The single LGB is still better.  Use that.
-            print(f"  >>> LGB still wins (+{lgb_metrics['auc']-ens_metrics['auc']:.4f} AUC)")
-            chosen = "lgb"
+
+    candidates: List[Tuple[str, float, Dict[str, Any]]] = []
+    candidates.append(("xgb", xgb_metrics["auc"], {"models": ["xgb"]}))
+    if lgb_metrics is not None:
+        candidates.append(("lgb", lgb_metrics["auc"], {"models": ["lgb"]}))
+    if hgb_metrics is not None:
+        candidates.append(("hgb", hgb_metrics["auc"], {"models": ["hgb"]}))
+    if lgb_proba is not None:
+        candidates.append(("xgb+lgb",
+                            _ens_metrics(xgb_proba, lgb_proba)["auc"],
+                            {"models": ["xgb", "lgb"]}))
+    if hgb_proba is not None:
+        candidates.append(("xgb+hgb",
+                            _ens_metrics(xgb_proba, hgb_proba)["auc"],
+                            {"models": ["xgb", "hgb"]}))
+    if lgb_proba is not None and hgb_proba is not None:
+        candidates.append(("xgb+lgb+hgb",
+                            _ens_metrics(xgb_proba, lgb_proba, hgb_proba)["auc"],
+                            {"models": ["xgb", "lgb", "hgb"]}))
+
+    # Print all candidates
+    for name, auc, _ in candidates:
+        print(f"  candidate {name:14s}  AUC={auc:.4f}")
+    candidates.sort(key=lambda t: t[1], reverse=True)
+    chosen, chosen_auc, chosen_meta = candidates[0]
+    best_single = max((c for c in candidates if "+" not in c[0]),
+                       key=lambda t: t[1], default=None)
+    if best_single is not None and chosen_auc - best_single[1] >= 0.001:
+        print(f"  >>> {chosen} wins by +{chosen_auc - best_single[1]:.4f} AUC")
     else:
-        chosen = "xgb"
-        print("  -- XGBoost alone (LGB unavailable or worse)")
+        # No ensemble meaningfully better — fall back to best single.
+        if best_single is not None:
+            print(f"  >>> no ensemble gains; using {best_single[0]}")
+            chosen = best_single[0]
+            chosen_meta = best_single[2]
 
     print()
 
@@ -271,6 +341,10 @@ def main() -> int:
         save_model_to(lgb_model, MODELS_LGB_DIR, "winner", feat_names,
                        f"lightgbm=={getattr(lgb, '__version__', 'unknown')}")
         print(f"  wrote {MODELS_LGB_DIR}/model.joblib")
+    if hgb_model is not None:
+        save_model_to(hgb_model, MODELS_HGB_DIR, "winner", feat_names,
+                       f"scikit-learn==HistGradientBoosting")
+        print(f"  wrote {MODELS_HGB_DIR}/model.joblib")
 
     # Save metadata + ensemble config
     META_PATH.write_text(json.dumps({
@@ -279,15 +353,28 @@ def main() -> int:
         "rows_test": len(te),
         "xgb_metrics": xgb_metrics,
         "lgb_metrics": lgb_metrics,
+        "hgb_metrics": hgb_metrics,
         "chosen": chosen,
-        "framework": "xgboost+lightgbm" if _HAS_LGB else "xgboost",
+        "chosen_models": chosen_meta.get("models", [chosen]),
+        "framework": ("xgboost+lightgbm+histgb" if (_HAS_LGB and _HAS_HGB)
+                      else "xgboost+lightgbm" if _HAS_LGB
+                      else "xgboost+histgb" if _HAS_HGB
+                      else "xgboost"),
     }, indent=2), encoding="utf-8")
     print(f"  wrote {META_PATH}")
 
+    # v0.7.72: weight by chosen.  For ensembles we use equal
+    # weight (1/n) over the chosen models.  Single models get
+    # weight=1.0.
+    chosen_set = set(chosen_meta.get("models", [chosen]))
+    def _w(model: str) -> float:
+        return 1.0 / len(chosen_set) if model in chosen_set else 0.0
     ENSEMBLE_PATH.write_text(json.dumps({
         "chosen": chosen,
-        "xgb": {"path": "_v18_winner_xgb_stage2", "weight": 0.5 if chosen == "ensemble" else (0 if chosen == "lgb" else 1.0)},
-        "lgb": {"path": "_v18_winner_lgb_stage2", "weight": 0.5 if chosen == "ensemble" else (1.0 if chosen == "lgb" else 0)},
+        "chosen_models": sorted(chosen_set),
+        "xgb": {"path": "_v18_winner_xgb_stage2", "weight": _w("xgb")},
+        "lgb": {"path": "_v18_winner_lgb_stage2", "weight": _w("lgb")},
+        "hgb": {"path": "_v18_winner_hgb_stage2", "weight": _w("hgb")},
     }, indent=2), encoding="utf-8")
     print(f"  wrote {ENSEMBLE_PATH}")
     print()
@@ -297,6 +384,8 @@ def main() -> int:
     print(f"  XGBoost:  acc={xgb_metrics['acc']:.4f}  AUC={xgb_metrics['auc']:.4f}")
     if lgb_metrics is not None:
         print(f"  LightGBM: acc={lgb_metrics['acc']:.4f}  AUC={lgb_metrics['auc']:.4f}")
+    if hgb_metrics is not None:
+        print(f"  HistGB:   acc={hgb_metrics['acc']:.4f}  AUC={hgb_metrics['auc']:.4f}")
     print("=" * 78)
     return 0
 

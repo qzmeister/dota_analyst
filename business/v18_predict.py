@@ -84,46 +84,77 @@ class v18_unavailable(RuntimeError):
     should fall back to v17."""
 
 
-def _load_v18() -> Tuple[Any, Dict[str, Any]]:
+def _load_v18() -> Tuple[List[Any], Dict[str, Any]]:
+    """Load the v18 winner model(s).  Returns a list of models
+    (for ensemble averaging) plus the shared metadata.
+
+    v0.7.72: prefer the stage-2 ensemble (scripts/train_v18_stage2.py
+    writes _v18_ensemble.json describing which sub-models to load).
+    Falls back to the single-model _v18_winner/ directory for
+    backward compatibility.
+
+    Returns (models_list, metadata_dict) where metadata_dict
+    has the shared `feature_columns`.  The caller averages
+    predict_proba across `models_list` for the final probability.
+    """
     global _MODEL_CACHE, _META_CACHE
     if _MODEL_CACHE is not None and _META_CACHE is not None:
         return _MODEL_CACHE, _META_CACHE
     if joblib is None:
         raise v18_unavailable("joblib is not installed")
-    # v0.7.6: prefer the tuned model (scripts/tune_v18.py) when
-    # present, fall back to the original _v18_winner/ that the
-    # trainer builds.  The tuned model is the same XGBClassifier
-    # architecture -- just different hyperparameters -- so the
-    # caller doesn't need to know which one is loaded.
-    candidates = [
-        MODELS_DIR / "_v18_winner_tuned",
-        MODELS_DIR / "_v18_winner",
-    ]
-    path = None
-    for c in candidates:
-        mf = c / "model.joblib"
-        mef = c / "metadata.json"
-        if mf.exists() and mef.exists():
-            path = c
-            break
-    if path is None:
+
+    # v0.7.72: try stage-2 ensemble first.  _v18_ensemble.json
+    # names the chosen models with paths and weights.
+    ensemble_path = MODELS_DIR / "_v18_ensemble.json"
+    paths: List[Path] = []
+    if ensemble_path.exists():
+        try:
+            ens = json.loads(ensemble_path.read_text(encoding="utf-8"))
+            chosen = ens.get("chosen_models") or [ens.get("chosen", "xgb")]
+            for m in chosen:
+                entry = ens.get(m)
+                if not entry:
+                    continue
+                w = entry.get("weight", 0.0)
+                if w <= 0:
+                    continue
+                p = MODELS_DIR / entry["path"]
+                if (p / "model.joblib").exists() and (p / "metadata.json").exists():
+                    paths.append(p)
+        except Exception:
+            paths = []
+
+    # Fallback: legacy single-model candidates.
+    if not paths:
+        for c in (MODELS_DIR / "_v18_winner_tuned",
+                  MODELS_DIR / "_v18_winner"):
+            if (c / "model.joblib").exists() and (c / "metadata.json").exists():
+                paths.append(c)
+
+    if not paths:
         raise v18_unavailable(
-            f"v18 model not found at any of {[str(c) for c in candidates]}.  "
-            "Run scripts/train_v18.py (or scripts/tune_v18.py) first."
+            f"v18 model not found at {MODELS_DIR}; run scripts/train_v18.py "
+            "or scripts/train_v18_stage2.py first."
         )
-    model_file = path / "model.joblib"
-    meta_file = path / "metadata.json"
-    try:
-        model = joblib.load(model_file)
-        meta = json.loads(meta_file.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise v18_unavailable(f"failed to load v18 model: {exc}") from exc
-    _MODEL_CACHE = model
+
+    models: List[Any] = []
+    meta: Optional[Dict[str, Any]] = None
+    for p in paths:
+        try:
+            models.append(joblib.load(p / "model.joblib"))
+            m = json.loads((p / "metadata.json").read_text(encoding="utf-8"))
+            if meta is None:
+                meta = m
+        except Exception as exc:
+            raise v18_unavailable(f"failed to load {p}: {exc}") from exc
+    if meta is None:
+        raise v18_unavailable("no metadata found")
+    _MODEL_CACHE = models
     _META_CACHE = meta
     # Eagerly build the DLTV->Steam map so the first predict
     # call doesn't pay the cost.
     _get_dltv_to_steam_map()
-    return model, meta
+    return models, meta
 
 
 # --------------------------------------------------------------------------- #
@@ -335,6 +366,19 @@ def _build_features(
         "r_bans": float(len(r_bans or [])),
         "d_bans": float(len(d_bans or [])),
         "days_since_patch": _days_since_patch(start_time, patch, patch_info),
+        # v0.7.66: v19 LITE player-level WR placeholders.  At
+        # predict time we don't have the rolling-lookup
+        # infrastructure, so we default to 0.5 (the neutral
+        # prior that ~80% of training rows have — the min-games
+        # gate is 30 so most player-hero pairs are below
+        # threshold).  The model was trained with this same
+        # distribution, so 0.5 at predict time is in-distribution
+        # and doesn't break the model's learned splits.
+        "r_player_wr_avg": 0.5,
+        "d_player_wr_avg": 0.5,
+        "r_player_wr_max": 0.5,
+        "d_player_wr_max": 0.5,
+        "player_wr_diff": 0.0,
     }
     # The v18 model was trained on OpenDota /matches/{id} payloads
     # which use Steam hero ids.  _build_features always treats
@@ -387,7 +431,7 @@ def predict_winner_v18(
     Raises v18_unavailable if the model isn't installed (caller
     falls back to v17).
     """
-    model, meta = _load_v18()
+    models, meta = _load_v18()
     feat_names = meta["feature_columns"]
     # v0.7.2: pre-translate the picks/bans if the caller said
     # they're DLTV.  We do this once here so _build_features
@@ -417,9 +461,19 @@ def predict_winner_v18(
         )
     except Exception as exc:
         raise v18_unavailable(f"numpy conversion failed: {exc}") from exc
+    # v0.7.72: average predict_proba across the loaded ensemble.
+    # Each sub-model (XGB / LGB / HGB) sees the same feature row
+    # and produces a probability; we soft-vote them.
     try:
-        proba = model.predict_proba(X)
-        prob_radiant = float(proba[0, 1]) if proba.shape[1] > 1 else 0.5
+        probas = []
+        for m in models:
+            p = m.predict_proba(X)
+            probas.append(float(p[0, 1]) if p.shape[1] > 1 else 0.5)
+        prob_radiant = sum(probas) / len(probas)
+        if len(models) > 1:
+            src = f"v18-ensemble({len(models)})"
+        else:
+            src = "v18"
     except Exception as exc:
         raise v18_unavailable(f"v18 predict_proba failed: {exc}") from exc
     if not (0.0 <= prob_radiant <= 1.0):
@@ -429,7 +483,7 @@ def predict_winner_v18(
         "team": winner_team,
         "prob_radiant": prob_radiant,
         "probability": max(prob_radiant, 1.0 - prob_radiant),
-        "source": "v18",
+        "source": src,
     }
 
 

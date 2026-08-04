@@ -142,11 +142,10 @@ def _load_v19_features() -> Dict[str, Dict[str, float]]:
     return raw if isinstance(raw, dict) else {}
 
 
-# Names of the 5 v19-lite features; central list so
-# extract_features and the training/eval code stay in sync.
-# v0.7.66 dropped pair synergy + lane matchup (too sparse with
-# 3403 OpenDota matches); kept player-level WR only, with a
-# 30-game gate inside the rolling builder.
+# Names of the v19-lite features.  v0.7.66 was player-WR only
+# (5 features, min_games=30 gate) — gave XGB +0.9pp.  v0.7.67
+# tried gate=15 + mid 1v1 — made the model WORSE (0.6241 ->
+# 0.6138).  Keeping v0.7.66 settings.
 V19_FEATURE_NAMES = (
     "r_player_wr_avg", "d_player_wr_avg",
     "r_player_wr_max", "d_player_wr_max",

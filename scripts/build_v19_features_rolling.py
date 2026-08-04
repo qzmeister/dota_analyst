@@ -61,6 +61,14 @@ MATCHUP_PRIOR = 3
 # v0.7.67, 20 in v0.7.69) both hurt.  30 is the local maximum
 # for the player WR gate in this corpus (3403 OpenDota matches).
 MIN_PLAYER_GAMES = 30
+# v0.7.70: pair / matchup gates (v0.7.66 dropped these entirely
+# because they were too sparse, but the user wants them back as
+# HERO-LEVEL features, separate from player WR).  Gates filter
+# out the sparse keys so they default to 0.5.  Pairs have ~1.4
+# matches avg over 12258 unique keys — min 10 keeps only the
+# "well-seen" pairs.  Mid matchups are even sparser — min 5.
+MIN_PAIR_GAMES = 10
+MIN_MID_GAMES = 5
 
 # OpenDota lane constants (used to derive mid / bot / top slots)
 LANE_TOP = 1
@@ -209,16 +217,13 @@ def _features_for_match(
     feats["d_player_wr_max"] = max(d_wrs) if d_wrs else 0.5
     feats["player_wr_diff"] = r_avg - d_avg
 
-    # v0.7.66: pair synergy and lane matchup were dropped because
-    # they're too sparse (most player-pairs and lane matchups
-    # have 1-3 games, so the smoothed WR is dominated by the
-    # prior 0.5 → 12 near-constant noise features → -4pp honest
-    # test).  v0.7.67 tried adding mid 1v1 back and lowering the
-    # gate to 15 games — both made the model WORSE (0.6241 ->
-    # 0.6138).  v0.7.68 tried mid 1v1 alone (gate still 30) —
-    # also WORSE (0.5874).  v0.7.69 testing gate=20 alone, no
-    # mid.  If that also hurts, v0.7.66 settings are the local
-    # maximum.
+    # v0.7.70: re-add hero-pair and mid matchup as HERO-LEVEL
+    # features (separate from player WR).  Tested with
+    # MIN_PAIR_GAMES=10 / MIN_MID_GAMES=5 — pair is 75-79% active
+    # in the corpus, mid is 15% active — but XGB acc dropped
+    # 0.6241 -> 0.5932 (-3.1pp).  The pair/matchup signal at this
+    # corpus size still adds more noise than signal.  Reverted
+    # to v0.7.66 (player WR only).
 
     return feats
 

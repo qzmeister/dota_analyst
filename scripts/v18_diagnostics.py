@@ -240,9 +240,22 @@ def run_diagnostics(model_dir: Path, limit: Optional[int] = None) -> Dict[str, A
         if feats is None:
             n_errored += 1
             continue
+        # v0.7.60: `extract_features` returns {"feats": {...},
+        # "target_winner": int, ...}.  Unwrap to the inner dict so
+        # feature lookups actually find r_tier / d_premium /
+        # hero one-hots etc.  Earlier versions indexed feats.get(c)
+        # on the outer wrapper and silently fed zeros for every
+        # field — which is why the v0.7.58 diagnostics reported
+        # "all matches are minor-tier" with 0% high-confidence
+        # predictions and 48% accuracy.  With the unwrap, the
+        # real per-match tier/premium/hero flags flow through.
+        feat_map = feats.get("feats") or {}
+        if not feat_map:
+            n_errored += 1
+            continue
         # Build the X vector in the model's expected column order.
         try:
-            x = np.array([[float(feats.get(c, 0.0)) for c in feature_names]], dtype=np.float32)
+            x = np.array([[float(feat_map.get(c, 0.0)) for c in feature_names]], dtype=np.float32)
         except Exception:
             n_errored += 1
             continue
@@ -251,12 +264,7 @@ def run_diagnostics(model_dir: Path, limit: Optional[int] = None) -> Dict[str, A
         except Exception:
             n_errored += 1
             continue
-        actual = 1 if feats.get("__winner") is not None else int(bool(raw.get("radiant_win")))
-        # __winner is set inside extract_features; if missing fall back to raw.
-        if "__winner" in feats:
-            actual = int(feats["__winner"])
-        else:
-            actual = 1 if bool(raw.get("radiant_win")) else 0
+        actual = int(feats.get("target_winner", int(bool(raw.get("radiant_win")))))
 
         actual_arr.append(actual)
         prob_arr.append(prob)
@@ -271,10 +279,10 @@ def run_diagnostics(model_dir: Path, limit: Optional[int] = None) -> Dict[str, A
             duration = int(raw.get("duration") or 0)
         except (TypeError, ValueError):
             duration = 0
-        r_top_team = int(feats.get("r_top_team", 0))
-        d_top_team = int(feats.get("d_top_team", 0))
-        r_premium  = int(feats.get("r_premium", 0))
-        d_premium  = int(feats.get("d_premium", 0))
+        r_top_team = int(feat_map.get("r_top_team", 0))
+        d_top_team = int(feat_map.get("d_top_team", 0))
+        r_premium  = int(feat_map.get("r_premium", 0))
+        d_premium  = int(feat_map.get("d_premium", 0))
 
         by_patch[_patch_bucket(start_time)].append((actual, prob))
         # tier: premium if either side is premium, professional if either is top,
@@ -300,7 +308,7 @@ def run_diagnostics(model_dir: Path, limit: Optional[int] = None) -> Dict[str, A
             "d_top_team": d_top_team,
             "r_premium":  r_premium,
             "d_premium":  d_premium,
-            "days_since_patch": float(feats.get("days_since_patch", 0.0)),
+            "days_since_patch": float(feat_map.get("days_since_patch", 0.0)),
         })
 
     if n_kept == 0:
@@ -419,7 +427,8 @@ def _print_text_summary(r: Dict[str, Any]) -> None:
     for rk in r["biggest_mistakes"][:10]:
         actual_str = "Radiant" if rk["actual"] == 1 else "Dire"
         pred_str   = f"Radiant {rk['prob']:.0%}" if rk["prob"] >= 0.5 else f"Dire {1 - rk['prob']:.0%}"
-        print(f"  match {rk['match_id']:>10}  {pred_str:>16s}  →  {actual_str} won  "
+        # Windows console is cp1251 — avoid Unicode arrows/ellipsis here.
+        print(f"  match {rk['match_id']:>10}  {pred_str:>16s}  ->  {actual_str} won  "
               f"(days_p={rk['days_since_patch']:.1f}, r_top={rk['r_top_team']}, d_top={rk['d_top_team']})")
     print("=" * 70)
 

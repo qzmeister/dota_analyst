@@ -160,19 +160,25 @@ def _score(acc: Dict[int, Dict[str, Any]]) -> List[Dict[str, Any]]:
         })
     # Sort by rating desc.
     out.sort(key=lambda r: -r["rating"])
-    # v0.7.0: require MIN_GAMES (default 10) for any tier above
-    # minor.  Below the threshold the team is treated as minor
-    # regardless of rating -- the win-rate signal is too noisy.
-    # Teams that DO have >= MIN_GAMES are then ranked into the
-    # top 10% / next 30% by rating.
+    # v0.7.60: tier is assigned by PURE RATING PERCENTILE over ALL
+    # 540 teams we've ever seen — no MIN_GAMES gate.  The earlier
+    # v0.7.0 logic (MIN_GAMES=10) silently forced 73% of teams to
+    # tier=0 even when their rating was high (e.g. 8-0 rookies
+    # with rating 1680), which meant the v18 model saw
+    # `r_premium=1` in < 1% of matches and learned that the tier
+    # features were noise.  The new rule:
+    #   * top 10% by rating → premium (tier=2)
+    #   * next 30% → professional (tier=1)
+    #   * bottom 60% → minor (tier=0)
+    # applied to ALL teams.  This gives the model a useful
+    # gradient: ~10% of matches now have r_premium=1, ~40% have
+    # r_top_team=1.  The new `min_games_eligible` flag is
+    # informational only — it's no longer a gate.
     n = len(out)
-    eligible = [r for r in out if (r["wins"] + r["losses"]) >= MIN_GAMES]
-    eligible.sort(key=lambda r: -r["rating"])
-    n_eligible = len(eligible)
-    p10 = int(n_eligible * 0.10)
-    p40 = int(n_eligible * 0.40)
+    p10 = int(n * 0.10)
+    p40 = int(n * 0.40)
     eligible_tiers: Dict[int, int] = {}
-    for i, r in enumerate(eligible):
+    for i, r in enumerate(out):
         if i < p10:
             eligible_tiers[int(r["team_id"])] = 2
         elif i < p40:
@@ -181,8 +187,10 @@ def _score(acc: Dict[int, Dict[str, Any]]) -> List[Dict[str, Any]]:
             eligible_tiers[int(r["team_id"])] = 0
     for r in out:
         tid = int(r["team_id"])
-        r["tier"] = eligible_tiers.get(tid, 0)  # default minor
-        r["tier_percentile"] = None
+        r["tier"] = eligible_tiers.get(tid, 0)
+        # Compute the team's rating percentile for diagnostics.
+        rank = next((i for i, t in enumerate(out) if int(t["team_id"]) == tid), None)
+        r["tier_percentile"] = (1.0 - (rank / max(1, n))) if rank is not None else None
         r["min_games_eligible"] = (r["wins"] + r["losses"]) >= MIN_GAMES
     return out
 

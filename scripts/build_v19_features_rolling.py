@@ -34,7 +34,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from collections import defaultdict
+from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -69,6 +69,14 @@ MIN_PLAYER_GAMES = 30
 # "well-seen" pairs.  Mid matchups are even sparser — min 5.
 MIN_PAIR_GAMES = 10
 MIN_MID_GAMES = 5
+
+# v0.7.71: team-level recent form.  Per-team rolling WR over the
+# last 20 matches.  More samples per team than per-player, so
+# the signal should be smoother.  Gated by min-games to keep
+# cold-start teams at 0.5 (no signal).
+TEAM_RECENT_WINDOW = 20
+MIN_TEAM_GAMES = 5
+TEAM_RECENT_PRIOR = 3
 
 # OpenDota lane constants (used to derive mid / bot / top slots)
 LANE_TOP = 1
@@ -185,6 +193,7 @@ def _features_for_match(
     mid_cache: Dict[Tuple[int, int], Tuple[int, int]],
     bot_cache: Dict[Tuple[int, int, int, int], Tuple[int, int]],
     top_cache: Dict[Tuple[int, int, int, int], Tuple[int, int]],
+    team_cache: Dict[int, deque],
 ) -> Dict[str, float]:
     feats: Dict[str, float] = {}
 
@@ -217,13 +226,16 @@ def _features_for_match(
     feats["d_player_wr_max"] = max(d_wrs) if d_wrs else 0.5
     feats["player_wr_diff"] = r_avg - d_avg
 
-    # v0.7.70: re-add hero-pair and mid matchup as HERO-LEVEL
-    # features (separate from player WR).  Tested with
-    # MIN_PAIR_GAMES=10 / MIN_MID_GAMES=5 — pair is 75-79% active
-    # in the corpus, mid is 15% active — but XGB acc dropped
-    # 0.6241 -> 0.5932 (-3.1pp).  The pair/matchup signal at this
-    # corpus size still adds more noise than signal.  Reverted
-    # to v0.7.66 (player WR only).
+    # v0.7.71: tested team-level recent form (per-team rolling
+    # WR over last 20 matches, 3 features).  Hypothesis: per-
+    # team samples are more abundant than per-player-hero, so
+    # the signal should be smoother.  RESULT: 68% active (vs
+    # 2.3% for player WR), but XGB acc dropped 0.6241 -> 0.6167
+    # (-0.7pp), ensemble 0.6241 -> 0.6123 (-1.2pp).  The team
+    # recent WR is REDUNDANT with the v18 tier features
+    # (r_premium/d_premium already capture team strength at
+    # corpus level), so adding per-team recent WR doesn't add
+    # new signal.  Reverted to v0.7.66 (player WR only).
 
     return feats
 
@@ -246,6 +258,7 @@ def _update_caches(
     mid_cache: Dict[Tuple[int, int], Tuple[int, int]],
     bot_cache: Dict[Tuple[int, int, int, int], Tuple[int, int]],
     top_cache: Dict[Tuple[int, int, int, int], Tuple[int, int]],
+    team_cache: Dict[int, deque],
 ) -> None:
     won = _winner_bool(m)
     if won is None:
@@ -289,6 +302,22 @@ def _update_caches(
         w, g = top_cache.get(h, (0, 0))
         top_cache[h] = (w + target, g + 1)
 
+    # v0.7.71: team recent form — push current result onto each
+    # team's rolling history.  deque(maxlen=TEAM_RECENT_WINDOW)
+    # auto-trims.  Per-team recent WR is read in _features_for_match
+    # BEFORE this update, so the current match's outcome isn't in
+    # the team's own rolling history (no leakage).
+    r_tid = m.get("radiant_team_id")
+    d_tid = m.get("dire_team_id")
+    if r_tid:
+        if r_tid not in team_cache:
+            team_cache[r_tid] = deque(maxlen=TEAM_RECENT_WINDOW)
+        team_cache[r_tid].append(target)
+    if d_tid:
+        if d_tid not in team_cache:
+            team_cache[d_tid] = deque(maxlen=TEAM_RECENT_WINDOW)
+        team_cache[d_tid].append(1 - target)
+
 
 # --------------------------------------------------------------------------- #
 # Main
@@ -303,14 +332,16 @@ def main() -> int:
     mid_cache:    Dict[Tuple[int, int], Tuple[int, int]] = {}
     bot_cache:    Dict[Tuple[int, int, int, int], Tuple[int, int]] = {}
     top_cache:    Dict[Tuple[int, int, int, int], Tuple[int, int]] = {}
+    team_cache:   Dict[int, deque] = {}
 
     out: Dict[str, Dict[str, float]] = {}
     for i, (_st, mid, m) in enumerate(matches):
         feats = _features_for_match(m, player_cache, pair_cache,
-                                    mid_cache, bot_cache, top_cache)
+                                    mid_cache, bot_cache, top_cache,
+                                    team_cache)
         out[str(mid)] = feats
         _update_caches(m, player_cache, pair_cache,
-                       mid_cache, bot_cache, top_cache)
+                       mid_cache, bot_cache, top_cache, team_cache)
         if (i + 1) % 500 == 0:
             print(f"  processed {i+1}/{len(matches)} matches")
 

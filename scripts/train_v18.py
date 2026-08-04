@@ -143,9 +143,9 @@ def _load_v19_features() -> Dict[str, Dict[str, float]]:
 
 
 # Names of the v19-lite features.  v0.7.66 was player-WR only
-# (5 features, min_games=30 gate) — gave XGB +0.9pp.  v0.7.67-70
-# explored adding pair/matchup + various gates — all hurt.  We
-# keep v0.7.66 as the local maximum until we have more corpus.
+# (5 features, min_games=30 gate) — gave XGB +0.9pp.  v0.7.67-71
+# explored adding pair/matchup + team recent form + various
+# gates — all hurt.  We keep v0.7.66 as the local maximum.
 V19_FEATURE_NAMES = (
     "r_player_wr_avg", "d_player_wr_avg",
     "r_player_wr_max", "d_player_wr_max",

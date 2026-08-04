@@ -1320,6 +1320,39 @@ def _live_card(series: Dict, event_title: str) -> Dict:
             log.debug("opendota player_name overlay failed: %s", exc)
 
     # figure out which side each team is on this map
+    # v0.7.56: per-game RADIANT override.  v1 API's
+    # `series.maps[i].radiant_team_id` is the source of truth for
+    # most of the time, but in BO3 / BO5 the sides swap every
+    # game and the v1 response can lag a few seconds behind the
+    # new draft — leaving the previous game's RADIANT assigned
+    # to the wrong team in our card.  Symptom: DLTV shows
+    # Rune Eaters on the LEFT (always RADIANT for them), our
+    # card shows LGD on the LEFT (stale RADIANT from the
+    # previous map).  The DLTV socket's draft-phase payload
+    # carries the authoritative per-game `first_is_radiant`
+    # flag (snapshot in `_bans_cache`); we trust it over the v1
+    # value whenever it's available for this series.  Snapshot
+    # TTL is 4h and updates on every new draft, so by the time
+    # we're rendering the new game's live card the snapshot
+    # already reflects the new side assignment.
+    if first_id is not None and second_id is not None and series_id is not None:
+        try:
+            from . import dltv_socket as _ds
+            _sid = _ds.get_steam_id_for_series(int(series_id))
+            if _sid is not None:
+                _snap = _ds.get_cached_bans(int(_sid))
+                if isinstance(_snap, dict) and "first_is_radiant" in _snap:
+                    _fir = bool(_snap.get("first_is_radiant"))
+                    _new_rtid = int(first_id) if _fir else int(second_id)
+                    if m.get("radiant_team_id") != _new_rtid:
+                        log.debug(
+                            "live card: overriding radiant_team_id %s -> %s "
+                            "(series %s, first_is_radiant=%s)",
+                            m.get("radiant_team_id"), _new_rtid, series_id, _fir,
+                        )
+                        m["radiant_team_id"] = _new_rtid
+        except Exception as exc:  # noqa: BLE001
+            log.debug("live card: radiant_team_id override skipped: %s", exc)
     radiant_is_first = m.get("radiant_team_id") == first_id
     radiant_team = first if radiant_is_first else second
     dire_team = second if radiant_is_first else first

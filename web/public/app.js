@@ -895,6 +895,189 @@ function startStabilityPolling() {
   setInterval(_pollStability, 10_000);
 }
 
+// ---------------- v0.7.58: ML diagnostics modal ----------------
+// Pulls the latest /api/diagnostics/v18 report and renders it as
+// a self-contained modal.  Computed offline by
+// `scripts/v18_diagnostics.py` (cron-once-a-day is enough; the
+// model itself doesn't change between runs).
+function _diagAccClass(acc) {
+  if (acc < 0.5)  return "diag-bar-low";
+  if (acc < 0.55) return "diag-bar-mid";
+  return "diag-bar-ok";
+}
+function _diagFmt(n, d = 3) {
+  if (n == null || Number.isNaN(n)) return "—";
+  return Number(n).toFixed(d);
+}
+function _diagBar(value, max) {
+  // 1px-300px horizontal bar (proportional to value/max).
+  const w = Math.max(1, Math.round((value / Math.max(max, 1e-6)) * 300));
+  return `<span class="diag-bar" style="width:${w}px"></span>`;
+}
+function _diagGroupTable(rows) {
+  if (!rows || !rows.length) return `<div class="diag-empty">нет данных</div>`;
+  const maxAcc = Math.max(0.5, ...rows.map(r => r.acc));
+  return `<table class="diag-table">
+    <thead><tr><th>Группа</th><th class="num">N</th><th class="num">acc</th>
+      <th class="num">log_loss</th><th class="num">brier</th><th></th></tr></thead>
+    <tbody>${rows.map(r => `<tr>
+      <td>${r.label}</td>
+      <td class="num">${r.n}</td>
+      <td class="num">${_diagFmt(r.acc, 4)}</td>
+      <td class="num">${_diagFmt(r.log_loss, 4)}</td>
+      <td class="num">${_diagFmt(r.brier, 4)}</td>
+      <td>${_diagBar(r.acc, maxAcc)}</td>
+    </tr>`).join("")}</tbody>
+  </table>`;
+}
+function _diagCalibration(buckets) {
+  if (!buckets || !buckets.length) return `<div class="diag-empty">нет данных</div>`;
+  return `<table class="diag-table">
+    <thead><tr><th>Предикт</th><th class="num">N</th><th class="num">pred</th>
+      <th class="num">actual</th><th class="num">gap, pp</th></tr></thead>
+    <tbody>${buckets.map(b => {
+      const gapCls = Math.abs(b.gap_pp) < 5 ? "diag-bar-ok"
+                    : Math.abs(b.gap_pp) < 10 ? "diag-bar-mid" : "diag-bar-low";
+      return `<tr>
+        <td>${b.bucket}</td>
+        <td class="num">${b.n}</td>
+        <td class="num">${_diagFmt(b.mean_pred, 3)}</td>
+        <td class="num">${_diagFmt(b.actual_rate, 3)}</td>
+        <td class="num"><span class="${gapCls}">${b.gap_pp > 0 ? "+" : ""}${b.gap_pp}</span></td>
+      </tr>`;
+    }).join("")}</tbody>
+  </table>
+  <div style="font-size:10px;color:var(--muted);margin-top:4px">
+    gap = pred − actual.  Положительный → модель over-confident в сторону Radiant.</div>`;
+}
+function _diagFeatureTable(top) {
+  if (!top || !top.length) return `<div class="diag-empty">нет данных</div>`;
+  const maxGain = top[0].gain || 1;
+  return `<table class="diag-table">
+    <thead><tr><th>Фича</th><th class="num">gain</th><th class="num">weight</th>
+      <th></th></tr></thead>
+    <tbody>${top.map(r => `<tr>
+      <td>${r.feature}</td>
+      <td class="num">${_diagFmt(r.gain, 2)}</td>
+      <td class="num">${r.weight}</td>
+      <td>${_diagBar(r.gain, maxGain)}</td>
+    </tr>`).join("")}</tbody>
+  </table>`;
+}
+function _diagMistakes(rows) {
+  if (!rows || !rows.length) return `<div class="diag-empty">confident wrong predictions не найдены</div>`;
+  const fmt = ts => {
+    if (!ts) return "—";
+    const d = new Date(ts * 1000);
+    return d.toISOString().slice(0, 10);
+  };
+  return `<table class="diag-table">
+    <thead><tr><th>match_id</th><th>предсказание</th><th class="num">actual</th>
+      <th class="num">days_p</th><th>top?</th></tr></thead>
+    <tbody>${rows.map(r => {
+      const predStr = r.prob >= 0.5
+        ? `Radiant ${(r.prob * 100).toFixed(0)}%`
+        : `Dire ${((1 - r.prob) * 100).toFixed(0)}%`;
+      const actualStr = r.actual === 1 ? "Radiant" : "Dire";
+      return `<tr>
+        <td>${r.match_id}</td>
+        <td>${predStr}</td>
+        <td class="num">${actualStr}</td>
+        <td class="num">${_diagFmt(r.days_since_patch, 1)}</td>
+        <td>r=${r.r_top_team} d=${r.d_top_team}</td>
+      </tr>`;
+    }).join("")}</tbody>
+  </table>`;
+}
+function _renderDiagnostics(r) {
+  const o = r.overall || {};
+  const meta = r.model_meta || {};
+  const cb   = o.confidence_buckets || {};
+  const stat = (v, l) => `<div class="diag-stat"><div class="v">${v}</div><div class="l">${l}</div></div>`;
+  const overallHtml = `
+    <div class="diag-grid">
+      ${stat(_diagFmt(o.acc, 4), "accuracy")}
+      ${stat(_diagFmt(o.log_loss, 4), "log loss")}
+      ${stat(_diagFmt(o.brier, 4), "brier")}
+      ${stat(_diagFmt(o.n, 0), "matchей")}
+    </div>
+    <div class="diag-grid">
+      ${stat(_diagFmt(o.radiant_share, 4) + "%", "radiant share (actual)")}
+      ${stat(_diagFmt((cb["high (>0.8 or <0.2)"] || 0) * 100, 1) + "%", "high conf pred")}
+      ${stat(_diagFmt((cb["med  (0.6-0.8 or 0.2-0.4)"] || 0) * 100, 1) + "%", "med conf pred")}
+      ${stat(_diagFmt((cb["low  (0.4-0.6)"] || 0) * 100, 1) + "%", "low conf pred")}
+    </div>`;
+  const fi = r.feature_importance || {};
+  const groupsHtml = (fi.by_group || []).map(g =>
+    `<tr><td>${g.group}</td><td class="num">${_diagFmt(g.total_gain, 2)}</td></tr>`).join("");
+  const headerMeta = `${r.model_dir || "?"} · ${meta.model_class || "?"} · ` +
+    `${meta.n_features || "?"} features · generated ${(r.generated_at || "").slice(0, 19)}Z`;
+  $("diagMeta").textContent = headerMeta;
+  $("diagBody").innerHTML = `
+    <div class="diag-section">
+      <h4>Overall</h4>
+      ${overallHtml}
+    </div>
+    <div class="diag-section">
+      <h4>Feature importance — top 25 (gain)</h4>
+      ${_diagFeatureTable((fi.top || []).slice(0, 25))}
+    </div>
+    <div class="diag-section">
+      <h4>Feature importance — by group</h4>
+      <table class="diag-table">
+        <thead><tr><th>group</th><th class="num">total_gain</th></tr></thead>
+        <tbody>${groupsHtml}</tbody>
+      </table>
+    </div>
+    <div class="diag-section">
+      <h4>Bias — by patch</h4>
+      ${_diagGroupTable((r.bias || {}).by_patch || [])}
+    </div>
+    <div class="diag-section">
+      <h4>Bias — by tier</h4>
+      ${_diagGroupTable((r.bias || {}).by_tier || [])}
+    </div>
+    <div class="diag-section">
+      <h4>Bias — by game duration</h4>
+      ${_diagGroupTable((r.bias || {}).by_duration || [])}
+    </div>
+    <div class="diag-section">
+      <h4>Calibration (10 deciles)</h4>
+      ${_diagCalibration(r.calibration || [])}
+    </div>
+    <div class="diag-section">
+      <h4>Biggest mistakes — top 25 by |prob − 0.5|</h4>
+      ${_diagMistakes((r.biggest_mistakes || []).slice(0, 25))}
+    </div>
+  `;
+}
+async function openDiagnostics() {
+  const modal = $("diagModal");
+  if (!modal) return;
+  modal.classList.remove("hidden");
+  $("diagBody").textContent = "Загрузка…";
+  try {
+    const resp = await fetch(`${API}/api/diagnostics/v18`, { credentials: "same-origin" });
+    if (resp.status === 404) {
+      const j = await resp.json().catch(() => ({}));
+      $("diagBody").innerHTML = `<div class="diag-empty">
+        Диагностика ещё не запускалась. Запустите на сервере:<br><br>
+        <code>python scripts/v18_diagnostics.py</code><br><br>
+        ${j.hint || ""}
+      </div>`;
+      return;
+    }
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    _renderDiagnostics(await resp.json());
+  } catch (e) {
+    $("diagBody").innerHTML = `<div class="diag-empty">Не удалось загрузить: ${e.message}</div>`;
+  }
+}
+function closeDiagnostics() {
+  const modal = $("diagModal");
+  if (modal) modal.classList.add("hidden");
+}
+
 // ---------------- Auth (v0.4.0.1: cookie session) ----------------
 //
 // The browser's `EventSource` cannot send custom HTTP headers, so
@@ -1069,6 +1252,16 @@ function init() {
     if (e.key === "Enter") { e.preventDefault(); addWatch($("watchInput").value); $("watchInput").value = ""; }
   };
   $("refreshBtn").onclick = refresh;
+  // v0.7.58: ML diagnostics modal — header button + close + Esc.
+  $("diagBtn").onclick = openDiagnostics;
+  $("diagCloseBtn").onclick = closeDiagnostics;
+  $("diagModal").addEventListener("click", (e) => {
+    // Click on the backdrop (not the card) closes.
+    if (e.target && e.target.id === "diagModal") closeDiagnostics();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeDiagnostics();
+  });
   // v0.4.0.1: cookie auth modal — login flow wiring.
   $("authLoginBtn").onclick = doLogin;
   $("authApiKey").addEventListener("keydown", (e) => {

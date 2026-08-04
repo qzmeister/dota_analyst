@@ -666,6 +666,41 @@ def healthz():
     return out
 
 
+# --------------------------------------------------------------------------- #
+# v0.7.58: ML diagnostics (read-only endpoint over the latest
+#           `scripts/v18_diagnostics.py` JSON report).
+# --------------------------------------------------------------------------- #
+@app.get("/api/diagnostics/v18")
+def diagnostics_v18():
+    """Return the most recent v18 winner-model diagnostics report.
+
+    The heavy lifting (feature extraction + walk over the v17_match
+    corpus) lives in `scripts/v18_diagnostics.py` and runs offline
+    (cron / on-demand) — this endpoint just streams back the latest
+    JSON so the UI can render it without recomputing on every page
+    load.  When no report exists yet (e.g. fresh install) we return
+    `{"status": "not-ready"}` with a 404 so the UI can show a
+    "Run diagnostics" prompt instead of pretending the data is empty.
+    """
+    import os
+    from pathlib import Path as _P
+    diag = _P(os.environ.get(
+        "DOTA_ANALYST_DIAG_DIR",
+        str(_P(__file__).resolve().parent.parent / "ml_data" / "diagnostics"),
+    ))
+    latest = diag / "v18_latest.json"
+    if not latest.exists():
+        return JSONResponse(
+            {"status": "not-ready", "hint": "run scripts/v18_diagnostics.py"},
+            status_code=404,
+        )
+    try:
+        return json.loads(latest.read_text(encoding="utf-8"))
+    except Exception as exc:
+        log.warning("diagnostics: failed to read %s: %s", latest, exc)
+        return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
+
+
 @app.get("/api/readyz")
 def readyz():
     """Readiness probe — the service can handle traffic.

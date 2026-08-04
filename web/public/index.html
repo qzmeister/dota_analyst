@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dota Analyst — Draft Board</title>
-  <link rel="stylesheet" href="/style.css?v=0.7.57" />
+  <link rel="stylesheet" href="/style.css?v=0.7.58" />
 </head>
 <body>
   <header class="topbar">
@@ -50,6 +50,7 @@
         <label class="radio-pill"><input type="radio" name="theme" id="themeLight" value="light" /><span>Светлая</span></label>
       </div>
       <button id="refreshBtn" class="btn primary">Обновить</button>
+      <button id="diagBtn" class="btn" title="v18 winner-model diagnostics (feature importance, bias, calibration)">📊 Диагностика</button>
     </div>
   </header>
 
@@ -112,6 +113,23 @@
     </div>
   </div>
 
-  <script src="/app.js?v=0.7.57"></script>
+  <!-- v0.7.58: ML diagnostics modal.  Pulls the latest JSON
+       report from /api/diagnostics/v18 (which is produced
+       offline by `scripts/v18_diagnostics.py`) and renders
+       feature importance, bias by patch/tier/duration,
+       calibration, and the top biggest mistakes.  Hidden by
+       default; toggled by the "📊 Диагностика" header button. -->
+  <div id="diagModal" class="auth-modal hidden" data-modal="diag">
+    <div class="auth-modal-card diag-card">
+      <div class="diag-head">
+        <h3>📊 v18 winner-model diagnostics</h3>
+        <span id="diagMeta" class="diag-meta"></span>
+        <button class="diag-close" id="diagCloseBtn" title="Закрыть">×</button>
+      </div>
+      <div id="diagBody" class="diag-body">Загрузка…</div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=0.7.58"></script>
 </body>
 </html>

@@ -187,13 +187,15 @@ body {
 
 /* ---------- Status ---------- */
 .status { padding: 6px 22px; font-size: 12px; color: var(--muted); min-height: 20px; }
-/* v0.7.57: stability badge — publisher-loop metrics.  Sits under
-   `#status` so it doesn't push the board down; the absolute
-   position keeps the layout stable.  Pulse dot turns red if
+/* v0.7.57: stability badge — publisher-loop metrics.  v0.7.59
+   switched from `position: absolute` (which depended on a
+   positioned ancestor) to `position: fixed` so the pill
+   reliably floats over the topbar on any layout, and bumped
+   z-index above the topbar's z:50.  Pulse dot turns red if
    `build_errors` > 0 or the last build is older than 3× the
    expected interval. */
 .stability {
-  position: absolute; top: 14px; right: 22px;
+  position: fixed; top: 14px; right: 22px;
   display: inline-flex; align-items: center; gap: 6px;
   padding: 3px 9px;
   background: var(--bg-elev, rgba(255,255,255,.04));
@@ -203,8 +205,9 @@ body {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   letter-spacing: .2px;
-  z-index: 5;
+  z-index: 60;
   cursor: help;
+  box-shadow: var(--shadow);
 }
 .stability.hidden { display: none; }
 .stab-pulse {

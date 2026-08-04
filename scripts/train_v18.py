@@ -339,6 +339,7 @@ def extract_features(
     for h in range(NUM_HEROES):
         feats[f"r_h_{h}"] = 1 if h in r_picks else 0
         feats[f"d_h_{h}"] = 1 if h in d_picks else 0
+
     return {
         "feats": feats,
         "target_winner": int(radiant_win),

@@ -57,8 +57,9 @@ MATCHUP_PRIOR = 3
 # "12 near-constant noise features" problem that killed the full
 # v19 attempt (corpus acc dropped 0.76 -> 0.65).  A player needs
 # 30+ games on a hero for the feature to "fire".
-# v0.7.66: kept at 30 — the v0.7.67 experiment tried 15 and
-# 0.6241 -> 0.6138 (XGB), so 30 is the sweet spot for now.
+# v0.7.66: kept at 30 — multiple attempts to lower it (15 in
+# v0.7.67, 20 in v0.7.69) both hurt.  30 is the local maximum
+# for the player WR gate in this corpus (3403 OpenDota matches).
 MIN_PLAYER_GAMES = 30
 
 # OpenDota lane constants (used to derive mid / bot / top slots)
@@ -212,9 +213,12 @@ def _features_for_match(
     # they're too sparse (most player-pairs and lane matchups
     # have 1-3 games, so the smoothed WR is dominated by the
     # prior 0.5 → 12 near-constant noise features → -4pp honest
-    # test).  v0.7.67 tried adding mid 1v1 back and lowered the
+    # test).  v0.7.67 tried adding mid 1v1 back and lowering the
     # gate to 15 games — both made the model WORSE (0.6241 ->
-    # 0.6138), so we're back to player-WR-only with gate=30.
+    # 0.6138).  v0.7.68 tried mid 1v1 alone (gate still 30) —
+    # also WORSE (0.5874).  v0.7.69 testing gate=20 alone, no
+    # mid.  If that also hurts, v0.7.66 settings are the local
+    # maximum.
 
     return feats
 

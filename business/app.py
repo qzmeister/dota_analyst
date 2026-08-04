@@ -646,8 +646,24 @@ async def stream_matches() -> StreamingResponse:
 
 @app.get("/api/healthz")
 def healthz():
-    """Liveness probe — process is alive."""
-    return {"status": "ok"}
+    """Liveness probe — process is alive.
+
+    v0.7.57: also returns the publisher-loop metrics snapshot
+    (build_count, latencies, last_error, sse subscribers) so the
+    UI's stability badge and any external probe can see real
+    numbers instead of a binary "ok".
+    """
+    out: Dict[str, Any] = {"status": "ok"}
+    try:
+        from .stream import get_metrics, get_stream
+        out["publisher"] = get_metrics()
+        try:
+            out["sse_subscribers"] = int(get_stream().subscriber_count)
+        except Exception:
+            out["sse_subscribers"] = 0
+    except Exception as exc:  # noqa: BLE001
+        out["publisher_error"] = str(exc)
+    return out
 
 
 @app.get("/api/readyz")

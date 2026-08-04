@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dota Analyst — Draft Board</title>
-  <link rel="stylesheet" href="/style.css?v=0.7.55" />
+  <link rel="stylesheet" href="/style.css?v=0.7.57" />
 </head>
 <body>
   <header class="topbar">
@@ -54,6 +54,14 @@
   </header>
 
   <div id="status" class="status"></div>
+  <!-- v0.7.57: stability badge — publisher-loop metrics from
+       /api/healthz.  Polled every 10s; collapses to "—" until the
+       first probe comes back.  Hidden if `/api/healthz` returns
+       no `publisher` field (older backend). -->
+  <div id="stability" class="stability hidden" title="Метрики publisher-цикла (обновляются каждые 10с)">
+    <span class="stab-pulse"></span>
+    <span class="stab-text">…</span>
+  </div>
 
   <!-- v0.3.21: one-click top-league chips.  Rendered by app.js
        from /api/leagues' match_count; the most relevant filters
@@ -104,6 +112,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=0.7.55"></script>
+  <script src="/app.js?v=0.7.57"></script>
 </body>
 </html>

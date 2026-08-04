@@ -24,11 +24,12 @@ to keep proxies from killing the connection.
 from __future__ import annotations
 
 import asyncio
+import collections
 import hashlib
 import json
 import logging
 import threading
-import time
+import time as _t
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Dict, List, Optional, Set
 
@@ -296,6 +297,76 @@ def wake_build() -> None:
     (and after it has been stopped).
     """
     _BUILDER_WAKE.set()
+    _METRICS_WAKE_COUNT[0] += 1
+
+
+# --------------------------------------------------------------------------- #
+# Publisher metrics (v0.7.57)
+# --------------------------------------------------------------------------- #
+# Lightweight counters updated from `_build_loop` / `wake_build`.  Exposed
+# via `get_metrics()` so `/api/healthz` (and the UI's stability badge) can
+# surface real numbers instead of just "ok".  Plain lists in a module-global
+# so writes are atomic on CPython without needing a lock; readers do a single
+# tuple read of the immutable snapshot.
+_METRICS_BUILD_COUNT     = [0]   # total build_board() calls (success or fail)
+_METRICS_BUILD_ERRORS    = [0]   # number that raised (any exception)
+_METRICS_EMPTY_BUILDS    = [0]   # number that returned no live/prematch/postmatch
+_METRICS_WAKE_COUNT      = [0]   # number of dltv_socket wake signals received
+_METRICS_LATENCIES       = collections.deque(maxlen=64)  # ring of last N elapsed sec
+_METRICS_LAST_BUILD_AT   = [0.0]  # monotonic timestamp of last completed cycle
+_METRICS_LAST_ERROR      = [None]  # short str of last exception (truncated)
+_METRICS_STARTED_AT      = _t.monotonic()
+
+
+def _record_build(elapsed_sec: float, *, error: Optional[BaseException] = None,
+                  empty: bool = False) -> None:
+    """Called by `_build_loop` once per cycle."""
+    _METRICS_BUILD_COUNT[0] += 1
+    _METRICS_LAST_BUILD_AT[0] = _t.monotonic()
+    if error is not None:
+        _METRICS_BUILD_ERRORS[0] += 1
+        # Truncate the error so a 100KB traceback doesn't blow up /healthz.
+        msg = f"{type(error).__name__}: {str(error)[:200]}"
+        _METRICS_LAST_ERROR[0] = msg
+    if empty:
+        _METRICS_EMPTY_BUILDS[0] += 1
+    _METRICS_LATENCIES.append(float(elapsed_sec))
+
+
+def get_metrics() -> Dict[str, Any]:
+    """Return a JSON-friendly snapshot of the publisher metrics.
+
+    Called from `/api/healthz` and from the UI's stability probe.  Cheap
+    (no locks, no iteration over latency history) so it's safe to poll
+    from the browser every few seconds.
+    """
+    lats = sorted(_METRICS_LATENCIES) if _METRICS_LATENCIES else []
+    n = len(lats)
+    def _pct(p: float) -> float:
+        if n == 0:
+            return 0.0
+        # Nearest-rank method; good enough for a probe.
+        idx = max(0, min(n - 1, int(round(p * (n - 1)))))
+        return round(lats[idx], 3)
+    return {
+        "build_count":    _METRICS_BUILD_COUNT[0],
+        "build_errors":   _METRICS_BUILD_ERRORS[0],
+        "empty_builds":   _METRICS_EMPTY_BUILDS[0],
+        "wakeup_count":   _METRICS_WAKE_COUNT[0],
+        "last_build_age_sec": round(_t.monotonic() - _METRICS_LAST_BUILD_AT[0], 1)
+                              if _METRICS_LAST_BUILD_AT[0] > 0 else None,
+        "uptime_sec":     round(_t.monotonic() - _METRICS_STARTED_AT, 1),
+        "build_latency":  {
+            "n":       n,
+            "min":     round(lats[0], 3) if n else 0.0,
+            "max":     round(lats[-1], 3) if n else 0.0,
+            "mean":    round(sum(lats) / n, 3) if n else 0.0,
+            "p50":     _pct(0.50),
+            "p95":     _pct(0.95),
+            "p99":     _pct(0.99),
+        },
+        "last_error":     _METRICS_LAST_ERROR[0],
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -385,10 +456,13 @@ async def board_publisher_loop(
                 _publisher_last_heartbeat[0] = _t.monotonic()
             except NameError:
                 pass  # before the watchdog initialised; safe to skip
+            cycle_err: Optional[BaseException] = None
+            cycle_empty = False
             try:
                 board = build_board([], [])
                 if "engine" not in board:
                     board["engine"] = get_default_engine().name
+                cycle_empty = not _has_content(board)
                 if _has_content(board):
                     _app._latest_auto_board = board
                     _app._latest_auto_board_ts = _t.monotonic()
@@ -468,13 +542,23 @@ async def board_publisher_loop(
                 # subscribers.
                 stream.wake_up()
             except (BoardBuildError, MLError, DiscoveryError, UpstreamError, InfraError) as exc:
+                cycle_err = exc
                 log.warning("sse publisher build failed: %s", exc, exc_info=False)
             except Exception as exc:
                 # catch-all so a coding bug in build_board (or any
                 # unanticipated exception) cannot silently kill the
                 # publisher.  Without this the SSE clients would keep
                 # getting the same stale auto-board for hours.
+                cycle_err = exc
                 log.exception("sse publisher build crashed (recovered): %s", exc)
+            # v0.7.57: record metrics for /api/healthz.  Done after the
+            # try/except so even errored cycles count (build_count
+            # still bumps, build_errors separately tracks the failure).
+            _record_build(
+                _t.monotonic() - t0,
+                error=cycle_err,
+                empty=cycle_empty,
+            )
             # v0.7.48: wait for the next tick OR an external wake.
             # `interval_sec` is the safety net (a stuck dltv_socket
             # won't starve the publisher forever); `_BUILDER_WAKE`

@@ -842,6 +842,59 @@ function setStatus(msg) {
   $("status").textContent = msg;
 }
 
+// v0.7.57: stability probe — poll /api/healthz every 10s and
+// render a small badge with the publisher-loop metrics.  Cheap
+// (no body, no upstream traffic) so a 10s cadence is fine.
+async function _pollStability() {
+  const el = $("stability");
+  const txt = el ? el.querySelector(".stab-text") : null;
+  if (!el || !txt) return;
+  try {
+    const r = await fetch(`${API}/api/healthz`, { credentials: "same-origin" });
+    if (!r.ok) throw new Error("healthz " + r.status);
+    const j = await r.json();
+    const pub = j && j.publisher;
+    if (!pub) { el.classList.add("hidden"); return; }
+    el.classList.remove("hidden");
+    const lat = pub.build_latency || {};
+    const errs = pub.build_errors || 0;
+    const subs = j.sse_subscribers || 0;
+    const lastAge = pub.last_build_age_sec;
+    // Visual state: error > warn > stale > ok
+    el.classList.remove("stab-ok", "stab-warn", "stab-error", "stab-stale");
+    if (errs > 0) el.classList.add("stab-error");
+    else if (lastAge != null && lastAge > 30) el.classList.add("stab-stale");
+    else if ((lat.p95 || 0) > 8) el.classList.add("stab-warn");
+    else el.classList.add("stab-ok");
+    // Build a compact readout.  We use Russian abbreviations to
+    // keep the pill short; tooltip carries the long form.
+    const p95 = lat.p95 != null ? lat.p95.toFixed(1) : "—";
+    const subsTxt = subs ? ` · SSE ${subs}` : "";
+    const errsTxt = errs ? ` · ${errs} err` : "";
+    txt.textContent = `p95 ${p95}с · build ${pub.build_count || 0}${errsTxt}${subsTxt}`;
+    el.title =
+      `Publisher loop (обновлено ${new Date().toLocaleTimeString()})\n` +
+      `  build:     ${pub.build_count || 0} (errors ${errs}, empty ${pub.empty_builds || 0})\n` +
+      `  latency:   p50 ${(lat.p50 ?? 0).toFixed(1)}с, p95 ${(lat.p95 ?? 0).toFixed(1)}с, p99 ${(lat.p99 ?? 0).toFixed(1)}с\n` +
+      `  wakeups:   ${pub.wakeup_count || 0} (от dltv_socket)\n` +
+      `  last age:  ${lastAge != null ? lastAge.toFixed(1) + "с" : "—"}\n` +
+      `  SSE:       ${subs} подписчик(ов)\n` +
+      `  uptime:    ${(pub.uptime_sec || 0).toFixed(0)}с` +
+      (pub.last_error ? `\n  last err:  ${pub.last_error}` : "");
+  } catch (e) {
+    el.classList.remove("hidden");
+    el.classList.add("stab-stale");
+    txt.textContent = "metrics offline";
+    el.title = "Не удалось опросить /api/healthz: " + e.message;
+  }
+}
+function startStabilityPolling() {
+  // First probe immediately so the badge appears with the first
+  // paint instead of waiting 10s for the first tick.
+  _pollStability();
+  setInterval(_pollStability, 10_000);
+}
+
 // ---------------- Auth (v0.4.0.1: cookie session) ----------------
 //
 // The browser's `EventSource` cannot send custom HTTP headers, so
@@ -1056,6 +1109,12 @@ function init() {
   });
 
   renderWatchList();
+  // v0.7.57: poll the publisher-loop metrics from /api/healthz
+  // every 10s and render them as a small badge under the status
+  // line.  Catches the case where the build loop dies silently
+  // (last_build_age grows unboundedly) or starts erroring out
+  // (build_errors > 0).
+  startStabilityPolling();
   // v0.4.0.1: cookie-auth gate.  Two modes, distinguished by
   // the `X-Edge-Mode` response header that nginx emits on
   // every response (default "dev", "prod" when PROD_MODE=1):

@@ -51,6 +51,14 @@ PLAYER_PRIOR = 5
 PAIR_PRIOR = 5
 MATCHUP_PRIOR = 3
 
+# v0.7.66: v19 LITE — only emit features for experienced players.
+# When `games < MIN_PLAYER_GAMES`, the feature is the neutral
+# prior (0.5) instead of the smoothed rate.  This stops the
+# "12 near-constant noise features" problem that killed the full
+# v19 attempt (corpus acc dropped 0.76 -> 0.65).  A player needs
+# 30+ games on a hero for the feature to "fire".
+MIN_PLAYER_GAMES = 30
+
 # OpenDota lane constants (used to derive mid / bot / top slots)
 LANE_TOP = 1
 LANE_MID = 2
@@ -174,14 +182,22 @@ def _features_for_match(
     d_names = _player_names_for_side(m, "dire")
     r_heroes = _side_hero_ids(m, "radiant")
     d_heroes = _side_hero_ids(m, "dire")
+
+    def _sm_player(w: int, g: int) -> float:
+        # v0.7.66: gate by min-games.  Players with <MIN_PLAYER_GAMES
+        # on a hero get the neutral prior (0.5) — no signal, no noise.
+        if g < MIN_PLAYER_GAMES:
+            return 0.5
+        return _sm(w, g, PLAYER_PRIOR)
+
     r_wrs = []
     for nm, h in zip(r_names, r_heroes):
         w, g = player_cache.get((nm, h), (0, 0))
-        r_wrs.append(_sm(w, g, PLAYER_PRIOR))
+        r_wrs.append(_sm_player(w, g))
     d_wrs = []
     for nm, h in zip(d_names, d_heroes):
         w, g = player_cache.get((nm, h), (0, 0))
-        d_wrs.append(_sm(w, g, PLAYER_PRIOR))
+        d_wrs.append(_sm_player(w, g))
     r_avg = sum(r_wrs) / 5.0 if r_wrs else 0.5
     d_avg = sum(d_wrs) / 5.0 if d_wrs else 0.5
     feats["r_player_wr_avg"] = r_avg
@@ -190,49 +206,12 @@ def _features_for_match(
     feats["d_player_wr_max"] = max(d_wrs) if d_wrs else 0.5
     feats["player_wr_diff"] = r_avg - d_avg
 
-    # --- hero pair synergy per side ---
-    def _pair_summary(heroes: List[int], side: str) -> Tuple[float, float]:
-        if len(heroes) < 2:
-            return 0.5, 0.5
-        rates = []
-        for i in range(len(heroes)):
-            for j in range(i + 1, len(heroes)):
-                a, b = (heroes[i], heroes[j]) if heroes[i] <= heroes[j] else (heroes[j], heroes[i])
-                w, g = pair_cache.get((side[0], a, b), (0, 0))
-                rates.append(_sm(w, g, PAIR_PRIOR))
-        if not rates:
-            return 0.5, 0.5
-        return sum(rates) / len(rates), max(rates)
-    r_pavg, r_pmax = _pair_summary(r_heroes, "radiant")
-    d_pavg, d_pmax = _pair_summary(d_heroes, "dire")
-    feats["r_pair_synergy_avg"] = r_pavg
-    feats["d_pair_synergy_avg"] = d_pavg
-    feats["r_pair_synergy_max"] = r_pmax
-    feats["d_pair_synergy_max"] = d_pmax
-
-    # --- lane matchup (mid / bot / top) ---
-    lanes = _lane_players(m)
-    if lanes["r_mid"] and lanes["d_mid"]:
-        h_r = lanes["r_mid"][0]["hero_id"]
-        h_d = lanes["d_mid"][0]["hero_id"]
-        w, g = mid_cache.get((h_r, h_d), (0, 0))
-        feats["mid_matchup_wr"] = _sm(w, g, MATCHUP_PRIOR)
-    else:
-        feats["mid_matchup_wr"] = 0.5
-    if len(lanes["r_bot"]) >= 2 and len(lanes["d_bot"]) >= 2:
-        h = [lanes["r_bot"][0]["hero_id"], lanes["r_bot"][1]["hero_id"],
-             lanes["d_bot"][0]["hero_id"], lanes["d_bot"][1]["hero_id"]]
-        w, g = bot_cache.get(tuple(h), (0, 0))
-        feats["bot_matchup_wr"] = _sm(w, g, MATCHUP_PRIOR)
-    else:
-        feats["bot_matchup_wr"] = 0.5
-    if len(lanes["r_top"]) >= 2 and len(lanes["d_top"]) >= 2:
-        h = [lanes["r_top"][0]["hero_id"], lanes["r_top"][1]["hero_id"],
-             lanes["d_top"][0]["hero_id"], lanes["d_top"][1]["hero_id"]]
-        w, g = top_cache.get(tuple(h), (0, 0))
-        feats["top_matchup_wr"] = _sm(w, g, MATCHUP_PRIOR)
-    else:
-        feats["top_matchup_wr"] = 0.5
+    # v0.7.66: v19 LITE — only player WR.  Pair synergy and lane
+    # matchup were dropped because they're too sparse (most
+    # player-pairs and lane matchups have 1-3 games, so the
+    # smoothed WR is dominated by the prior 0.5 → 12 near-constant
+    # noise features → -4pp honest test).  Player WR with
+    # min_games=30 gate keeps the signal where it actually exists.
 
     return feats
 

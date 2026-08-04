@@ -142,15 +142,15 @@ def _load_v19_features() -> Dict[str, Dict[str, float]]:
     return raw if isinstance(raw, dict) else {}
 
 
-# Names of the 12 v19 features; central list so extract_features
-# and the training/eval code stay in sync.
+# Names of the 5 v19-lite features; central list so
+# extract_features and the training/eval code stay in sync.
+# v0.7.66 dropped pair synergy + lane matchup (too sparse with
+# 3403 OpenDota matches); kept player-level WR only, with a
+# 30-game gate inside the rolling builder.
 V19_FEATURE_NAMES = (
     "r_player_wr_avg", "d_player_wr_avg",
     "r_player_wr_max", "d_player_wr_max",
     "player_wr_diff",
-    "r_pair_synergy_avg", "d_pair_synergy_avg",
-    "r_pair_synergy_max", "d_pair_synergy_max",
-    "mid_matchup_wr", "bot_matchup_wr", "top_matchup_wr",
 )
 
 
@@ -373,6 +373,14 @@ def extract_features(
     for h in range(NUM_HEROES):
         feats[f"r_h_{h}"] = 1 if h in r_picks else 0
         feats[f"d_h_{h}"] = 1 if h in d_picks else 0
+
+    # v0.7.66: v19 LITE per-match rolling features (player WR
+    # only, with min-games gate inside the rolling builder).  Pre-
+    # computed by scripts/build_v19_features_rolling.py.
+    match_id = m.get("match_id")
+    v19_row = _V19_FEATURES.get(str(match_id), {}) if match_id is not None else {}
+    for name in V19_FEATURE_NAMES:
+        feats[name] = float(v19_row.get(name, 0.5))
 
     return {
         "feats": feats,

@@ -75,6 +75,15 @@ TOP_TEAMS_PATHS = (
     IMPORTS / "v17_phase1_top_teams.json",
 )
 
+# v0.7.64: per-match rolling v19 features.  Built by
+# scripts/build_v19_features_rolling.py and consumed here.  Each
+# match's v19 features are computed from a lookup that contains
+# ONLY matches BEFORE the current one in start_time order, so
+# there's no train-set leakage.  Features default to 0.5 (neutral
+# prior) for matches that don't appear in the JSON.
+V19_FEATURES_PATH = IMPORTS / "v19_features.json"
+_V19_FEATURES: Dict[str, Dict[str, float]] = {}
+
 TIER_THRESHOLD_PREMIUM = 1400
 TIER_THRESHOLD_PROFESSIONAL = 1100
 
@@ -118,6 +127,31 @@ def _load_top_teams() -> List[Dict[str, Any]]:
         except Exception:
             continue
     return []
+
+
+def _load_v19_features() -> Dict[str, Dict[str, float]]:
+    """Load the per-match rolling v19 features (no leakage).  Empty
+    dict if the file is missing — caller handles the default 0.5.
+    """
+    if not V19_FEATURES_PATH.exists():
+        return {}
+    try:
+        raw = json.loads(V19_FEATURES_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+# Names of the 12 v19 features; central list so extract_features
+# and the training/eval code stay in sync.
+V19_FEATURE_NAMES = (
+    "r_player_wr_avg", "d_player_wr_avg",
+    "r_player_wr_max", "d_player_wr_max",
+    "player_wr_diff",
+    "r_pair_synergy_avg", "d_pair_synergy_avg",
+    "r_pair_synergy_max", "d_pair_synergy_max",
+    "mid_matchup_wr", "bot_matchup_wr", "top_matchup_wr",
+)
 
 
 def _days_since_patch(start_time: int, patch_info: Dict[str, str]) -> float:
@@ -361,6 +395,9 @@ def build_dataset() -> Tuple[List[Dict[str, Any]], List[str]]:
     """Walk all v17_match_*.json, extract features, return (rows, feat_names)."""
     top_teams = _load_top_teams()
     patch_info = _load_patch_info()
+    global _V19_FEATURES
+    _V19_FEATURES = _load_v19_features()
+    print(f"  v19 rolling features: {len(_V19_FEATURES)} matches cached")
     files = list_match_files()
     print(f"  found {len(files)} match files in ml_data/imports/")
     rows: List[Dict[str, Any]] = []
